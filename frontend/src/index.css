@@ -1,0 +1,48 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+:root {
+  --green: #4ade80;
+  --green-dark: #16a34a;
+  --blue: #60a5fa;
+  --orange: #fb923c;
+  --cyan: #22d3ee;
+  --bg: #0a0a0a;
+  --card: #131313;
+  --border: rgba(255,255,255,0.06);
+}
+
+html {
+  /* Evita scroll rebote en iOS */
+  overscroll-behavior: none;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', sans-serif;
+  background: var(--bg);
+  color: #fff;
+  min-height: 100vh;
+  max-width: 430px;
+  margin: 0 auto;
+  overflow-x: hidden;
+  overscroll-behavior: none;
+}
+
+/* Inputs — reset global */
+input, button, textarea {
+  font-family: inherit;
+}
+
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+}
+
+/* Scrollbar invisible */
+::-webkit-scrollbar { display: none; }
+* { scrollbar-width: none; }
