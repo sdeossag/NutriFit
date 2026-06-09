@@ -3,6 +3,9 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
+  build: {
+    minify: 'esbuild',
+  },
   plugins: [
     react(),
     VitePWA({
@@ -11,9 +14,9 @@ export default defineConfig({
       manifest: {
         name: 'NutriFit',
         short_name: 'NutriFit',
-        description: 'Tu app de fitness con Bruce',
-        theme_color: 'linear-gradient(135deg, #064e3b, #16a34a)',
-        background_color: 'linear-gradient(135deg, #064e3b, #16a34a)',
+        description: 'Tu app de nutrición y fitness',
+        theme_color: '#0a0a0a',
+        background_color: '#0a0a0a',
         display: 'standalone',
         orientation: 'portrait',
         scope: '/',
