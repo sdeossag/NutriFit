@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { IconCheck, IconChevronRight, IconPlus, IconX, IconClock, IconPencil, IconTrash, IconSearch, IconGripVertical } from '@tabler/icons-react'
+import { IconCheck, IconChevronRight, IconPlus, IconX, IconClock, IconPencil, IconTrash, IconSearch, IconGripVertical, IconPalette } from '@tabler/icons-react'
 import { registrarSesion, logEjercicio, getSesionFecha } from '../api'
 import bruceFace from '../assets/bruce-face.png'
 
@@ -103,6 +103,16 @@ const COLORES_MUSCULO = {
   'Brazos':   { text: '#a78bfa', bg: 'rgba(167,139,250,0.12)' },  // púrpura — rutina C
   'Core':     { text: '#4ade80', bg: 'rgba(74,222,128,0.12)' },   // verde  — complementario
   'Cardio':   { text: '#fb923c', bg: 'rgba(251,146,60,0.12)' },   // naranja — rutina D
+}
+
+const CUSTOM_POOL_KEY = 'nutrifit_custom_ejercicios'
+
+// Devuelve { text, bg } para un ejercicio del pool, ya sea predefinido o personalizado
+function colorParaEjercicio(ex, colorFallback) {
+  if (ex.custom && ex.color) {
+    return { text: ex.color, bg: ex.color + '26' } // 26 hex ≈ 15% alpha
+  }
+  return COLORES_MUSCULO[ex.musculo] ?? { text: colorFallback, bg: colorFallback + '20' }
 }
 
 // ─── CONFETTI ──────────────────────────────────────────────────────────────────
@@ -219,13 +229,156 @@ function RestTimer({ color, onClose }) {
   )
 }
 
+// ─── CREAR EJERCICIO PERSONALIZADO ──────────────────────────────────────────────
+function CrearEjercicioForm({ colores, onCrear, onCancel }) {
+  const [nombre, setNombre]     = useState('')
+  const [musculo, setMusculo]   = useState('')
+  const [series, setSeries]     = useState('3')
+  const [reps, setReps]         = useState('10')
+  const [peso, setPeso]         = useState('')
+  const [color, setColor]       = useState('#4ade80')
+
+  const puedeCrear = nombre.trim().length > 0
+
+  const inputStyle = {
+    width: '100%', background: 'rgba(255,255,255,0.07)',
+    border: '0.5px solid rgba(255,255,255,0.12)',
+    borderRadius: '12px', color: '#fff',
+    fontSize: '14px', fontWeight: '600',
+    padding: '11px 14px', outline: 'none',
+    fontFamily: 'inherit', boxSizing: 'border-box',
+  }
+
+  const labelStyle = {
+    fontSize: '9px', color: 'rgba(255,255,255,0.3)', fontWeight: '700',
+    marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.06em',
+    display: 'block',
+  }
+
+  const handleSubmit = () => {
+    if (!puedeCrear) return
+    onCrear({
+      nombre: nombre.trim(),
+      musculo: musculo.trim() || 'Personalizado',
+      series: Number(series) || 1,
+      reps: reps.trim() || '—',
+      peso: peso.trim() || '—',
+      color,
+      custom: true,
+    })
+    setNombre(''); setMusculo(''); setSeries('3'); setReps('10'); setPeso('')
+  }
+
+  return (
+    <div style={{
+      background: 'rgba(255,255,255,0.04)',
+      border: `0.5px solid ${color}40`,
+      borderRadius: '16px', padding: '14px', marginBottom: '14px',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+        <p style={{ fontSize: '13px', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <IconPalette size={14} color={color} />
+          Nuevo ejercicio
+        </p>
+        <button onClick={onCancel} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.3)', padding: '4px' }}>
+          <IconX size={16} />
+        </button>
+      </div>
+
+      <div style={{ marginBottom: '10px' }}>
+        <span style={labelStyle}>Nombre del ejercicio</span>
+        <input
+          value={nombre}
+          onChange={e => setNombre(e.target.value)}
+          placeholder='Ej. Hip thrust'
+          style={inputStyle}
+        />
+      </div>
+
+      <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+        <div style={{ flex: 1 }}>
+          <span style={labelStyle}>Categoría / músculo</span>
+          <input
+            value={musculo}
+            onChange={e => setMusculo(e.target.value)}
+            placeholder='Ej. Glúteos'
+            style={inputStyle}
+          />
+        </div>
+        <div style={{ width: '64px', flexShrink: 0 }}>
+          <span style={labelStyle}>Color</span>
+          <input
+            type='color'
+            value={color}
+            onChange={e => setColor(e.target.value)}
+            style={{
+              width: '100%', height: '40px', borderRadius: '12px',
+              border: '0.5px solid rgba(255,255,255,0.12)',
+              background: 'rgba(255,255,255,0.07)',
+              padding: '4px', cursor: 'pointer',
+            }}
+          />
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
+        <div style={{ flex: 1 }}>
+          <span style={labelStyle}>Series</span>
+          <input
+            type='number' min='1'
+            value={series}
+            onChange={e => setSeries(e.target.value)}
+            style={inputStyle}
+          />
+        </div>
+        <div style={{ flex: 1 }}>
+          <span style={labelStyle}>Reps</span>
+          <input
+            value={reps}
+            onChange={e => setReps(e.target.value)}
+            placeholder='Ej. 10 o 45s'
+            style={inputStyle}
+          />
+        </div>
+        <div style={{ flex: 1 }}>
+          <span style={labelStyle}>Peso</span>
+          <input
+            value={peso}
+            onChange={e => setPeso(e.target.value)}
+            placeholder='Ej. 20 kg'
+            style={inputStyle}
+          />
+        </div>
+      </div>
+
+      <button
+        onClick={handleSubmit}
+        disabled={!puedeCrear}
+        style={{
+          width: '100%', padding: '12px', borderRadius: '12px', border: 'none',
+          background: puedeCrear ? color : 'rgba(255,255,255,0.06)',
+          color: puedeCrear ? '#000' : 'rgba(255,255,255,0.3)',
+          fontSize: '13px', fontWeight: '700',
+          cursor: puedeCrear ? 'pointer' : 'default',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+          transition: 'all 0.15s',
+        }}
+      >
+        <IconPlus size={14} />
+        Crear y agregar
+      </button>
+    </div>
+  )
+}
+
 // ─── EDITOR DE RUTINA ──────────────────────────────────────────────────────────
-function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose }) {
+function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose, onCrearEjercicio }) {
   const [ejercicios, setEjercicios] = useState([...rutina.ejercicios])
   const [nombre, setNombre]         = useState(rutina.nombre)
   const [vistaPool, setVistaPool]   = useState(false)
   const [busqueda, setBusqueda]     = useState('')
   const [filtroMus, setFiltroMus]   = useState('Todos')
+  const [mostrarCrear, setMostrarCrear] = useState(false)
 
   const musculos = ['Todos', ...new Set(pool.map(e => e.musculo))]
 
@@ -252,6 +405,12 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose }) {
       ;[arr[idx], arr[target]] = [arr[target], arr[idx]]
       return arr
     })
+  }
+
+  const handleCrearEjercicio = (nuevo) => {
+    onCrearEjercicio(nuevo)
+    agregarDelPool(nuevo)
+    setMostrarCrear(false)
   }
 
   return (
@@ -333,6 +492,11 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose }) {
                   <button onClick={() => moverEjercicio(i, 1)}  style={{ background: 'none', border: 'none', cursor: 'pointer', color: i === ejercicios.length-1 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.3)', padding: '2px', lineHeight: 1, fontSize: '10px' }}>▼</button>
                 </div>
 
+                {/* Color dot para personalizados */}
+                {ex.custom && ex.color && (
+                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: ex.color, flexShrink: 0 }} />
+                )}
+
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <p style={{ fontSize: '13px', fontWeight: '600', marginBottom: '3px' }}>{ex.nombre}</p>
                   <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>{ex.series}x{ex.reps} - {ex.peso}</p>
@@ -352,6 +516,32 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose }) {
         ) : (
           /* ── Pool de ejercicios ── */
           <>
+            {/* Botón crear ejercicio personalizado */}
+            {!mostrarCrear && (
+              <button
+                onClick={() => setMostrarCrear(true)}
+                style={{
+                  width: '100%', padding: '12px', borderRadius: '14px',
+                  border: `0.5px dashed ${colores.text}40`,
+                  background: `${colores.text}10`,
+                  color: colores.text, fontSize: '12px', fontWeight: '700',
+                  cursor: 'pointer', marginBottom: '12px',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                }}
+              >
+                <IconPalette size={14} />
+                Crear ejercicio personalizado
+              </button>
+            )}
+
+            {mostrarCrear && (
+              <CrearEjercicioForm
+                colores={colores}
+                onCrear={handleCrearEjercicio}
+                onCancel={() => setMostrarCrear(false)}
+              />
+            )}
+
             {/* Búsqueda */}
             <div style={{
               display: 'flex', alignItems: 'center', gap: '8px',
@@ -386,7 +576,7 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose }) {
             </div>
 
             {poolFiltrado.map((ex, i) => {
-              const mc = COLORES_MUSCULO[ex.musculo] ?? { text: colores.text, bg: colores.text + '20' }
+              const mc = colorParaEjercicio(ex, colores.text)
               return (
                 <div key={i} style={{
                   display: 'flex', alignItems: 'center', gap: '10px',
@@ -424,7 +614,15 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose }) {
 // ─── COMPONENTE PRINCIPAL ──────────────────────────────────────────────────────
 export default function GymScreen({ t }) {
   const [rutinas, setRutinas]           = useState(RUTINAS_DEFAULT)
-  const [pool]                          = useState(POOL_DEFAULT)
+  const [pool, setPool]                 = useState(() => {
+    try {
+      const saved = localStorage.getItem(CUSTOM_POOL_KEY)
+      const custom = saved ? JSON.parse(saved) : []
+      return [...POOL_DEFAULT, ...custom]
+    } catch {
+      return POOL_DEFAULT
+    }
+  })
   const [selectedFecha, setSelectedFecha] = useState(null)
   const [completados, setCompletados]   = useState({})
   const [logData, setLogData]           = useState({})       // { fecha: { idx: { peso, reps, nota } } }
@@ -508,6 +706,13 @@ export default function GymScreen({ t }) {
       }
       return { ...prev, [fecha]: nueva }
     })
+
+    // Al volver a tocar un ejercicio, permitir guardar de nuevo
+    setGuardado(prev => {
+      if (!prev[fecha]) return prev
+      const { [fecha]: _omit, ...resto } = prev
+      return resto
+    })
   }
 
   // ── Log inline ──
@@ -547,6 +752,13 @@ export default function GymScreen({ t }) {
         } catch {}
       }
       setGuardado(prev => ({ ...prev, [fecha]: true }))
+      // Después de un momento se vuelve a permitir guardar (por si el usuario sigue marcando)
+      setTimeout(() => {
+        setGuardado(prev => {
+          const { [fecha]: _omit, ...resto } = prev
+          return resto
+        })
+      }, 2000)
     } catch (e) {
       console.error(e)
     } finally {
@@ -561,6 +773,18 @@ export default function GymScreen({ t }) {
       [dayOfWeek]: { ...prev[dayOfWeek], nombre, ejercicios },
     }))
     setEditorDia(null)
+  }
+
+  // ── Crear ejercicio personalizado y guardarlo en el pool persistente ──
+  const handleCrearEjercicioPersonalizado = (ejercicio) => {
+    setPool(prev => {
+      const nuevoPool = [...prev, ejercicio]
+      try {
+        const customOnly = nuevoPool.filter(e => e.custom)
+        localStorage.setItem(CUSTOM_POOL_KEY, JSON.stringify(customOnly))
+      } catch {}
+      return nuevoPool
+    })
   }
 
   const diaSeleccionado       = semana.find(d => d.fecha === selectedFecha)
@@ -581,6 +805,7 @@ export default function GymScreen({ t }) {
           pool={pool}
           onSave={(data) => handleSaveRutina(editorDia, data)}
           onClose={() => setEditorDia(null)}
+          onCrearEjercicio={handleCrearEjercicioPersonalizado}
         />
       )}
 
@@ -735,6 +960,11 @@ export default function GymScreen({ t }) {
                           {hecho && <IconCheck size={11} color='#0d0d0d' strokeWidth={3} />}
                         </div>
 
+                        {/* Color dot para personalizados */}
+                        {ex.custom && ex.color && (
+                          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: ex.color, flexShrink: 0 }} />
+                        )}
+
                         {/* Info */}
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <p style={{
@@ -858,16 +1088,17 @@ export default function GymScreen({ t }) {
                   </div>
                   <button
                     onClick={() => guardarSesion(selectedFecha, diaSeleccionado.dayOfWeek)}
-                    disabled={guardando || guardado[selectedFecha]}
+                    disabled={guardando}
                     style={{
                       width: '100%',
                       background: guardado[selectedFecha] ? `${colores.text}15` : `${colores.text}20`,
                       border: `0.5px solid ${colores.text}40`,
                       borderRadius: '12px', color: colores.text,
                       fontSize: '13px', fontWeight: '700', padding: '13px',
-                      cursor: guardado[selectedFecha] ? 'default' : 'pointer',
+                      cursor: guardando ? 'default' : 'pointer',
                       display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
                       transition: 'all 0.2s',
+                      opacity: guardando ? 0.6 : 1,
                     }}
                   >
                     <IconCheck size={14} />
