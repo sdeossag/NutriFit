@@ -2,6 +2,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from datetime import timedelta
 import os
+import dj_database_url
 
 load_dotenv()
 
@@ -53,11 +54,14 @@ TEMPLATES = [{
 
 WSGI_APPLICATION = 'nutrifit.wsgi.application'
 
+# ── Base de datos ──
+# Si existe DATABASE_URL (Railway con Postgres), se usa esa.
+# Si no (desarrollo local), cae en SQLite como antes.
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    'default': dj_database_url.config(
+        default=f'sqlite:///{BASE_DIR / "db.sqlite3"}',
+        conn_max_age=600,
+    )
 }
 
 CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:5173').split(',')
