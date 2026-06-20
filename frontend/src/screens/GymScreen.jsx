@@ -420,9 +420,12 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose, onCre
       display: 'flex', flexDirection: 'column',
       overflowY: 'auto',
     }}>
-      {/* Header — con padding-top de safe-area para no quedar tapado por el notch/Dynamic Island del iPhone */}
+      {/* Header — padding superior fijo generoso para despejar el notch/Dynamic Island del iPhone.
+          Se usa un valor fijo (no solo env()) porque env(safe-area-inset-top) requiere
+          viewport-fit=cover en el <meta name="viewport"> del index.html para funcionar;
+          si esa meta no está presente, env() devuelve 0px y el header queda pegado arriba. */}
       <div style={{
-        padding: 'calc(env(safe-area-inset-top, 0px) + 16px) 16px 16px',
+        padding: 'max(48px, env(safe-area-inset-top, 48px)) 16px 16px',
         borderBottom: '0.5px solid rgba(255,255,255,0.06)',
         display: 'flex', alignItems: 'center', gap: '12px',
         flexShrink: 0,
@@ -478,7 +481,7 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose, onCre
 
       <div style={{
         flex: 1, overflowY: 'auto',
-        padding: `0 16px calc(env(safe-area-inset-bottom, 0px) + 32px)`,
+        padding: `0 16px max(32px, env(safe-area-inset-bottom, 32px))`,
       }}>
         {!vistaPool ? (
           /* ── Lista de ejercicios actuales ── */
