@@ -101,6 +101,11 @@ MEDIA_ROOT  = BASE_DIR / 'media'
 
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
+# ── Límites de tamaño de subida ──
+# Las fotos en base64 pueden superar el default de 2.5 MB de Django
+DATA_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024  # 20 MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024  # 20 MB
+
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 LANGUAGE_CODE = 'es-co'
 TIME_ZONE     = 'America/Bogota'
