@@ -420,22 +420,28 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose, onCre
       display: 'flex', flexDirection: 'column',
       overflowY: 'auto',
     }}>
-      {/* Header */}
+      {/* Header — con padding-top de safe-area para no quedar tapado por el notch/Dynamic Island del iPhone */}
       <div style={{
-        padding: '16px 16px 16px',
+        padding: 'calc(env(safe-area-inset-top, 0px) + 16px) 16px 16px',
         borderBottom: '0.5px solid rgba(255,255,255,0.06)',
         display: 'flex', alignItems: 'center', gap: '12px',
+        flexShrink: 0,
       }}>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.5)', padding: '4px' }}>
+        <button onClick={onClose} style={{
+          background: 'rgba(255,255,255,0.06)', border: 'none', cursor: 'pointer',
+          color: 'rgba(255,255,255,0.6)', padding: '10px',
+          borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flexShrink: 0, minWidth: '40px', minHeight: '40px',
+        }}>
           <IconX size={20} />
         </button>
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <input
             value={nombre}
             onChange={e => setNombre(e.target.value)}
             style={{
               background: 'none', border: 'none', outline: 'none',
-              fontSize: '22px', fontWeight: '700', color: '#fff',
+              fontSize: '20px', fontWeight: '700', color: '#fff',
               fontFamily: 'inherit', width: '100%', letterSpacing: '-0.5px',
             }}
           />
@@ -446,15 +452,15 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose, onCre
         <button onClick={() => onSave({ nombre, ejercicios })} style={{
           background: colores.text, color: '#000',
           border: 'none', borderRadius: '12px',
-          padding: '10px 16px', fontSize: '13px', fontWeight: '700',
-          cursor: 'pointer',
+          padding: '12px 18px', fontSize: '13px', fontWeight: '700',
+          cursor: 'pointer', flexShrink: 0, minHeight: '40px',
         }}>
           Guardar
         </button>
       </div>
 
       {/* Toggle lista / pool */}
-      <div style={{ display: 'flex', padding: '12px 16px', gap: '8px' }}>
+      <div style={{ display: 'flex', padding: '12px 16px', gap: '8px', flexShrink: 0 }}>
         {[
           { id: false, label: `Mi rutina (${ejercicios.length})` },
           { id: true,  label: `+ Agregar ejercicio` },
@@ -470,7 +476,10 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose, onCre
         ))}
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0 16px 80px' }}>
+      <div style={{
+        flex: 1, overflowY: 'auto',
+        padding: `0 16px calc(env(safe-area-inset-bottom, 0px) + 32px)`,
+      }}>
         {!vistaPool ? (
           /* ── Lista de ejercicios actuales ── */
           ejercicios.length === 0 ? (
