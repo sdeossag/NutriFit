@@ -40,6 +40,8 @@ urlpatterns = [
     path('sesiones/fecha/<str:fecha>/', views.sesion_por_fecha,     name='sesion-por-fecha'),
     path('sesiones/registrar/',         views.registrar_sesion,     name='registrar-sesion'),
     path('ejercicios/log/',             views.log_ejercicio,        name='log-ejercicio'),
+    path('rutinas-dia/',                views.rutinas_dia,            name='rutinas-dia'),
+    path('ejercicios-personalizados/',  views.ejercicios_personalizados, name='ejercicios-personalizados'),
 
     # ─────────────────────── PROGRESS ───────────────────────
     path('progreso/',                   views.progreso_semanal,     name='progreso-semanal'),

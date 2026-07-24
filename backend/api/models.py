@@ -290,3 +290,45 @@ class MensajeChat(models.Model):
 
     def __str__(self):
         return f"{self.rol}: {self.contenido[:50]}"
+    
+# ──────────────────────────────────────────────
+#  RUTINAS PERSONALIZADAS POR DÍA
+# ──────────────────────────────────────────────
+
+class RutinaDia(models.Model):
+    """
+    Rutina de gym personalizada por usuario y día de la semana.
+    dia_semana: 0=Lunes ... 6=Domingo (mismo criterio que usa el frontend)
+    ejercicios: lista de objetos { nombre, series, reps, peso, musculo, custom, color }
+    """
+    usuario     = models.ForeignKey('Usuario', on_delete=models.CASCADE, related_name='rutinas_dia')
+    dia_semana  = models.IntegerField()  # 0-6
+    nombre      = models.CharField(max_length=100)
+    rutina_id   = models.CharField(max_length=1, default='A')  # A/B/C/D/R — para el color del calendario
+    emoji       = models.CharField(max_length=10, default='💪')
+    ejercicios  = models.JSONField(default=list, blank=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering        = ['dia_semana']
+        unique_together  = ['usuario', 'dia_semana']
+
+    def __str__(self):
+        return f"{self.usuario} — Día {self.dia_semana}: {self.nombre}"
+
+
+class EjercicioPersonalizado(models.Model):
+    """Ejercicios creados por el usuario para el pool, con color libre."""
+    usuario  = models.ForeignKey('Usuario', on_delete=models.CASCADE, related_name='ejercicios_personalizados')
+    nombre   = models.CharField(max_length=200)
+    musculo  = models.CharField(max_length=100, default='Personalizado')
+    series   = models.IntegerField(default=3)
+    reps     = models.CharField(max_length=50, default='10')
+    peso     = models.CharField(max_length=50, default='—')
+    color    = models.CharField(max_length=7, default='#4ade80')  # hex
+
+    class Meta:
+        ordering = ['nombre']
+
+    def __str__(self):
+        return f"{self.nombre} ({self.usuario})"

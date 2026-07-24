@@ -85,6 +85,15 @@ const patch = (path, body) =>
     return r.json()
   })
 
+const put = (path, body) =>
+  apiFetch(`${BASE}${path}`, {
+    method: 'PUT',
+    body: body instanceof FormData ? body : JSON.stringify(body),
+  }).then((r) => {
+    if (!r.ok) throw new Error(`PUT ${path} → ${r.status}`)
+    return r.json()
+  })
+
 const del_ = (path) =>
   apiFetch(`${BASE}${path}`, { method: 'DELETE' }).then((r) => {
     if (!r.ok && r.status !== 204) throw new Error(`DELETE ${path} → ${r.status}`)
@@ -189,3 +198,11 @@ export const eliminarSesionChat    = (id)      => del_(`/chat/${id}/`)
 export const enviarMensajeBruce    = (id, msg) => post(`/chat/${id}/mensaje/`, { mensaje: msg })
 // sesionDeHoy ya existe en tu api.js
 export const getHistorialEjercicios = () => get('/ejercicios/historial/')
+
+// ── Rutinas personalizadas por día ───────────────────────────────────────
+export const getRutinasDia    = ()     => get('/rutinas-dia/')
+export const guardarRutinaDia = (data) => put('/rutinas-dia/', data)
+
+// ── Ejercicios personalizados del pool ───────────────────────────────────
+export const getEjerciciosPersonalizados   = ()     => get('/ejercicios-personalizados/')
+export const crearEjercicioPersonalizado   = (data) => post('/ejercicios-personalizados/', data)

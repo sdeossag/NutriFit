@@ -1,4 +1,5 @@
 import json
+import re
 import requests
 
 from google.oauth2 import id_token as google_id_token
@@ -15,7 +16,10 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Comida, SesionGym, EjercicioLog, PesoCorporal, AlimentoAlacena, MensajeChat, SesionChat
+from .models import (
+    Comida, SesionGym, EjercicioLog, PesoCorporal, AlimentoAlacena,
+    MensajeChat, SesionChat, RutinaDia, EjercicioPersonalizado
+)
 from .serializers import (
     ComidaSerializer, SesionGymSerializer,
     EjercicioLogSerializer, PesoCorporalSerializer,
@@ -36,6 +40,85 @@ def _jwt_para_usuario(user):
         'refresh': str(refresh),
         'access':  str(refresh.access_token),
     }
+
+
+# ──────────────────────────────────────────────
+#  GROQ — helpers de JSON robusto
+# ──────────────────────────────────────────────
+#
+# qwen/qwen3.6-27b es un modelo "reasoning": por defecto piensa antes de
+# responder y antepone un bloque <think>...</think> a la respuesta real.
+# Eso rompe json.loads() aunque el resto del contenido sea JSON válido.
+#
+# Solución:
+#   1. Mandamos "reasoning_effort": "none" en el payload para apagar el
+#      modo pensamiento (soportado solo por la familia Qwen3 en Groq).
+#   2. Igual limpiamos cualquier <think> residual como red de seguridad,
+#      por si el modelo decide razonar de todas formas.
+
+_THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
+
+
+def _extraer_json(contenido):
+    """
+    Limpia la respuesta de Groq (quita bloques <think>, fences de markdown,
+    texto suelto antes/después) y devuelve el dict ya parseado.
+    Lanza json.JSONDecodeError si no logra encontrar JSON válido.
+    """
+    texto = contenido.strip()
+
+    # 1. Quitar cualquier bloque de razonamiento tipo <think>...</think>
+    texto = _THINK_RE.sub('', texto).strip()
+
+    # 2. Quitar fences de markdown ```json ... ``` o ``` ... ```
+    if texto.startswith('```'):
+        partes = texto.split('```')
+        if len(partes) >= 2:
+            texto = partes[1]
+            if texto.startswith('json'):
+                texto = texto[4:]
+        texto = texto.strip()
+
+    # 3. Intento directo
+    try:
+        return json.loads(texto)
+    except json.JSONDecodeError:
+        pass
+
+    # 4. Fallback: extraer el primer objeto/array JSON balanceado que
+    #    aparezca en el texto (por si el modelo dejó texto suelto antes
+    #    o después, o el <think> no vino con las etiquetas esperadas).
+    for abre, cierra in (('{', '}'), ('[', ']')):
+        inicio = texto.find(abre)
+        if inicio == -1:
+            continue
+        profundidad = 0
+        for i in range(inicio, len(texto)):
+            if texto[i] == abre:
+                profundidad += 1
+            elif texto[i] == cierra:
+                profundidad -= 1
+                if profundidad == 0:
+                    candidato = texto[inicio:i + 1]
+                    try:
+                        return json.loads(candidato)
+                    except json.JSONDecodeError:
+                        break
+
+    # Si nada funcionó, deja que reviente arriba con el error original
+    return json.loads(texto)
+
+
+def _groq_chat(payload, timeout=30):
+    """POST genérico a Groq chat completions. Devuelve el texto crudo del mensaje."""
+    groq_url = 'https://api.groq.com/openai/v1/chat/completions'
+    headers = {
+        'Authorization': f'Bearer {settings.GROQ_API_KEY}',
+        'Content-Type': 'application/json',
+    }
+    resp = requests.post(groq_url, headers=headers, json=payload, timeout=timeout)
+    resp.raise_for_status()
+    return resp.json()['choices'][0]['message']['content'].strip()
 
 
 # ──────────────────────────────────────────────
@@ -223,21 +306,6 @@ def completar_onboarding(request):
     """
     Recibe todos los datos del onboarding, los guarda en el usuario
     y calcula automáticamente las metas nutricionales.
-
-    Body esperado:
-    {
-        "sexo": "M",
-        "fecha_nacimiento": "2000-03-15",
-        "estatura_cm": 178,
-        "peso_inicial_kg": 75.0,
-        "peso_objetivo_kg": 70.0,
-        "objetivo": "perder",
-        "velocidad_objetivo": "moderado",
-        "nivel_actividad": "moderado",
-        "alimentos_gustados": ["pollo", "arroz", "huevos"],
-        "alimentos_no_gustados": ["higado", "coliflor"],
-        "restricciones_dieta": []
-    }
     """
     serializer = OnboardingSerializer(request.user, data=request.data, partial=True)
     if not serializer.is_valid():
@@ -263,22 +331,6 @@ def generar_plan_groq(request):
     """
     Llama a Groq con el perfil completo del usuario y genera un plan
     de alimentación con alimentos reales para poblar la alacena.
-
-    Response:
-    {
-        "plan_descripcion": "...",
-        "alimentos": [
-            {
-                "nombre": "Pechuga de pollo a la plancha",
-                "descripcion": "150g",
-                "calorias": 248,
-                "proteina": 46.5,
-                "carbos": 0.0,
-                "grasas": 5.3
-            },
-            ...
-        ]
-    }
     """
     user = request.user
 
@@ -328,31 +380,18 @@ Responde ÚNICAMENTE con este JSON válido, sin texto adicional:
   ]
 }}"""
 
-    groq_url = 'https://api.groq.com/openai/v1/chat/completions'
-    headers  = {
-        'Authorization': f'Bearer {settings.GROQ_API_KEY}',
-        'Content-Type':  'application/json',
-    }
     payload = {
-        'model': 'meta-llama/llama-4-scout-17b-16e-instruct',
+        'model': 'qwen/qwen3.6-27b',
         'messages': [{'role': 'user', 'content': prompt}],
-        'max_tokens': 2000,
+        'max_tokens': 2500,
         'temperature': 0.4,
+        'reasoning_effort': 'none',  # sin esto, Qwen antepone <think>...</think> y rompe el JSON
     }
 
     try:
-        resp = requests.post(groq_url, headers=headers, json=payload, timeout=45)
-        resp.raise_for_status()
-        contenido = resp.json()['choices'][0]['message']['content'].strip()
-
-        if contenido.startswith('```'):
-            contenido = contenido.split('```')[1]
-            if contenido.startswith('json'):
-                contenido = contenido[4:]
-
-        data = json.loads(contenido)
+        contenido = _groq_chat(payload, timeout=45)
+        data = _extraer_json(contenido)
         return Response(data)
-
     except requests.RequestException as e:
         return Response({'error': f'Error Groq API: {str(e)}'}, status=status.HTTP_502_BAD_GATEWAY)
     except json.JSONDecodeError:
@@ -646,19 +685,19 @@ def alacena_usar(request, pk):
     alimento.save(update_fields=['veces_usado'])
 
     return Response(ComidaSerializer(comida).data, status=status.HTTP_201_CREATED)
-    
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def bruce_frase(request):
     import random
-    from datetime import datetime
 
     calorias_hoy  = request.data.get('calorias_hoy', 0)
     meta_calorias = request.data.get('meta_calorias', 1900)
     proteina_hoy  = request.data.get('proteina_hoy', 0)
     meta_proteina = request.data.get('meta_proteina', 140)
     fue_al_gym    = request.data.get('fue_al_gym', False)
-    es_dia_gym    = request.data.get('es_dia_gym', True)   # ← nuevo
+    es_dia_gym    = request.data.get('es_dia_gym', True)
     hora          = request.data.get('hora', 12)
 
     pct_calorias  = round((calorias_hoy / meta_calorias) * 100) if meta_calorias else 0
@@ -668,7 +707,6 @@ def bruce_frase(request):
     elif hora < 18: momento = 'tarde'
     else:           momento = 'noche'
 
-    # Determinar pose según contexto
     if pct_calorias >= 95 and (fue_al_gym or not es_dia_gym):
         pose = 'muyfeliz'
     elif pct_calorias >= 70 and fue_al_gym:
@@ -703,22 +741,18 @@ Contexto de hoy:
 
 Genera UNA frase personalizada basada en ese contexto. Solo la frase, sin comillas, sin explicaciones."""
 
-    groq_url = 'https://api.groq.com/openai/v1/chat/completions'
-    headers  = {
-        'Authorization': f'Bearer {settings.GROQ_API_KEY}',
-        'Content-Type':  'application/json',
-    }
     payload = {
-        'model':       'meta-llama/llama-4-scout-17b-16e-instruct',
-        'messages':    [{'role': 'user', 'content': prompt}],
-        'max_tokens':  80,
-        'temperature': 0.85,
+        'model':            'qwen/qwen3.6-27b',
+        'messages':         [{'role': 'user', 'content': prompt}],
+        'max_tokens':       80,
+        'temperature':      0.85,
+        'reasoning_effort': 'none',
     }
 
     try:
-        resp  = requests.post(groq_url, headers=headers, json=payload, timeout=15)
-        resp.raise_for_status()
-        frase = resp.json()['choices'][0]['message']['content'].strip().strip('"').strip("'")
+        frase = _groq_chat(payload, timeout=15).strip('"').strip("'")
+        # Por si acaso el modelo dejó algún <think> residual
+        frase = _THINK_RE.sub('', frase).strip()
         return Response({'frase': frase, 'pose': pose})
     except Exception:
         frases_fallback = [
@@ -728,22 +762,18 @@ Genera UNA frase personalizada basada en ese contexto. Solo la frase, sin comill
             "No hay días perfectos, hay días que suman.",
         ]
         return Response({'frase': random.choice(frases_fallback), 'pose': 'normal'})
-    
-    # ── Helper búsqueda nutricional ───────────────────────────────────────────
+
+
+# ── Helper búsqueda nutricional ───────────────────────────────────────────
 
 def _buscar_info_nutricional(nombre_alimento):
     """Busca información nutricional real en internet via Groq con web search."""
-    groq_url = 'https://api.groq.com/openai/v1/chat/completions'
-    headers  = {
-        'Authorization': f'Bearer {settings.GROQ_API_KEY}',
-        'Content-Type':  'application/json',
-    }
     payload = {
-        'model': 'meta-llama/llama-4-scout-17b-16e-instruct',
+        'model': 'qwen/qwen3.6-27b',
         'messages': [{
             'role': 'user',
             'content': f"""Busca la información nutricional real de: {nombre_alimento}
-            
+
 Responde ÚNICAMENTE con JSON válido:
 {{
   "encontrado": true/false,
@@ -771,19 +801,14 @@ Si no encuentras información confiable, usa encontrado: false y estima los valo
                 }
             }
         }],
-        'max_tokens': 400,
-        'temperature': 0.1,
+        'max_tokens':       400,
+        'temperature':      0.1,
+        'reasoning_effort': 'none',
     }
 
     try:
-        resp      = requests.post(groq_url, headers=headers, json=payload, timeout=20)
-        resp.raise_for_status()
-        contenido = resp.json()['choices'][0]['message']['content'].strip()
-        if contenido.startswith('```'):
-            contenido = contenido.split('```')[1]
-            if contenido.startswith('json'):
-                contenido = contenido[4:]
-        return json.loads(contenido)
+        contenido = _groq_chat(payload, timeout=20)
+        return _extraer_json(contenido)
     except Exception:
         return {'encontrado': False}
 
@@ -800,12 +825,6 @@ def analizar_foto(request):
     if not imagen_b64:
         return Response({'error': 'Se requiere campo "imagen"'}, status=status.HTTP_400_BAD_REQUEST)
 
-    groq_url = 'https://api.groq.com/openai/v1/chat/completions'
-    headers  = {
-        'Authorization': f'Bearer {settings.GROQ_API_KEY}',
-        'Content-Type':  'application/json',
-    }
-
     # Si viene corrección, primero buscar en internet
     info_web = None
     if correccion:
@@ -817,7 +836,7 @@ El usuario dice que en realidad es: "{correccion}".
 
 {'Información nutricional encontrada en internet: ' + json.dumps(info_web, ensure_ascii=False) if info_web and info_web.get('encontrado') else 'No se encontró información en internet, estima basado en el nombre.'}
 
-Corrige el análisis y responde ÚNICAMENTE con JSON válido:
+Corrige el análisis y responde ÚNICAMENTE con JSON válido, sin texto adicional antes ni después, sin explicar tu razonamiento:
 {{
   "nombre": "nombre corregido del plato",
   "calorias": 000,
@@ -828,13 +847,9 @@ Corrige el análisis y responde ÚNICAMENTE con JSON válido:
   "descripcion": "descripción corregida",
   "fuente": "internet|estimacion"
 }}"""
-        messages = [{'role': 'user', 'content': [
-            {'type': 'text', 'text': prompt},
-            {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{imagen_b64}'}},
-        ]}]
     else:
         prompt = """Analiza esta foto de comida. Si puedes identificar claramente el plato,
-responde ÚNICAMENTE con JSON válido:
+responde ÚNICAMENTE con JSON válido, sin texto adicional antes ni después, sin explicar tu razonamiento:
 {
   "nombre": "nombre del plato en español",
   "calorias": 000,
@@ -846,27 +861,24 @@ responde ÚNICAMENTE con JSON válido:
   "fuente": "estimacion"
 }
 Estima porciones promedio colombianas. Si no puedes identificar, usa confianza "baja"."""
-        messages = [{'role': 'user', 'content': [
-            {'type': 'text', 'text': prompt},
-            {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{imagen_b64}'}},
-        ]}]
+
+    messages = [{'role': 'user', 'content': [
+        {'type': 'text', 'text': prompt},
+        {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{imagen_b64}'}},
+    ]}]
 
     payload = {
-        'model':       'meta-llama/llama-4-scout-17b-16e-instruct',
-        'messages':    messages,
-        'max_tokens':  350,
-        'temperature': 0.1,
+        'model':            'qwen/qwen3.6-27b',
+        'messages':         messages,
+        'max_tokens':       500,
+        'temperature':      0.1,
+        'reasoning_effort': 'none',  # clave: sin esto el modelo antepone <think> y rompe el parseo
     }
 
     try:
-        resp      = requests.post(groq_url, headers=headers, json=payload, timeout=30)
-        resp.raise_for_status()
-        contenido = resp.json()['choices'][0]['message']['content'].strip()
-        if contenido.startswith('```'):
-            contenido = contenido.split('```')[1]
-            if contenido.startswith('json'):
-                contenido = contenido[4:]
-        return Response(json.loads(contenido))
+        contenido = _groq_chat(payload, timeout=30)
+        data = _extraer_json(contenido)
+        return Response(data)
     except requests.RequestException as e:
         return Response({'error': f'Error Groq: {str(e)}'}, status=status.HTTP_502_BAD_GATEWAY)
     except json.JSONDecodeError:
@@ -885,12 +897,6 @@ def analizar_etiqueta(request):
     if not imagen_b64:
         return Response({'error': 'Se requiere campo "imagen"'}, status=status.HTTP_400_BAD_REQUEST)
 
-    groq_url = 'https://api.groq.com/openai/v1/chat/completions'
-    headers  = {
-        'Authorization': f'Bearer {settings.GROQ_API_KEY}',
-        'Content-Type':  'application/json',
-    }
-
     info_web = None
     if correccion:
         info_web = _buscar_info_nutricional(correccion)
@@ -901,7 +907,7 @@ El usuario dice que en realidad es: "{correccion}".
 
 {'Información nutricional encontrada en internet: ' + json.dumps(info_web, ensure_ascii=False) if info_web and info_web.get('encontrado') else 'Estima basado en el nombre del producto.'}
 
-Corrige y responde ÚNICAMENTE con JSON válido:
+Corrige y responde ÚNICAMENTE con JSON válido, sin texto adicional antes ni después, sin explicar tu razonamiento:
 {{
   "nombre": "nombre corregido del producto",
   "descripcion": "tamaño de porción",
@@ -912,12 +918,8 @@ Corrige y responde ÚNICAMENTE con JSON válido:
   "confianza": "alta|media|baja",
   "fuente": "internet|estimacion"
 }}"""
-        messages = [{'role': 'user', 'content': [
-            {'type': 'text', 'text': prompt},
-            {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{imagen_b64}'}},
-        ]}]
     else:
-        prompt = """Analiza esta etiqueta nutricional y responde ÚNICAMENTE con JSON válido:
+        prompt = """Analiza esta etiqueta nutricional y responde ÚNICAMENTE con JSON válido, sin texto adicional antes ni después, sin explicar tu razonamiento:
 {
   "nombre": "nombre del producto",
   "descripcion": "tamaño de porción tal como aparece en la etiqueta",
@@ -929,32 +931,29 @@ Corrige y responde ÚNICAMENTE con JSON válido:
   "fuente": "etiqueta"
 }
 IMPORTANTE: usa los valores POR PORCIÓN. Si no puedes leer algún valor usa 0."""
-        messages = [{'role': 'user', 'content': [
-            {'type': 'text', 'text': prompt},
-            {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{imagen_b64}'}},
-        ]}]
+
+    messages = [{'role': 'user', 'content': [
+        {'type': 'text', 'text': prompt},
+        {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{imagen_b64}'}},
+    ]}]
 
     payload = {
-        'model':       'meta-llama/llama-4-scout-17b-16e-instruct',
-        'messages':    messages,
-        'max_tokens':  350,
-        'temperature': 0.1,
+        'model':            'qwen/qwen3.6-27b',
+        'messages':         messages,
+        'max_tokens':       500,
+        'temperature':      0.1,
+        'reasoning_effort': 'none',
     }
 
     try:
-        resp      = requests.post(groq_url, headers=headers, json=payload, timeout=30)
-        resp.raise_for_status()
-        contenido = resp.json()['choices'][0]['message']['content'].strip()
-        if contenido.startswith('```'):
-            contenido = contenido.split('```')[1]
-            if contenido.startswith('json'):
-                contenido = contenido[4:]
-        return Response(json.loads(contenido))
+        contenido = _groq_chat(payload, timeout=30)
+        data = _extraer_json(contenido)
+        return Response(data)
     except requests.RequestException as e:
         return Response({'error': f'Error Groq: {str(e)}'}, status=status.HTTP_502_BAD_GATEWAY)
     except json.JSONDecodeError:
         return Response({'error': 'Groq no devolvió JSON válido'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+
 
 # ── Chat con Bruce ────────────────────────────────────────────────────────
 
@@ -1054,22 +1053,18 @@ Si te preguntan cuántas calorías tiene algo, da un número concreto con contex
     messages += historial_groq
     messages.append({'role': 'user', 'content': mensaje_usuario})
 
-    groq_url = 'https://api.groq.com/openai/v1/chat/completions'
-    headers  = {
-        'Authorization': f'Bearer {settings.GROQ_API_KEY}',
-        'Content-Type':  'application/json',
-    }
     payload = {
-        'model':       'meta-llama/llama-4-scout-17b-16e-instruct',
-        'messages':    messages,
-        'max_tokens':  200,
-        'temperature': 0.8,
+        'model':            'qwen/qwen3.6-27b',
+        'messages':         messages,
+        'max_tokens':       300,
+        'temperature':      0.8,
+        'reasoning_format': 'hidden',  # deja pensar al modelo pero oculta el <think> del output
     }
 
     try:
-        resp     = requests.post(groq_url, headers=headers, json=payload, timeout=20)
-        resp.raise_for_status()
-        respuesta_bruce = resp.json()['choices'][0]['message']['content'].strip()
+        respuesta_bruce = _groq_chat(payload, timeout=20)
+        # Red de seguridad por si igual se cuela un bloque <think>
+        respuesta_bruce = _THINK_RE.sub('', respuesta_bruce).strip()
     except Exception:
         respuesta_bruce = 'Parcero, tuve un problema técnico. Intenta de nuevo.'
 
@@ -1087,12 +1082,6 @@ Si te preguntan cuántas calorías tiene algo, da un número concreto con contex
         'mensaje_bruce':   MensajeChatSerializer(msg_bruce).data,
     }, status=status.HTTP_201_CREATED)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# REEMPLAZA la view progreso_completo en views.py
-# Cambios respecto a la versión anterior:
-#   1. Calcula racha_gym y racha_comida reales (no limitadas a 7 días)
-#   2. Añade desglose_score al response para que el frontend lo muestre
-# ─────────────────────────────────────────────────────────────────────────────
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -1170,7 +1159,6 @@ def progreso_completo(request):
     racha_comida = 0
     dia_check    = hoy
 
-    # Racha gym: cuenta hacia atrás días con sesión completada
     while True:
         existe = SesionGym.objects.filter(
             usuario=user, fecha=dia_check, completada=True
@@ -1180,7 +1168,6 @@ def progreso_completo(request):
         racha_gym += 1
         dia_check -= timedelta(days=1)
 
-    # Racha comida: cuenta hacia atrás días con alguna comida registrada
     dia_check = hoy
     while True:
         tiene_comida = Comida.objects.filter(usuario=user, fecha=dia_check).exists()
@@ -1214,7 +1201,6 @@ def progreso_completo(request):
         'pesos':            pesos,
         'proyeccion':       proyeccion,
         'score_semanal':    score,
-        # NUEVO: desglose del score para el tooltip en frontend
         'desglose_score': {
             'dias_gym':      dias_gym,
             'dias_cal':      dias_cal,
@@ -1223,7 +1209,6 @@ def progreso_completo(request):
             'pct_cal':       round((dias_cal / 7) * 35),
             'pct_constancia': round((dias_activos / 7) * 15),
         },
-        # NUEVO: rachas reales calculadas hacia atrás sin límite de 7 días
         'racha_gym':        racha_gym,
         'racha_comida':     racha_comida,
         'logros':           logros,
@@ -1236,6 +1221,8 @@ def progreso_completo(request):
         'objetivo':         user.objetivo,
         'peso_objetivo':    user.peso_objetivo_kg,
     })
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def historial_ejercicios(request):
@@ -1258,7 +1245,6 @@ def historial_ejercicios(request):
             'series':  log.series,
         })
 
-    # Ordenar por cantidad de registros (más usados primero)
     resultado = [
         {'nombre': nombre, 'registros': registros}
         for nombre, registros in sorted(
@@ -1269,3 +1255,94 @@ def historial_ejercicios(request):
     ]
 
     return Response(resultado)
+
+
+# ── Rutinas personalizadas por día ──────────────────────────────────────────
+
+@api_view(['GET', 'PUT'])
+@permission_classes([IsAuthenticated])
+def rutinas_dia(request):
+    """
+    GET: devuelve todas las rutinas del usuario, indexadas por dia_semana.
+    PUT: guarda/actualiza UNA rutina de un día.
+         Body: { dia_semana: 0, nombre, rutina_id, emoji, ejercicios }
+    """
+    if request.method == 'GET':
+        rutinas = RutinaDia.objects.filter(usuario=request.user)
+        data = {
+            str(r.dia_semana): {
+                'nombre': r.nombre,
+                'rutina_id': r.rutina_id,
+                'emoji': r.emoji,
+                'ejercicios': r.ejercicios,
+            }
+            for r in rutinas
+        }
+        return Response(data)
+
+    dia_semana = request.data.get('dia_semana')
+    if dia_semana is None:
+        return Response({'error': 'Se requiere dia_semana'}, status=status.HTTP_400_BAD_REQUEST)
+
+    nombre     = request.data.get('nombre', '')
+    rutina_id  = request.data.get('rutina_id', 'A')
+    emoji      = request.data.get('emoji', '💪')
+    ejercicios = request.data.get('ejercicios', [])
+
+    rutina, _ = RutinaDia.objects.update_or_create(
+        usuario=request.user, dia_semana=dia_semana,
+        defaults={
+            'nombre': nombre,
+            'rutina_id': rutina_id,
+            'emoji': emoji,
+            'ejercicios': ejercicios,
+        },
+    )
+    return Response({
+        'nombre': rutina.nombre,
+        'rutina_id': rutina.rutina_id,
+        'emoji': rutina.emoji,
+        'ejercicios': rutina.ejercicios,
+    })
+
+
+# ── Ejercicios personalizados del pool ──────────────────────────────────────
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def ejercicios_personalizados(request):
+    """
+    GET: lista los ejercicios personalizados del usuario.
+    POST: crea uno nuevo.
+         Body: { nombre, musculo, series, reps, peso, color }
+    """
+    if request.method == 'GET':
+        ejercicios = EjercicioPersonalizado.objects.filter(usuario=request.user)
+        data = [
+            {
+                'nombre': e.nombre, 'musculo': e.musculo,
+                'series': e.series, 'reps': e.reps, 'peso': e.peso,
+                'color': e.color, 'custom': True,
+            }
+            for e in ejercicios
+        ]
+        return Response(data)
+
+    nombre = request.data.get('nombre', '').strip()
+    if not nombre:
+        return Response({'error': 'Se requiere nombre'}, status=status.HTTP_400_BAD_REQUEST)
+
+    ejercicio = EjercicioPersonalizado.objects.create(
+        usuario=request.user,
+        nombre=nombre,
+        musculo=request.data.get('musculo', 'Personalizado'),
+        series=request.data.get('series', 3),
+        reps=request.data.get('reps', '10'),
+        peso=request.data.get('peso', '—'),
+        color=request.data.get('color', '#4ade80'),
+    )
+    return Response({
+        'nombre': ejercicio.nombre, 'musculo': ejercicio.musculo,
+        'series': ejercicio.series, 'reps': ejercicio.reps, 'peso': ejercicio.peso,
+        'color': ejercicio.color, 'custom': True,
+    }, status=status.HTTP_201_CREATED)

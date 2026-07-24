@@ -281,7 +281,7 @@ function BruceCard({ resumen, animado, onOpenChat }) {
 // ── HomeScreen ────────────────────────────────────────────────────────────
 const descanso = esDiaDescanso()
 
-export default function HomeScreen({ t, lang, setLang, screen, onGoToProfile, onOpenChat }) {
+export default function HomeScreen({ t, lang, setLang, screen, usuario, onGoToProfile, onOpenChat }) {
   const [resumen,  setResumen]  = useState(null)
   const [cargando, setCargando] = useState(true)
   const [error,    setError]    = useState(null)
@@ -301,6 +301,8 @@ export default function HomeScreen({ t, lang, setLang, screen, onGoToProfile, on
   const metas    = resumen?.metas   ?? METAS
   const calPct   = Math.min(Math.round((totales.calorias / metas.calorias) * 100), 100)
   const restante = Math.max(metas.calorias - totales.calorias, 0)
+
+  const nombreUsuario = usuario?.first_name?.split(' ')[0] || usuario?.email?.split('@')[0] || ''
 
   const macros = [
     { label: t.protein, value: totales.proteina, unit: 'g', goal: metas.proteina, color: '#4ade80', icon: IconMeat,    pct: (totales.proteina / metas.proteina) * 100 },
@@ -352,7 +354,9 @@ export default function HomeScreen({ t, lang, setLang, screen, onGoToProfile, on
               </button>
             </div>
             <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '14px', marginBottom: '2px' }}>{getSaludo(lang)}</p>
-            <h1 style={{ fontSize: '36px', fontWeight: '700', letterSpacing: '-1.5px', lineHeight: 1 }}>Samuel 👋</h1>
+            <h1 style={{ fontSize: '36px', fontWeight: '700', letterSpacing: '-1.5px', lineHeight: 1 }}>
+              {nombreUsuario || 'ahí'} 👋
+            </h1>
           </div>
 
           <div style={{ display: 'flex', gap: '8px' }}>

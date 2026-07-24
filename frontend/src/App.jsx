@@ -20,18 +20,14 @@ const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
 const SCREENS   = ['home', 'food', 'gym', 'progress', 'chat']
 const NAV_ICONS = [IconHome, IconToolsKitchen2, IconBarbell, IconTrendingUp, null]
 
-// Anchos fijos de cada botón en el nav — calculados una vez al montar
-// para no depender de getBoundingClientRect bajo transform scale
 function FloatingTabBar({ screen, cambiarPantalla, imgBruce, t, setBruceHover }) {
-  const navRef     = useRef(null)
-  const btnRefs    = useRef([])
-  const pillRef    = useRef(null)
-  const animRef    = useRef(null)
-  const pillX      = useRef(0)
-  const targetX    = useRef(0)
-  const pillVis    = useRef(false)
-  // Cache de geometría sin transform (se llena en el primer mousemove)
-  const geoCache   = useRef(null)
+  const navRef  = useRef(null)
+  const btnRefs = useRef([])
+  const pillRef = useRef(null)
+  const animRef = useRef(null)
+  const pillX   = useRef(0)
+  const targetX = useRef(0)
+  const pillVis = useRef(false)
 
   const INFLUENCE_RADIUS = 110
   const MAX_SCALE        = 1.18
@@ -39,53 +35,44 @@ function FloatingTabBar({ screen, cambiarPantalla, imgBruce, t, setBruceHover })
 
   const labels = [...(t.nav ?? ['Inicio', 'Comida', 'Gym', 'Progreso']), 'Bruce']
 
-  // Construye el cache midiendo ANTES de cualquier transform
-  function buildGeoCache() {
+  function getBtnCenterX(i) {
     const nav = navRef.current
-    if (!nav) return
-    // Reseteamos transforms temporalmente para medir geometría real
-    btnRefs.current.forEach(btn => {
-      if (btn) btn.style.transform = 'none'
-    })
+    const btn = btnRefs.current[i]
+    if (!nav || !btn) return 0
     const navRect = nav.getBoundingClientRect()
-    geoCache.current = SCREENS.map((_, i) => {
-      const btn = btnRefs.current[i]
-      if (!btn) return null
-      const r = btn.getBoundingClientRect()
-      return {
-        left:   r.left - navRect.left,
-        right:  r.right - navRect.left,
-        width:  r.width,
-        centerX: r.left - navRect.left + r.width / 2,
-      }
-    })
+    const btnRect = btn.getBoundingClientRect()
+    return btnRect.left - navRect.left + btnRect.width / 2
   }
 
   function lerp(a, b, t) { return a + (b - a) * t }
 
-  function updateClips() {
-    const cache = geoCache.current
-    if (!cache) return
+  function getClipValues(i) {
+    const nav = navRef.current
+    if (!nav) return { fromLeft: 100, fromRight: 0 }
+    const btn = btnRefs.current[i]
+    if (!btn) return { fromLeft: 100, fromRight: 0 }
+    const navRect   = nav.getBoundingClientRect()
+    const btnRect   = btn.getBoundingClientRect()
+    const btnLeft   = btnRect.left - navRect.left
+    const btnRight  = btnLeft + btnRect.width
     const pillLeft  = pillX.current - PILL_W / 2
     const pillRight = pillLeft + PILL_W
+    const overlapL  = Math.max(pillLeft, btnLeft)
+    const overlapR  = Math.min(pillRight, btnRight)
+    if (overlapR <= overlapL) return { fromLeft: 100, fromRight: 0 }
+    const btnW = btnRect.width
+    return {
+      fromLeft:  +((overlapL - btnLeft)  / btnW * 100).toFixed(2),
+      fromRight: +((btnRight - overlapR) / btnW * 100).toFixed(2),
+    }
+  }
 
+  function updateClips() {
     SCREENS.forEach((_, i) => {
       const btn = btnRefs.current[i]
-      const geo = cache[i]
-      if (!btn || !geo) return
-
-      const overlapL = Math.max(pillLeft, geo.left)
-      const overlapR = Math.min(pillRight, geo.right)
-
-      let clip
-      if (overlapR <= overlapL) {
-        clip = 'inset(0 100% 0 0)'
-      } else {
-        const fromLeft  = Math.max(0, ((overlapL - geo.left) / geo.width * 100)).toFixed(2)
-        const fromRight = Math.max(0, ((geo.right - overlapR) / geo.width * 100)).toFixed(2)
-        clip = `inset(0 ${fromRight}% 0 ${fromLeft}%)`
-      }
-
+      if (!btn) return
+      const { fromLeft, fromRight } = getClipValues(i)
+      const clip = `inset(0 ${fromRight}% 0 ${fromLeft}%)`
       const iconGreen  = btn.querySelector('[data-icon-green]')
       const labelGreen = btn.querySelector('[data-label-green]')
       if (iconGreen)  iconGreen.style.clipPath  = clip
@@ -106,20 +93,13 @@ function FloatingTabBar({ screen, cambiarPantalla, imgBruce, t, setBruceHover })
   function updateTabBar(mouseX, mouseY) {
     const nav = navRef.current
     if (!nav) return
-
-    // Construir cache si no existe todavía
-    if (!geoCache.current) buildGeoCache()
-    const cache = geoCache.current
-    if (!cache) return
-
     const navRect = nav.getBoundingClientRect()
     const localX  = mouseX - navRect.left
     const localY  = mouseY - navRect.top
 
-    const eases = cache.map((geo) => {
-      if (!geo) return 0
-      const cx   = geo.centerX
-      const cy   = 30 // mitad aprox del nav
+    const eases = SCREENS.map((_, i) => {
+      const cx   = getBtnCenterX(i)
+      const cy   = navRect.height / 2
       const dist = Math.sqrt((localX - cx) ** 2 + (localY - cy) ** 2)
       const t    = Math.max(0, 1 - dist / INFLUENCE_RADIUS)
       return t * t * (3 - 2 * t)
@@ -129,8 +109,7 @@ function FloatingTabBar({ screen, cambiarPantalla, imgBruce, t, setBruceHover })
 
     let weightedX = 0
     eases.forEach((ease, i) => {
-      const geo = cache[i]
-      if (ease > 0 && geo) weightedX += geo.centerX * ease
+      if (ease > 0) weightedX += getBtnCenterX(i) * ease
     })
 
     SCREENS.forEach((id, i) => {
@@ -172,14 +151,13 @@ function FloatingTabBar({ screen, cambiarPantalla, imgBruce, t, setBruceHover })
     } else {
       pillVis.current = false
       if (pillRef.current) pillRef.current.style.opacity = '0'
-      SCREENS.forEach((id, i) => {
+      SCREENS.forEach((_, i) => {
         const btn = btnRefs.current[i]
         if (!btn) return
-        const isActive   = id === screen
         const iconGreen  = btn.querySelector('[data-icon-green]')
         const labelGreen = btn.querySelector('[data-label-green]')
-        if (iconGreen)  iconGreen.style.clipPath  = isActive ? 'inset(0 0% 0 0%)' : 'inset(0 100% 0 0)'
-        if (labelGreen) labelGreen.style.clipPath = isActive ? 'inset(0 0% 0 0%)' : 'inset(0 100% 0 0)'
+        if (iconGreen)  iconGreen.style.clipPath  = 'inset(0 100% 0 0)'
+        if (labelGreen) labelGreen.style.clipPath = 'inset(0 100% 0 0)'
       })
     }
   }
@@ -193,14 +171,14 @@ function FloatingTabBar({ screen, cambiarPantalla, imgBruce, t, setBruceHover })
       if (!btn) return
       btn.style.transform  = 'scale(1) translateY(0px)'
       btn.style.transition = 'transform 0.3s cubic-bezier(0.34,1.4,0.64,1)'
-      const isActive    = id === screen
       const iconBaseEl  = btn.querySelector('[data-icon-base]')
       const labelBaseEl = btn.querySelector('[data-label-base]')
       const iconGreen   = btn.querySelector('[data-icon-green]')
       const labelGreen  = btn.querySelector('[data-label-green]')
       const bruceEl     = btn.querySelector('[data-bruce]')
-      if (iconBaseEl)  iconBaseEl.style.color   = isActive ? '#4ade80' : 'rgba(255,255,255,0.38)'
-      if (labelBaseEl) labelBaseEl.style.color  = isActive ? '#4ade80' : 'rgba(255,255,255,0.38)'
+      const isActive = id === screen
+      if (iconBaseEl)  iconBaseEl.style.color  = isActive ? '#4ade80' : 'rgba(255,255,255,0.38)'
+      if (labelBaseEl) labelBaseEl.style.color = isActive ? '#4ade80' : 'rgba(255,255,255,0.38)'
       if (iconGreen)   iconGreen.style.clipPath  = isActive ? 'inset(0 0% 0 0%)' : 'inset(0 100% 0 0)'
       if (labelGreen)  labelGreen.style.clipPath = isActive ? 'inset(0 0% 0 0%)' : 'inset(0 100% 0 0)'
       if (bruceEl) {
@@ -208,8 +186,6 @@ function FloatingTabBar({ screen, cambiarPantalla, imgBruce, t, setBruceHover })
         bruceEl.style.filter      = isActive ? 'brightness(1)' : 'brightness(0.62)'
       }
     })
-    // Invalidar cache para que se recalcule en el próximo hover
-    geoCache.current = null
   }
 
   return (
@@ -425,7 +401,7 @@ export default function App() {
       }}>
         <main ref={mainRef} style={{ flex: 1, overflowY: 'auto', paddingBottom: '110px', WebkitOverflowScrolling: 'touch' }}>
           <div style={{ display: screen === 'home'     ? 'block' : 'none' }}>
-            <HomeScreen t={t} lang={lang} setLang={setLang} screen={screen} onGoToProfile={() => setPerfilAbierto(true)} onOpenChat={() => cambiarPantalla('chat')} />
+            <HomeScreen t={t} lang={lang} setLang={setLang} screen={screen} usuario={usuario} onGoToProfile={() => setPerfilAbierto(true)} onOpenChat={() => cambiarPantalla('chat')} />
           </div>
           <div style={{ display: screen === 'food'     ? 'block' : 'none' }}>
             <FoodScreen t={t} screen={screen} />

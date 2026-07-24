@@ -1,48 +1,51 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { IconCheck, IconChevronRight, IconPlus, IconX, IconClock, IconPencil, IconTrash, IconSearch, IconGripVertical, IconPalette } from '@tabler/icons-react'
-import { registrarSesion, logEjercicio, getSesionFecha } from '../api'
+import {
+  registrarSesion, logEjercicio, getSesionFecha,
+  getRutinasDia, guardarRutinaDia,
+  getEjerciciosPersonalizados, crearEjercicioPersonalizado,
+} from '../api'
 import bruceFace from '../assets/bruce-face.png'
 
 // ─── DATOS BASE ────────────────────────────────────────────────────────────────
 
 const RUTINAS_DEFAULT = {
-  0: { nombre: 'Piernas A', id: 'A', emoji: '🦵', ejercicios: [
-    { nombre: 'Curl femoral',          series: 4, reps: '10',  peso: '38–45 kg' },
-    { nombre: 'Extensión cuádricep',   series: 4, reps: '10',  peso: '52–58 kg' },
-    { nombre: 'Aductor/abductor',      series: 3, reps: '12',  peso: '66 kg'    },
-    { nombre: 'Pantorrilla',           series: 3, reps: '20',  peso: '20 kg'    },
-    { nombre: 'Plancha',               series: 4, reps: '45s', peso: '—'        },
-    { nombre: 'Plancha lateral',       series: 3, reps: '20s', peso: '—'        },
-    { nombre: 'Crunch en polea',       series: 3, reps: '15',  peso: 'ligero'   },
+  0: { nombre: 'Pecho/Hombros', id: 'B', emoji: '💪', ejercicios: [
+    { nombre: 'Chest press máquina',   series: 3, reps: '10', peso: '36–64 kg'   },
+    { nombre: 'Press banca plano',     series: 4, reps: '10', peso: '10–12.5 kg' },
+    { nombre: 'Pec fly',               series: 3, reps: '10', peso: '32–52 kg'   },
+    { nombre: 'Press militar',         series: 3, reps: '10', peso: '8–10 kg'    },
+    { nombre: 'Elevaciones laterales', series: 3, reps: '10', peso: '6–8 kg'     },
+    { nombre: 'Tríceps polea',         series: 3, reps: '10', peso: '18–27 kg'   },
+    { nombre: 'Elevación de piernas',  series: 3, reps: '12', peso: '—'          },
   ]},
-  1: { nombre: 'Pecho/Hombros', id: 'B', emoji: '💪', ejercicios: [
-    { nombre: 'Chest press máquina',   series: 3, reps: '10',  peso: '29–36 kg' },
-    { nombre: 'Press banca inclinado', series: 4, reps: '10',  peso: '7.5–10 kg'},
-    { nombre: 'Pec fly',               series: 3, reps: '12',  peso: '25–30 kg' },
-    { nombre: 'Press militar',         series: 3, reps: '10',  peso: '8–10 kg'  },
-    { nombre: 'Elevaciones laterales', series: 3, reps: '15',  peso: '5–6 kg'   },
-    { nombre: 'Tríceps polea',         series: 3, reps: '12',  peso: '14–18 kg' },
-    { nombre: 'Elevación de piernas',  series: 3, reps: '12',  peso: '—'        },
+  1: { nombre: 'Natación', id: 'D', emoji: '🏊', ejercicios: [
+    { nombre: 'Natación libre', series: 1, reps: '15-20m', peso: '—' },
   ]},
   2: { nombre: 'Espalda/Brazos', id: 'C', emoji: '🦾', ejercicios: [
-    { nombre: 'Jalón al pecho',        series: 4, reps: '10',  peso: '32–40 kg' },
-    { nombre: 'Remo mancuerna',        series: 4, reps: '10',  peso: '14–16 kg' },
-    { nombre: 'Remo máquina',          series: 3, reps: '12',  peso: 'explorar' },
-    { nombre: 'Curl bíceps',           series: 4, reps: '12',  peso: '8–12 kg'  },
-    { nombre: 'Curl martillo',         series: 3, reps: '12',  peso: '8–10 kg'  },
-    { nombre: 'Plancha',               series: 4, reps: '45s', peso: '—'        },
-    { nombre: 'Crunch bicicleta',      series: 3, reps: '20',  peso: '—'        },
+    { nombre: 'Jalón al pecho',   series: 4, reps: '10', peso: '32–45 kg' },
+    { nombre: 'Remo mancuerna',   series: 3, reps: '10', peso: '18–20 kg' },
+    { nombre: 'Remo máquina',     series: 3, reps: '10', peso: '32–45 kg' },
+    { nombre: 'Curl bíceps',      series: 4, reps: '10', peso: '8–10 kg'  },
+    { nombre: 'Curl martillo',    series: 3, reps: '10', peso: '8–10 kg'  },
+    { nombre: 'Plancha',          series: 4, reps: '45s', peso: '—'      },
+    { nombre: 'Crunch bicicleta', series: 3, reps: '20', peso: '—'       },
   ]},
-  3: { nombre: 'Descanso', id: 'R', emoji: '🛌', ejercicios: [] },
-  4: { nombre: 'Cardio', id: 'D', emoji: '🏃', ejercicios: [
-    { nombre: 'Caminadora 20 min',     series: 1, reps: '20m', peso: 'incl 15'  },
-    { nombre: 'Step-up',               series: 3, reps: '10',  peso: '18–20 kg' },
-    { nombre: 'Peso muerto unipodal',  series: 3, reps: '10',  peso: '14 kg'    },
-    { nombre: 'Pantorrilla unipodal',  series: 3, reps: '18',  peso: '20 kg'    },
-    { nombre: 'Aductor/abductor',      series: 3, reps: '12',  peso: '66 kg'    },
-    { nombre: 'Plancha + rotación',    series: 3, reps: '30s', peso: '—'        },
+  3: { nombre: 'Natación', id: 'D', emoji: '🏊', ejercicios: [
+    { nombre: 'Natación libre', series: 1, reps: '15-20m', peso: '—' },
   ]},
-  5: { nombre: 'Descanso', id: 'R', emoji: '🛌', ejercicios: [] },
+  4: { nombre: 'Pecho/Hombros o Core+Bici', id: 'B', emoji: '🔁', ejercicios: [
+    { nombre: 'Chest press máquina',   series: 3, reps: '10', peso: '36–64 kg'   },
+    { nombre: 'Press banca plano',     series: 4, reps: '10', peso: '10–12.5 kg' },
+    { nombre: 'Pec fly',               series: 3, reps: '10', peso: '32–52 kg'   },
+    { nombre: 'Press militar',         series: 3, reps: '10', peso: '8–10 kg'    },
+    { nombre: 'Elevaciones laterales', series: 3, reps: '10', peso: '6–8 kg'     },
+    { nombre: 'Tríceps polea',         series: 3, reps: '10', peso: '18–27 kg'   },
+    { nombre: 'Elevación de piernas',  series: 3, reps: '12', peso: '—'          },
+  ]},
+  5: { nombre: 'Natación', id: 'D', emoji: '🏊', ejercicios: [
+    { nombre: 'Natación libre', series: 1, reps: '15-20m', peso: '—' },
+  ]},
   6: { nombre: 'Descanso', id: 'R', emoji: '🛌', ejercicios: [] },
 }
 
@@ -105,7 +108,6 @@ const COLORES_MUSCULO = {
   'Cardio':   { text: '#fb923c', bg: 'rgba(251,146,60,0.12)' },   // naranja — rutina D
 }
 
-const CUSTOM_POOL_KEY = 'nutrifit_custom_ejercicios'
 
 // Devuelve { text, bg } para un ejercicio del pool, ya sea predefinido o personalizado
 function colorParaEjercicio(ex, colorFallback) {
@@ -625,16 +627,11 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose, onCre
 
 // ─── COMPONENTE PRINCIPAL ──────────────────────────────────────────────────────
 export default function GymScreen({ t }) {
+  // Arrancan con los valores por defecto; se sobreescriben con lo que venga
+  // del backend en cuanto cargue (ver useEffect de carga inicial más abajo).
   const [rutinas, setRutinas]           = useState(RUTINAS_DEFAULT)
-  const [pool, setPool]                 = useState(() => {
-    try {
-      const saved = localStorage.getItem(CUSTOM_POOL_KEY)
-      const custom = saved ? JSON.parse(saved) : []
-      return [...POOL_DEFAULT, ...custom]
-    } catch {
-      return POOL_DEFAULT
-    }
-  })
+  const [pool, setPool]                 = useState(POOL_DEFAULT)
+  const [cargandoRutinas, setCargandoRutinas] = useState(true)
   const [selectedFecha, setSelectedFecha] = useState(null)
   const [completados, setCompletados]   = useState({})
   const [logData, setLogData]           = useState({})       // { fecha: { idx: { peso, reps, nota } } }
@@ -647,6 +644,49 @@ export default function GymScreen({ t }) {
   const [semanaAnterior, setSemanaAnterior] = useState({})   // { fecha: [ejerciciosGuardados] }
 
   const [hoy] = useState(() => new Date().toISOString().split('T')[0])
+
+  // ── Cargar rutinas personalizadas y pool de ejercicios desde el backend ──
+  useEffect(() => {
+    let cancelado = false
+
+    const cargarDatosGym = async () => {
+      try {
+        const [rutinasGuardadas, ejerciciosCustom] = await Promise.all([
+          getRutinasDia().catch(() => ({})),
+          getEjerciciosPersonalizados().catch(() => []),
+        ])
+
+        if (cancelado) return
+
+        // Merge: empieza de los defaults y sobreescribe los días que el usuario editó
+        if (rutinasGuardadas && Object.keys(rutinasGuardadas).length > 0) {
+          setRutinas(prev => {
+            const merged = { ...prev }
+            Object.entries(rutinasGuardadas).forEach(([dia, data]) => {
+              merged[Number(dia)] = {
+                nombre: data.nombre,
+                id: data.rutina_id,
+                emoji: data.emoji,
+                ejercicios: data.ejercicios,
+              }
+            })
+            return merged
+          })
+        }
+
+        if (Array.isArray(ejerciciosCustom) && ejerciciosCustom.length > 0) {
+          setPool(prev => [...POOL_DEFAULT, ...ejerciciosCustom])
+        }
+      } catch (e) {
+        console.error('Error cargando datos de gym:', e)
+      } finally {
+        if (!cancelado) setCargandoRutinas(false)
+      }
+    }
+
+    cargarDatosGym()
+    return () => { cancelado = true }
+  }, [])
 
   // ── Semana actual ──
   const semana = [...Array(7)].map((_, i) => {
@@ -778,25 +818,49 @@ export default function GymScreen({ t }) {
     }
   }
 
-  // ── Editor de rutina ──
-  const handleSaveRutina = (dayOfWeek, { nombre, ejercicios }) => {
+  // ── Editor de rutina — guarda en el backend para que se vea en todos los dispositivos ──
+  const handleSaveRutina = async (dayOfWeek, { nombre, ejercicios }) => {
+    const rutinaActual = rutinas[dayOfWeek]
+
+    // Actualización optimista: se ve el cambio al instante en la UI
     setRutinas(prev => ({
       ...prev,
       [dayOfWeek]: { ...prev[dayOfWeek], nombre, ejercicios },
     }))
     setEditorDia(null)
+
+    try {
+      await guardarRutinaDia({
+        dia_semana: dayOfWeek,
+        nombre,
+        rutina_id: rutinaActual.id,
+        emoji: rutinaActual.emoji,
+        ejercicios,
+      })
+    } catch (e) {
+      console.error('Error guardando rutina en el servidor:', e)
+      // Si falla el guardado remoto, revertimos para no dar falsa sensación de éxito
+      setRutinas(prev => ({ ...prev, [dayOfWeek]: rutinaActual }))
+    }
   }
 
-  // ── Crear ejercicio personalizado y guardarlo en el pool persistente ──
-  const handleCrearEjercicioPersonalizado = (ejercicio) => {
-    setPool(prev => {
-      const nuevoPool = [...prev, ejercicio]
-      try {
-        const customOnly = nuevoPool.filter(e => e.custom)
-        localStorage.setItem(CUSTOM_POOL_KEY, JSON.stringify(customOnly))
-      } catch {}
-      return nuevoPool
-    })
+  // ── Crear ejercicio personalizado — se guarda en el backend (pool compartido entre dispositivos) ──
+  const handleCrearEjercicioPersonalizado = async (ejercicio) => {
+    // Actualización optimista
+    setPool(prev => [...prev, ejercicio])
+
+    try {
+      await crearEjercicioPersonalizado({
+        nombre: ejercicio.nombre,
+        musculo: ejercicio.musculo,
+        series: ejercicio.series,
+        reps: ejercicio.reps,
+        peso: ejercicio.peso,
+        color: ejercicio.color,
+      })
+    } catch (e) {
+      console.error('Error guardando ejercicio personalizado en el servidor:', e)
+    }
   }
 
   const diaSeleccionado       = semana.find(d => d.fecha === selectedFecha)
