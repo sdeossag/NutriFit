@@ -377,10 +377,12 @@ function CrearEjercicioForm({ colores, onCrear, onCancel }) {
 function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose, onCrearEjercicio }) {
   const [ejercicios, setEjercicios] = useState([...rutina.ejercicios])
   const [nombre, setNombre]         = useState(rutina.nombre)
+  const [emoji, setEmoji]           = useState(rutina.emoji || '💪')
   const [vistaPool, setVistaPool]   = useState(false)
   const [busqueda, setBusqueda]     = useState('')
   const [filtroMus, setFiltroMus]   = useState('Todos')
   const [mostrarCrear, setMostrarCrear] = useState(false)
+  const [mostrarPalette, setMostrarPalette] = useState(false)
 
   const musculos = ['Todos', ...new Set(pool.map(e => e.musculo))]
 
@@ -441,20 +443,49 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose, onCre
           <IconX size={20} />
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <input
-            value={nombre}
-            onChange={e => setNombre(e.target.value)}
-            style={{
-              background: 'none', border: 'none', outline: 'none',
-              fontSize: '20px', fontWeight: '700', color: '#fff',
-              fontFamily: 'inherit', width: '100%', letterSpacing: '-0.5px',
-            }}
-          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <input
+              value={nombre}
+              onChange={e => setNombre(e.target.value)}
+              style={{
+                background: 'none', border: 'none', outline: 'none',
+                fontSize: '20px', fontWeight: '700', color: '#fff',
+                fontFamily: 'inherit', width: '100%', letterSpacing: '-0.5px',
+              }}
+            />
+            <button
+              onClick={() => setMostrarPalette(p => !p)}
+              title='Cambiar emoji'
+              style={{
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                fontSize: '22px', lineHeight: 1, padding: '6px', color: '#fff'
+              }}
+            >
+              {emoji}
+            </button>
+          </div>
           <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', marginTop: '2px' }}>
             {ejercicios.length} ejercicios
           </p>
+
+          {/* Emoji palette */}
+          {mostrarPalette && (
+            <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
+              {['💪','🏃','🚴','🏊','🦾','🏋️‍♀️','🧘','🔁','🛌','🔥','⚡️','😊','🥇','🧠','💥'].map(em => (
+                <button key={em} onClick={() => { setEmoji(em); setMostrarPalette(false) }} style={{
+                  padding: '6px 8px', borderRadius: '10px', border: 'none', cursor: 'pointer', background: 'rgba(255,255,255,0.03)', color: '#fff', fontSize: '16px'
+                }}>{em}</button>
+              ))}
+              <input
+                placeholder='Pegar emoji'
+                value={emoji}
+                onChange={e => setEmoji(e.target.value)}
+                style={{ background: 'rgba(255,255,255,0.03)', border: '0.5px solid rgba(255,255,255,0.06)', padding: '8px', borderRadius: '10px', color: '#fff', minWidth: '100px' }}
+              />
+            </div>
+          )}
         </div>
-        <button onClick={() => onSave({ nombre, ejercicios })} style={{
+        <button onClick={() => onSave({ nombre, ejercicios, emoji })} style={{
           background: colores.text, color: '#000',
           border: 'none', borderRadius: '12px',
           padding: '12px 18px', fontSize: '13px', fontWeight: '700',
@@ -819,13 +850,13 @@ export default function GymScreen({ t }) {
   }
 
   // ── Editor de rutina — guarda en el backend para que se vea en todos los dispositivos ──
-  const handleSaveRutina = async (dayOfWeek, { nombre, ejercicios }) => {
+  const handleSaveRutina = async (dayOfWeek, { nombre, ejercicios, emoji: newEmoji }) => {
     const rutinaActual = rutinas[dayOfWeek]
 
     // Actualización optimista: se ve el cambio al instante en la UI
     setRutinas(prev => ({
       ...prev,
-      [dayOfWeek]: { ...prev[dayOfWeek], nombre, ejercicios },
+      [dayOfWeek]: { ...prev[dayOfWeek], nombre, ejercicios, emoji: newEmoji ?? prev[dayOfWeek].emoji },
     }))
     setEditorDia(null)
 
@@ -834,7 +865,7 @@ export default function GymScreen({ t }) {
         dia_semana: dayOfWeek,
         nombre,
         rutina_id: rutinaActual.id,
-        emoji: rutinaActual.emoji,
+        emoji: newEmoji ?? rutinaActual.emoji,
         ejercicios,
       })
     } catch (e) {
