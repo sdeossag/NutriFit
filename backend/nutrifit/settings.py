@@ -94,6 +94,11 @@ GOOGLE_CLIENT_IDS = [
 APPLE_BUNDLE_ID = os.getenv('APPLE_BUNDLE_ID', 'com.tuapp.nutrifit')
 GROQ_API_KEY    = os.getenv('GROQ_API_KEY', '')
 
+# VAPID keys para Web Push (genera con: python manage.py generate_vapid_keys)
+VAPID_PUBLIC_KEY   = os.getenv('VAPID_PUBLIC_KEY', '')
+VAPID_PRIVATE_KEY  = os.getenv('VAPID_PRIVATE_KEY', '').replace('\\n', '\n')
+VAPID_CLAIM_EMAIL  = os.getenv('VAPID_CLAIM_EMAIL', 'admin@nutrifit.app')
+
 STATIC_URL  = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 MEDIA_URL   = '/media/'

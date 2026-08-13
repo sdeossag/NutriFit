@@ -332,3 +332,23 @@ class EjercicioPersonalizado(models.Model):
 
     def __str__(self):
         return f"{self.nombre} ({self.usuario})"
+
+
+# ──────────────────────────────────────────────
+#  PUSH NOTIFICATIONS
+# ──────────────────────────────────────────────
+
+class PushSubscription(models.Model):
+    usuario      = models.ForeignKey('Usuario', on_delete=models.CASCADE, related_name='push_subscriptions')
+    endpoint     = models.TextField(unique=True)
+    p256dh       = models.TextField()
+    auth         = models.TextField()
+    ultima_notif = models.DateField(null=True, blank=True)
+    creado_en    = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name        = 'Suscripción push'
+        verbose_name_plural = 'Suscripciones push'
+
+    def __str__(self):
+        return f"Push {self.usuario} — {self.endpoint[:60]}"

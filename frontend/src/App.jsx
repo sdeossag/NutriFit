@@ -4,6 +4,7 @@ import { IconHome, IconToolsKitchen2, IconBarbell, IconTrendingUp } from '@table
 
 import T from './constants/translations'
 import { getMiPerfil, limpiarTokens, getAccessToken } from './api'
+import { checkPushHoy } from './utils/notificaciones'
 import LoginScreen       from './screens/LoginScreen'
 import OnboardingScreen  from './screens/OnboardingScreen'
 import HomeScreen        from './screens/HomeScreen'
@@ -350,7 +351,7 @@ export default function App() {
   useEffect(() => {
     if (getAccessToken()) {
       getMiPerfil()
-        .then(data => setUsuario(data.usuario))
+        .then(data => { setUsuario(data.usuario); checkPushHoy() })
         .catch(() => limpiarTokens())
         .finally(() => setAuthChecked(true))
     } else {

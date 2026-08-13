@@ -56,4 +56,10 @@ urlpatterns = [
     path('chat/',                       views.sesiones_chat,        name='chat-sesiones'),
     path('chat/<int:pk>/',              views.sesion_chat_detalle,  name='chat-detalle'),
     path('chat/<int:pk>/mensaje/',      views.bruce_chat,           name='chat-mensaje'),
+
+    # ─────────────────── PUSH NOTIFICATIONS ─────────────────
+    path('push/subscribe/',             views.push_suscribir,       name='push-subscribe'),
+    path('push/unsubscribe/',           views.push_desuscribir,     name='push-unsubscribe'),
+    path('push/estado/',                views.push_estado,          name='push-estado'),
+    path('push/check/',                 views.push_check,           name='push-check'),
 ]

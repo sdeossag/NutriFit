@@ -1,10 +1,14 @@
 import { useState, useEffect, useRef } from 'react'
 import {
-  IconBell, IconFlame, IconDroplet, IconMeat,
+  IconBell, IconBellOff, IconFlame, IconDroplet, IconMeat,
   IconWheat, IconUserCircle, IconMessageCircle,
 } from '@tabler/icons-react'
 import MacroBar    from '../components/MacroBar'
 import { getResumenHoy, getBruceFrase, sesionDeHoy } from '../api'
+import {
+  soportaNotificaciones, permisoActual, estasSuscrito,
+  suscribir, desuscribir,
+} from '../utils/notificaciones'
 
 import bruceTuxedo       from '../assets/bruce-tuxedo.png'
 import bruceTuxedoTriste from '../assets/bruce-tuxedo-triste.png'
@@ -275,10 +279,16 @@ function BruceCard({ resumen, animado, onOpenChat, usuario }) {
 const descanso = esDiaDescanso()
 
 export default function HomeScreen({ t, lang, setLang, screen, usuario, onGoToProfile, onOpenChat }) {
-  const [resumen,  setResumen]  = useState(null)
-  const [cargando, setCargando] = useState(true)
-  const [error,    setError]    = useState(null)
-  const [animado,  setAnimado]  = useState(false)
+  const [resumen,      setResumen]      = useState(null)
+  const [cargando,     setCargando]     = useState(true)
+  const [error,        setError]        = useState(null)
+  const [animado,      setAnimado]      = useState(false)
+  const [suscrito,     setSuscrito]     = useState(false)
+  const [cargandoBell, setCargandoBell] = useState(false)
+
+  useEffect(() => {
+    estasSuscrito().then(setSuscrito)
+  }, [])
 
   useEffect(() => {
     if (screen !== 'home') return
@@ -289,6 +299,31 @@ export default function HomeScreen({ t, lang, setLang, screen, usuario, onGoToPr
       .catch(()   => setError(true))
       .finally(() => { setCargando(false); setTimeout(() => setAnimado(true), 80) })
   }, [screen])
+
+  const toggleNotificaciones = async () => {
+    if (!soportaNotificaciones()) {
+      alert('Tu navegador no soporta notificaciones push.')
+      return
+    }
+    if (permisoActual() === 'denied') {
+      alert('Las notificaciones están bloqueadas. Habilítalas en la configuración de tu navegador.')
+      return
+    }
+    setCargandoBell(true)
+    try {
+      if (suscrito) {
+        await desuscribir()
+        setSuscrito(false)
+      } else {
+        await suscribir()
+        setSuscrito(true)
+      }
+    } catch (e) {
+      console.error('Error notificaciones:', e)
+    } finally {
+      setCargandoBell(false)
+    }
+  }
 
   const totales  = resumen?.totales ?? { calorias: 0, proteina: 0, carbos: 0, grasas: 0 }
   const metas    = resumen?.metas   ?? METAS
@@ -353,12 +388,23 @@ export default function HomeScreen({ t, lang, setLang, screen, usuario, onGoToPr
           </div>
 
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button style={{
-              width: '40px', height: '40px', borderRadius: '12px',
-              background: 'rgba(255,255,255,0.05)', border: '0.5px solid rgba(255,255,255,0.08)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
-            }}>
-              <IconBell size={17} color='rgba(255,255,255,0.45)' />
+            <button
+              onClick={toggleNotificaciones}
+              disabled={cargandoBell}
+              style={{
+                width: '40px', height: '40px', borderRadius: '12px',
+                background: suscrito ? 'rgba(74,222,128,0.12)' : 'rgba(255,255,255,0.05)',
+                border: suscrito ? '0.5px solid rgba(74,222,128,0.35)' : '0.5px solid rgba(255,255,255,0.08)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                cursor: cargandoBell ? 'default' : 'pointer',
+                opacity: cargandoBell ? 0.6 : 1,
+                transition: 'all 0.25s ease',
+              }}
+            >
+              {suscrito
+                ? <IconBell     size={17} color='#4ade80' />
+                : <IconBellOff  size={17} color='rgba(255,255,255,0.45)' />
+              }
             </button>
             <button onClick={onGoToProfile} style={{
               width: '40px', height: '40px', borderRadius: '12px',

@@ -18,7 +18,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import (
     Comida, SesionGym, EjercicioLog, PesoCorporal, AlimentoAlacena,
-    MensajeChat, SesionChat, RutinaDia, EjercicioPersonalizado
+    MensajeChat, SesionChat, RutinaDia, EjercicioPersonalizado, PushSubscription
 )
 from .serializers import (
     ComidaSerializer, SesionGymSerializer,
@@ -1464,3 +1464,128 @@ def ejercicios_personalizados(request):
         'series': ejercicio.series, 'reps': ejercicio.reps, 'peso': ejercicio.peso,
         'color': ejercicio.color, 'custom': True,
     }, status=status.HTTP_201_CREATED)
+
+# ──────────────────────────────────────────────
+#  PUSH NOTIFICATIONS
+# ──────────────────────────────────────────────
+
+def _send_push(sub, titulo, cuerpo):
+    """Envía un Web Push a una suscripción. Elimina la sub si caducó (410)."""
+    try:
+        from pywebpush import webpush, WebPushException
+        webpush(
+            subscription_info={
+                'endpoint': sub.endpoint,
+                'keys': {'p256dh': sub.p256dh, 'auth': sub.auth},
+            },
+            data=json.dumps({'title': titulo, 'body': cuerpo}),
+            vapid_private_key=settings.VAPID_PRIVATE_KEY,
+            vapid_claims={'sub': f'mailto:{settings.VAPID_CLAIM_EMAIL}'},
+        )
+        return True
+    except Exception as exc:
+        resp = getattr(exc, 'response', None)
+        if resp is not None and resp.status_code == 410:
+            sub.delete()
+        return False
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def push_suscribir(request):
+    endpoint = request.data.get('endpoint', '').strip()
+    p256dh   = request.data.get('p256dh', '').strip()
+    auth     = request.data.get('auth', '').strip()
+
+    if not all([endpoint, p256dh, auth]):
+        return Response({'error': 'Faltan campos'}, status=status.HTTP_400_BAD_REQUEST)
+
+    sub, created = PushSubscription.objects.update_or_create(
+        endpoint=endpoint,
+        defaults={'usuario': request.user, 'p256dh': p256dh, 'auth': auth},
+    )
+    return Response({'status': 'ok', 'nuevo': created})
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def push_desuscribir(request):
+    PushSubscription.objects.filter(usuario=request.user).delete()
+    return Response({'status': 'ok'})
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def push_estado(request):
+    suscrito = PushSubscription.objects.filter(usuario=request.user).exists()
+    return Response({'suscrito': suscrito})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def push_check(request):
+    """
+    Llama al arrancar la app. Si el usuario tiene push activo y aún no recibió
+    notificación hoy, genera la frase de Bruce y la envía.
+    """
+    hoy  = timezone.localdate()
+    subs = PushSubscription.objects.filter(usuario=request.user).exclude(ultima_notif=hoy)
+
+    if not subs.exists():
+        return Response({'enviado': False})
+
+    user = request.user
+    hora = timezone.localtime().hour
+    comidas_hoy  = Comida.objects.filter(usuario=user, fecha=hoy)
+    calorias_hoy = sum(c.calorias for c in comidas_hoy)
+    proteina_hoy = round(sum(c.proteina for c in comidas_hoy), 1)
+    meta_cal     = user.meta_calorias or 1900
+    meta_prot    = user.meta_proteina or 140
+    pct_cal      = round((calorias_hoy / meta_cal) * 100) if meta_cal else 0
+
+    if hora < 12:
+        momento = 'mañana'
+    elif hora < 18:
+        momento = 'tarde'
+    else:
+        momento = 'noche'
+
+    sesion = SesionGym.objects.filter(usuario=user, fecha=hoy).first()
+    fue_gym = sesion.completada if sesion else False
+    descanso = hoy.weekday() >= 5
+
+    nombre = user.first_name or user.email.split('@')[0]
+    objetivo_txt = {'perder': 'perder grasa', 'ganar': 'ganar músculo'}.get(
+        getattr(user, 'objetivo', 'mantener'), 'mantener peso'
+    )
+
+    prompt = (
+        f"Eres Bruce, un dachshund coach directo y sin rodeos. "
+        f"Escríbele a {nombre} una notificación push de máximo 90 caracteres. "
+        f"Sin emojis. Sin comillas. Solo el texto.\n\n"
+        f"Contexto: son las {hora}h ({momento}), objetivo: {objetivo_txt}, "
+        f"calorías hoy: {calorias_hoy}/{meta_cal} ({pct_cal}%), "
+        f"proteína: {proteina_hoy}g/{meta_prot}g, "
+        f"gym hoy: {'sí' if fue_gym else 'no' if not descanso else 'día de descanso'}."
+    )
+
+    try:
+        frase = _groq_chat({
+            'model': 'qwen/qwen3.6-27b',
+            'messages': [{'role': 'user', 'content': prompt}],
+            'max_tokens': 60,
+            'temperature': 0.9,
+            'reasoning_effort': 'none',
+        }, timeout=12)
+        frase = _THINK_RE.sub('', frase).strip().strip('"').strip("'")
+    except Exception:
+        frase = 'Registra tus comidas hoy. La constancia manda.'
+
+    enviados = 0
+    for sub in subs:
+        if _send_push(sub, 'Bruce dice:', frase):
+            sub.ultima_notif = hoy
+            sub.save(update_fields=['ultima_notif'])
+            enviados += 1
+
+    return Response({'enviado': enviados > 0, 'frase': frase})
