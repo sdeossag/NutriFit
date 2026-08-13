@@ -350,28 +350,40 @@ def generar_plan_groq(request):
         'ganar':    'ganar músculo',
     }.get(user.objetivo, 'mantener peso')
 
-    prompt = f"""Eres un nutricionista experto. Crea un plan de alimentación personalizado para este usuario colombiano:
+    system_msg = (
+        'Eres un nutricionista deportivo especializado en alimentación colombiana. '
+        'Conoces a fondo los alimentos del mercado colombiano, sus porciones reales y sus macros exactos. '
+        'Respondes únicamente con JSON válido, sin texto adicional.'
+    )
 
-PERFIL:
-- Objetivo: {objetivo_texto}
-- Calorías diarias meta: {user.meta_calorias} kcal
-- Proteína diaria meta: {user.meta_proteina}g
-- Carbohidratos diarios meta: {user.meta_carbos}g
-- Grasas diarias meta: {user.meta_grasas}g
-- Alimentos que le gustan: {gustados}
-- Alimentos que NO le gustan: {no_gustados}
-- Restricciones dietarias: {restricciones}
+    prompt = f"""Crea una alacena personalizada para este usuario colombiano con objetivo de {objetivo_texto}.
 
-TAREA:
-Genera una lista de 15 a 20 alimentos/preparaciones concretas y realistas que este usuario pueda comer frecuentemente. Deben ser alimentos colombianos o fácilmente conseguibles en Colombia. Incluye desayunos, almuerzos, cenas y snacks.
+METAS DIARIAS:
+- Calorías: {user.meta_calorias} kcal
+- Proteína: {user.meta_proteina}g | Carbos: {user.meta_carbos}g | Grasas: {user.meta_grasas}g
 
-Responde ÚNICAMENTE con este JSON válido, sin texto adicional:
+PREFERENCIAS:
+- Le gustan: {gustados}
+- No le gustan: {no_gustados}
+- Restricciones: {restricciones}
+
+INSTRUCCIONES:
+1. Genera entre 15 y 20 alimentos o preparaciones concretas, variadas y reales.
+2. Prioriza alimentos colombianos o conseguibles en supermercados colombianos (Éxito, D1, Ara, Jumbo).
+3. Distribuye entre: desayunos, almuerzos, cenas y snacks.
+4. Los macros deben ser precisos para la porción indicada, no valores genéricos.
+5. Cada porción debe ser práctica (no "100g" de pollo crudo — di "1 pechuga mediana cocida (120g)").
+6. Para objetivo de ganar músculo: prioriza fuentes proteicas y carbos de calidad.
+   Para perder grasa: prioriza volumen con pocas calorías y alta saciedad.
+   Para mantener: balance entre todos los macros.
+
+Responde ÚNICAMENTE con este JSON válido:
 {{
-  "plan_descripcion": "descripción breve del enfoque del plan en 2 oraciones",
+  "plan_descripcion": "2 oraciones describiendo el enfoque del plan y por qué se adaptó a este perfil",
   "alimentos": [
     {{
       "nombre": "nombre del alimento o preparación",
-      "descripcion": "cantidad/porción típica, ej: 1 taza (200g)",
+      "descripcion": "porción específica y práctica, ej: 1 pechuga mediana cocida (120g)",
       "calorias": 000,
       "proteina": 00.0,
       "carbos": 00.0,
@@ -382,10 +394,13 @@ Responde ÚNICAMENTE con este JSON válido, sin texto adicional:
 
     payload = {
         'model': 'qwen/qwen3.6-27b',
-        'messages': [{'role': 'user', 'content': prompt}],
+        'messages': [
+            {'role': 'system', 'content': system_msg},
+            {'role': 'user',   'content': prompt},
+        ],
         'max_tokens': 2500,
-        'temperature': 0.4,
-        'reasoning_effort': 'none',  # sin esto, Qwen antepone <think>...</think> y rompe el JSON
+        'temperature': 0.3,
+        'reasoning_effort': 'none',
     }
 
     try:
@@ -692,13 +707,19 @@ def alacena_usar(request, pk):
 def bruce_frase(request):
     import random
 
-    calorias_hoy  = request.data.get('calorias_hoy', 0)
-    meta_calorias = request.data.get('meta_calorias', 1900)
-    proteina_hoy  = request.data.get('proteina_hoy', 0)
-    meta_proteina = request.data.get('meta_proteina', 140)
-    fue_al_gym    = request.data.get('fue_al_gym', False)
-    es_dia_gym    = request.data.get('es_dia_gym', True)
-    hora          = request.data.get('hora', 12)
+    calorias_hoy    = request.data.get('calorias_hoy', 0)
+    meta_calorias   = request.data.get('meta_calorias', 1900)
+    proteina_hoy    = request.data.get('proteina_hoy', 0)
+    meta_proteina   = request.data.get('meta_proteina', 140)
+    carbos_hoy      = request.data.get('carbos_hoy', 0)
+    meta_carbos     = request.data.get('meta_carbos', 200)
+    fue_al_gym      = request.data.get('fue_al_gym', False)
+    es_dia_gym      = request.data.get('es_dia_gym', True)
+    hora            = request.data.get('hora', 12)
+    racha_gym       = request.data.get('racha_gym', 0)
+    racha_comida    = request.data.get('racha_comida', 0)
+    nombre_usuario  = request.data.get('nombre_usuario') or request.user.first_name or 'parcero'
+    objetivo        = request.data.get('objetivo', 'mantener')
 
     pct_calorias  = round((calorias_hoy / meta_calorias) * 100) if meta_calorias else 0
     pct_proteina  = round((proteina_hoy / meta_proteina) * 100) if meta_proteina else 0
@@ -707,11 +728,11 @@ def bruce_frase(request):
     elif hora < 18: momento = 'tarde'
     else:           momento = 'noche'
 
-    if pct_calorias >= 95 and (fue_al_gym or not es_dia_gym):
+    if pct_calorias >= 95 and pct_proteina >= 90 and (fue_al_gym or not es_dia_gym):
         pose = 'muyfeliz'
-    elif pct_calorias >= 70 and fue_al_gym:
+    elif pct_calorias >= 75 and fue_al_gym:
         pose = 'sonrisa'
-    elif pct_calorias < 30 and hora >= 18:
+    elif pct_calorias < 25 and hora >= 19:
         pose = 'triste'
     elif not fue_al_gym and es_dia_gym and hora >= 16:
         pose = 'determinado'
@@ -720,32 +741,49 @@ def bruce_frase(request):
     else:
         pose = 'normal'
 
-    contexto = f"""
-- Hora del día: {momento} ({hora}h)
-- Calorías consumidas: {calorias_hoy} de {meta_calorias} kcal ({pct_calorias}%)
-- Proteína consumida: {proteina_hoy}g de {meta_proteina}g ({pct_proteina}%)
-- ¿Es día de gym?: {'Sí' if es_dia_gym else 'No, es día de descanso'}
-- ¿Fue al gym hoy?: {'Sí, ya entrenó' if fue_al_gym else ('No ha ido aún' if es_dia_gym else 'No aplica, es descanso')}
-"""
+    objetivo_texto = {'perder': 'perder grasa', 'ganar': 'ganar músculo'}.get(objetivo, 'mantener peso')
 
-    prompt = f"""Eres Bruce, un dachshund miniatura con personalidad de entrenador personal de élite.
-Eres directo, motivador, a veces sarcástico pero siempre con cariño. Hablas como un coach real, no como un bot.
-NUNCA uses emojis. Máximo 2 oraciones cortas. En español colombiano casual.
-NUNCA menciones el gym si es día de descanso.
-Si es día de descanso: habla solo de nutrición, recuperación o descanso activo.
-Si cumplió todo: celebra con actitud, no con exageración.
-Si le falta comer: motívalo sin ser condescendiente.
+    gym_estado = (
+        'Sí, ya entrenó hoy' if fue_al_gym
+        else ('No ha ido aún — debería ir' if es_dia_gym
+        else 'Día de descanso')
+    )
 
-Contexto de hoy:
-{contexto}
+    racha_info = ''
+    if racha_gym >= 3:
+        racha_info = f'Lleva {racha_gym} días seguidos de gym. '
+    if racha_comida >= 5:
+        racha_info += f'Lleva {racha_comida} días registrando comida sin falla.'
 
-Genera UNA frase personalizada basada en ese contexto. Solo la frase, sin comillas, sin explicaciones."""
+    prompt = f"""Eres Bruce, un dachshund salchicha que es el coach personal de {nombre_usuario}. \
+Hablas como parcero colombiano — directo, sarcástico con cariño, sin rodeos. \
+Usas vocabulario de fitness natural ("macros", "déficit", "proteína", "racha"). \
+NUNCA usas emojis. NUNCA predicas ni repites consejos genéricos.
+
+OBJETIVO DEL USUARIO: {objetivo_texto}
+
+SITUACIÓN REAL DE HOY ({momento}, {hora}h):
+- Calorías: {calorias_hoy}/{meta_calorias} kcal ({pct_calorias}%)
+- Proteína: {proteina_hoy}g/{meta_proteina}g ({pct_proteina}%)
+- Carbos: {carbos_hoy}g/{meta_carbos}g
+- Gym: {gym_estado}
+{f'- {racha_info}' if racha_info else ''}
+
+REGLAS ABSOLUTAS:
+1. Exactamente 1 a 2 oraciones. Directas. Sin preámbulos.
+2. Si es día de descanso: JAMÁS menciones el gym. Habla de nutrición, recuperación o sueño.
+3. Basa la frase en los números reales de hoy — no en generalidades.
+4. Varía el inicio: no siempre empieces igual.
+5. Si cumplió todo: celebra con actitud pero sin exagerar.
+6. Si le falta proteína más que calorías: menciona eso específicamente.
+
+Solo la frase. Sin comillas. Sin explicaciones."""
 
     payload = {
         'model':            'qwen/qwen3.6-27b',
         'messages':         [{'role': 'user', 'content': prompt}],
-        'max_tokens':       80,
-        'temperature':      0.85,
+        'max_tokens':       110,
+        'temperature':      0.9,
         'reasoning_effort': 'none',
     }
 
@@ -767,41 +805,41 @@ Genera UNA frase personalizada basada en ese contexto. Solo la frase, sin comill
 # ── Helper búsqueda nutricional ───────────────────────────────────────────
 
 def _buscar_info_nutricional(nombre_alimento):
-    """Busca información nutricional real en internet via Groq con web search."""
+    """Estima información nutricional de un alimento usando conocimiento del modelo."""
     payload = {
         'model': 'qwen/qwen3.6-27b',
-        'messages': [{
-            'role': 'user',
-            'content': f"""Busca la información nutricional real de: {nombre_alimento}
+        'messages': [
+            {
+                'role': 'system',
+                'content': (
+                    'Eres un nutricionista con base de datos nutricional extensa, '
+                    'especializado en alimentos colombianos y latinoamericanos. '
+                    'Conoces los macros exactos de preparaciones típicas colombianas '
+                    '(bandeja paisa, ajiaco, arepa, changua, etc.) y productos de supermercado. '
+                    'Respondes solo con JSON válido.'
+                ),
+            },
+            {
+                'role': 'user',
+                'content': f"""Dame la información nutricional de: {nombre_alimento}
+
+Usa tus conocimientos nutricionales para dar valores precisos por porción típica colombiana.
 
 Responde ÚNICAMENTE con JSON válido:
 {{
-  "encontrado": true/false,
-  "fuente": "nombre del sitio o fuente",
+  "encontrado": true,
+  "fuente": "base de conocimiento nutricional",
   "calorias": 000,
   "proteina": 00.0,
   "carbos": 00.0,
   "grasas": 00.0,
-  "porcion": "descripción de la porción encontrada"
+  "porcion": "descripción de la porción usada, ej: 1 plato mediano (350g)"
 }}
 
-Si no encuentras información confiable, usa encontrado: false y estima los valores."""
-        }],
-        'tools': [{
-            'type': 'function',
-            'function': {
-                'name': 'web_search',
-                'description': 'Search the web for nutritional information',
-                'parameters': {
-                    'type': 'object',
-                    'properties': {
-                        'query': {'type': 'string'}
-                    },
-                    'required': ['query']
-                }
-            }
-        }],
-        'max_tokens':       400,
+Si es un alimento completamente desconocido o imposible de estimar, usa encontrado: false.""",
+            },
+        ],
+        'max_tokens':       300,
         'temperature':      0.1,
         'reasoning_effort': 'none',
     }
@@ -831,36 +869,46 @@ def analizar_foto(request):
         info_web = _buscar_info_nutricional(correccion)
 
     if correccion and nombre_prev:
-        prompt = f"""Analizaste una foto de comida y la identificaste como "{nombre_prev}".
-El usuario dice que en realidad es: "{correccion}".
+        info_str = (
+            'Referencia nutricional disponible: ' + json.dumps(info_web, ensure_ascii=False)
+            if info_web and info_web.get('encontrado')
+            else 'No hay referencia externa — usa tu conocimiento nutricional para estimar.'
+        )
+        prompt = f"""Identificaste una foto de comida como "{nombre_prev}" pero el usuario corrige: es "{correccion}".
 
-{'Información nutricional encontrada en internet: ' + json.dumps(info_web, ensure_ascii=False) if info_web and info_web.get('encontrado') else 'No se encontró información en internet, estima basado en el nombre.'}
+{info_str}
 
-Corrige el análisis y responde ÚNICAMENTE con JSON válido, sin texto adicional antes ni después, sin explicar tu razonamiento:
+Ajusta el análisis a "{correccion}" con macros precisos para una porción colombiana típica.
+Responde ÚNICAMENTE con JSON válido:
 {{
-  "nombre": "nombre corregido del plato",
+  "nombre": "{correccion}",
   "calorias": 000,
   "proteina": 00.0,
   "carbos": 00.0,
   "grasas": 00.0,
   "confianza": "alta|media|baja",
-  "descripcion": "descripción corregida",
-  "fuente": "internet|estimacion"
+  "descripcion": "porción específica usada, ej: 1 plato mediano (~350g) con arroz, fríjoles y carne",
+  "fuente": "estimacion"
 }}"""
     else:
-        prompt = """Analiza esta foto de comida. Si puedes identificar claramente el plato,
-responde ÚNICAMENTE con JSON válido, sin texto adicional antes ni después, sin explicar tu razonamiento:
+        prompt = """Eres un experto en nutrición colombiana. Analiza esta foto de comida.
+
+Identifica el plato y estima macros para una porción colombiana típica (no valores por 100g — una porción real como se sirve).
+Si es un plato mixto (arroz + proteína + ensalada), estima el conjunto completo.
+
+Responde ÚNICAMENTE con JSON válido:
 {
-  "nombre": "nombre del plato en español",
+  "nombre": "nombre específico del plato en español colombiano",
   "calorias": 000,
   "proteina": 00.0,
   "carbos": 00.0,
   "grasas": 00.0,
   "confianza": "alta|media|baja",
-  "descripcion": "descripción breve",
+  "descripcion": "describe qué componentes ves y la porción estimada, ej: '1 plato de arroz con pollo a la plancha y ensalada (~420g)'",
   "fuente": "estimacion"
 }
-Estima porciones promedio colombianas. Si no puedes identificar, usa confianza "baja"."""
+
+Usa confianza "baja" solo si la imagen es muy oscura, borrosa o el plato es irreconocible."""
 
     messages = [{'role': 'user', 'content': [
         {'type': 'text', 'text': prompt},
@@ -902,27 +950,41 @@ def analizar_etiqueta(request):
         info_web = _buscar_info_nutricional(correccion)
 
     if correccion and nombre_prev:
-        prompt = f"""Leíste una etiqueta nutricional y la identificaste como "{nombre_prev}".
-El usuario dice que en realidad es: "{correccion}".
+        info_str = (
+            'Referencia nutricional: ' + json.dumps(info_web, ensure_ascii=False)
+            if info_web and info_web.get('encontrado')
+            else 'Sin referencia externa — estima con tu conocimiento del producto.'
+        )
+        prompt = f"""Leíste una etiqueta como "{nombre_prev}" pero el usuario dice que es "{correccion}".
 
-{'Información nutricional encontrada en internet: ' + json.dumps(info_web, ensure_ascii=False) if info_web and info_web.get('encontrado') else 'Estima basado en el nombre del producto.'}
+{info_str}
 
-Corrige y responde ÚNICAMENTE con JSON válido, sin texto adicional antes ni después, sin explicar tu razonamiento:
+Corrige con los valores de "{correccion}" por porción.
+Responde ÚNICAMENTE con JSON válido:
 {{
-  "nombre": "nombre corregido del producto",
-  "descripcion": "tamaño de porción",
+  "nombre": "{correccion}",
+  "descripcion": "tamaño de porción del producto corregido",
   "calorias": 000,
   "proteina": 00.0,
   "carbos": 00.0,
   "grasas": 00.0,
   "confianza": "alta|media|baja",
-  "fuente": "internet|estimacion"
+  "fuente": "estimacion"
 }}"""
     else:
-        prompt = """Analiza esta etiqueta nutricional y responde ÚNICAMENTE con JSON válido, sin texto adicional antes ni después, sin explicar tu razonamiento:
+        prompt = """Analiza esta etiqueta nutricional con precisión.
+
+PASOS:
+1. Encuentra la sección "Información Nutricional" o "Nutrition Facts".
+2. Lee el "Tamaño de porción" o "Serving size".
+3. Extrae los valores POR ESA PORCIÓN (no por 100g).
+4. Si la etiqueta está en inglés: Calories→calorías, Total Fat→grasas, Total Carbohydrate→carbos, Protein→proteína.
+5. Si hay azúcar y fibra pero no carbos totales, suma azúcar + fibra + almidón para estimar carbos.
+
+Responde ÚNICAMENTE con JSON válido:
 {
-  "nombre": "nombre del producto",
-  "descripcion": "tamaño de porción tal como aparece en la etiqueta",
+  "nombre": "nombre del producto tal como aparece en la etiqueta",
+  "descripcion": "tamaño de porción exacto de la etiqueta, ej: '1 porción (30g)' o '1 taza (240mL)'",
   "calorias": 000,
   "proteina": 00.0,
   "carbos": 00.0,
@@ -930,7 +992,8 @@ Corrige y responde ÚNICAMENTE con JSON válido, sin texto adicional antes ni de
   "confianza": "alta|media|baja",
   "fuente": "etiqueta"
 }
-IMPORTANTE: usa los valores POR PORCIÓN. Si no puedes leer algún valor usa 0."""
+
+Usa confianza "baja" si la etiqueta está muy borrosa o incompleta. Nunca uses 0 en todos los campos si puedes leer aunque sea parcialmente."""
 
     messages = [{'role': 'user', 'content': [
         {'type': 'text', 'text': prompt},
@@ -1003,8 +1066,10 @@ def bruce_chat(request, pk):
         return Response({'error': 'Mensaje vacío'}, status=status.HTTP_400_BAD_REQUEST)
 
     # Contexto del día
+    from datetime import timedelta
     hoy     = timezone.localdate()
-    comidas = Comida.objects.filter(usuario=request.user, fecha=hoy)
+    user    = request.user
+    comidas = Comida.objects.filter(usuario=user, fecha=hoy)
     totales = {
         'calorias': sum(c.calorias for c in comidas),
         'proteina': round(sum(c.proteina for c in comidas), 1),
@@ -1012,25 +1077,47 @@ def bruce_chat(request, pk):
         'grasas':   round(sum(c.grasas   for c in comidas), 1),
     }
     metas = {
-        'calorias': request.user.meta_calorias,
-        'proteina': request.user.meta_proteina,
-        'carbos':   request.user.meta_carbos,
-        'grasas':   request.user.meta_grasas,
+        'calorias': user.meta_calorias,
+        'proteina': user.meta_proteina,
+        'carbos':   user.meta_carbos,
+        'grasas':   user.meta_grasas,
     }
-    sesion_gym = SesionGym.objects.filter(usuario=request.user, fecha=hoy).first()
-    fue_al_gym = sesion_gym.completada if sesion_gym else False
-    ultimo_peso = PesoCorporal.objects.filter(usuario=request.user).first()
+    sesion_gym  = SesionGym.objects.filter(usuario=user, fecha=hoy).first()
+    fue_al_gym  = sesion_gym.completada if sesion_gym else False
+    ultimo_peso = PesoCorporal.objects.filter(usuario=user).order_by('-fecha').first()
 
-    contexto_dia = f"""
-Contexto del usuario hoy ({hoy.strftime('%A %d de %B')}):
-- Calorías: {totales['calorias']} / {metas['calorias']} kcal
-- Proteína: {totales['proteina']}g / {metas['proteina']}g
-- Carbos: {totales['carbos']}g / {metas['carbos']}g
-- Grasas: {totales['grasas']}g / {metas['grasas']}g
-- Gym hoy: {'Sí, completó la sesión' if fue_al_gym else 'No'}
-- Peso actual: {ultimo_peso.peso_kg if ultimo_peso else 'No registrado'} kg
-- Nombre del usuario: {request.user.first_name or request.user.email}
-"""
+    # Rachas
+    racha_gym = 0
+    dia_check = hoy
+    while SesionGym.objects.filter(usuario=user, fecha=dia_check, completada=True).exists():
+        racha_gym += 1
+        dia_check -= timedelta(days=1)
+
+    racha_comida = 0
+    dia_check = hoy
+    while Comida.objects.filter(usuario=user, fecha=dia_check).exists():
+        racha_comida += 1
+        dia_check -= timedelta(days=1)
+
+    objetivo_texto = {
+        'perder':   'perder grasa',
+        'mantener': 'mantener peso',
+        'ganar':    'ganar músculo',
+    }.get(getattr(user, 'objetivo', 'mantener'), 'mantener peso')
+
+    nombre = user.first_name or user.email.split('@')[0]
+
+    pct_cal  = round((totales['calorias'] / metas['calorias']) * 100) if metas['calorias'] else 0
+    pct_prot = round((totales['proteina'] / metas['proteina']) * 100) if metas['proteina'] else 0
+
+    contexto_dia = f"""ESTADO DE {nombre.upper()} HOY ({hoy.strftime('%A %d de %B')}):
+• Objetivo: {objetivo_texto}
+• Calorías: {totales['calorias']}/{metas['calorias']} kcal ({pct_cal}%)
+• Proteína: {totales['proteina']}g/{metas['proteina']}g ({pct_prot}%)
+• Carbos: {totales['carbos']}g/{metas['carbos']}g | Grasas: {totales['grasas']}g/{metas['grasas']}g
+• Gym hoy: {'completó la sesión' if fue_al_gym else 'no fue'}
+• Racha gym: {racha_gym} días | Racha registro comida: {racha_comida} días
+• Peso actual: {f'{ultimo_peso.peso_kg} kg' if ultimo_peso else 'no registrado'}"""
 
     # Historial de la sesión (últimos 20 mensajes)
     historial = MensajeChat.objects.filter(sesion=sesion).order_by('-creado_en')[:20]
@@ -1041,11 +1128,25 @@ Contexto del usuario hoy ({hoy.strftime('%A %d de %B')}):
             'content': m.contenido,
         })
 
-    system_prompt = f"""Eres Bruce, un dachshund miniatura con personalidad de entrenador personal de élite.
-Eres directo, motivador, a veces sarcástico pero siempre con cariño. Hablas como un coach real, no como un bot.
-Nunca uses emojis. Respuestas cortas y directas — máximo 3 oraciones salvo que el usuario pida más detalle.
-En español colombiano casual. Puedes buscar información nutricional si te la piden.
-Si te preguntan cuántas calorías tiene algo, da un número concreto con contexto de porción.
+    system_prompt = f"""Eres Bruce, el coach personal de {nombre}. Eres un dachshund salchicha con más disciplina que cualquier humano.
+
+PERSONALIDAD:
+- Directo y sin rodeos — dices lo que es, no lo que quieren escuchar.
+- Sarcástico con cariño, como un parcero que te conoce bien.
+- Hablas en español colombiano casual. Nada de formal.
+- NUNCA usas emojis. NUNCA.
+- No repites consejos genéricos — siempre basas tu respuesta en los números reales del usuario.
+
+ESTILO DE RESPUESTA:
+- Máximo 3-4 oraciones salvo que pidan más detalle o un plan.
+- Sin preámbulos del tipo "¡Claro!" o "¡Buena pregunta!" — ve directo al punto.
+- Si te preguntan calorías de algo, da el número exacto con la porción ("100g de pechuga cocida = ~165 kcal, 31g proteína").
+- Si te piden un plan de comidas o entrenamiento, dalo completo y estructurado.
+
+CONOCIMIENTO:
+- Nutrición, macros, déficit/superávit calórico, timing de comidas, suplementación básica.
+- Gym: técnica, volumen, progresión de cargas, descanso.
+- Si te preguntan algo fuera de fitness/nutrición: redirige con humor ("Eso no lo sé, soy perro entrenador, no abogado").
 
 {contexto_dia}"""
 
@@ -1056,9 +1157,9 @@ Si te preguntan cuántas calorías tiene algo, da un número concreto con contex
     payload = {
         'model':            'qwen/qwen3.6-27b',
         'messages':         messages,
-        'max_tokens':       300,
+        'max_tokens':       450,
         'temperature':      0.8,
-        'reasoning_format': 'hidden',  # deja pensar al modelo pero oculta el <think> del output
+        'reasoning_format': 'hidden',
     }
 
     try:
