@@ -53,6 +53,26 @@ class PerfilUpdateSerializer(serializers.ModelSerializer):
         fields = ['first_name', 'last_name', 'bio', 'idioma', 'avatar']
 
 
+class ObjetivoSerializer(serializers.ModelSerializer):
+    """
+    Edita objetivo, velocidad, datos físicos y nivel de actividad.
+    Al guardar recalcula las metas automáticamente.
+    """
+    class Meta:
+        model  = User
+        fields = [
+            'objetivo', 'velocidad_objetivo', 'nivel_actividad',
+            'estatura_cm', 'peso_inicial_kg', 'peso_objetivo_kg',
+        ]
+
+    def update(self, instance, validated_data):
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        instance.calcular_metas()
+        return instance
+
+
 class OnboardingSerializer(serializers.ModelSerializer):
     """
     Recibe todos los datos del onboarding en un solo PATCH.

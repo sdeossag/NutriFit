@@ -148,7 +148,8 @@ export const actualizarPerfil = (datos) => {
   return patch('/auth/perfil/update/', body)
 }
 
-export const actualizarMetas = (metas) => patch('/auth/perfil/metas/', metas)
+export const actualizarMetas    = (metas) => patch('/auth/perfil/metas/', metas)
+export const actualizarObjetivo = (data)  => patch('/auth/perfil/objetivo/', data)
 
 // ── Onboarding ────────────────────────────────────────────────────────────────
 

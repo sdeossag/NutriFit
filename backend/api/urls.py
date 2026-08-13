@@ -15,6 +15,7 @@ urlpatterns = [
     path('auth/perfil/',                views.mi_perfil,            name='perfil'),
     path('auth/perfil/update/',         views.actualizar_perfil,    name='perfil-update'),
     path('auth/perfil/metas/',          views.actualizar_metas,     name='perfil-metas'),
+    path('auth/perfil/objetivo/',       views.actualizar_objetivo,  name='perfil-objetivo'),
 
     # ────────────────────── ONBOARDING ──────────────────────
     path('onboarding/',                 views.completar_onboarding, name='onboarding'),

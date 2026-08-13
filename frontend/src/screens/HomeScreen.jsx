@@ -325,8 +325,13 @@ export default function HomeScreen({ t, lang, setLang, screen, usuario, onGoToPr
     }
   }
 
-  const totales  = resumen?.totales ?? { calorias: 0, proteina: 0, carbos: 0, grasas: 0 }
-  const metas    = resumen?.metas   ?? METAS
+  const totales = resumen?.totales ?? { calorias: 0, proteina: 0, carbos: 0, grasas: 0 }
+  const metas   = {
+    calorias: usuario?.meta_calorias || resumen?.metas?.calorias || METAS.calorias,
+    proteina: usuario?.meta_proteina || resumen?.metas?.proteina || METAS.proteina,
+    carbos:   usuario?.meta_carbos   || resumen?.metas?.carbos   || METAS.carbos,
+    grasas:   usuario?.meta_grasas   || resumen?.metas?.grasas   || METAS.grasas,
+  }
   const calPct   = Math.min(Math.round((totales.calorias / metas.calorias) * 100), 100)
   const restante = Math.max(metas.calorias - totales.calorias, 0)
 

@@ -23,7 +23,7 @@ from .models import (
 from .serializers import (
     ComidaSerializer, SesionGymSerializer,
     EjercicioLogSerializer, PesoCorporalSerializer,
-    UsuarioSerializer, MetasSerializer, PerfilUpdateSerializer,
+    UsuarioSerializer, MetasSerializer, PerfilUpdateSerializer, ObjetivoSerializer,
     AlimentoAlacenaSerializer, OnboardingSerializer, SesionChatSerializer, MensajeChatSerializer
 )
 
@@ -269,6 +269,16 @@ def mi_perfil(request):
 @parser_classes([MultiPartParser, FormParser, JSONParser])
 def actualizar_perfil(request):
     serializer = PerfilUpdateSerializer(request.user, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(UsuarioSerializer(request.user).data)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def actualizar_objetivo(request):
+    serializer = ObjetivoSerializer(request.user, data=request.data, partial=True)
     if serializer.is_valid():
         serializer.save()
         return Response(UsuarioSerializer(request.user).data)
