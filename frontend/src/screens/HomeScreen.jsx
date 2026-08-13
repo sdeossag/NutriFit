@@ -66,7 +66,7 @@ function useTypewriter(text, speed = 20) {
 }
 
 // ── Bruce Card ────────────────────────────────────────────────────────────
-function BruceCard({ resumen, animado, onOpenChat }) {
+function BruceCard({ resumen, animado, onOpenChat, usuario }) {
   const [frase,         setFrase]         = useState('')
   const [pose,          setPose]          = useState('normal')
   const [cargandoFrase, setCargandoFrase] = useState(true)
@@ -87,42 +87,35 @@ function BruceCard({ resumen, animado, onOpenChat }) {
     const descanso = esDiaDescanso()
 
     // Consultar si fue al gym hoy
+    const contextoBase = {
+      calorias_hoy:   resumen.totales?.calorias  ?? 0,
+      meta_calorias:  resumen.metas?.calorias    ?? 1900,
+      proteina_hoy:   resumen.totales?.proteina  ?? 0,
+      meta_proteina:  resumen.metas?.proteina    ?? 140,
+      carbos_hoy:     resumen.totales?.carbos    ?? 0,
+      meta_carbos:    resumen.metas?.carbos      ?? 200,
+      es_dia_gym:     !descanso,
+      hora:           h,
+      racha_gym:      resumen.racha_gym          ?? 0,
+      racha_comida:   resumen.racha_comida       ?? 0,
+      nombre_usuario: usuario?.first_name?.split(' ')[0] || usuario?.email?.split('@')[0] || '',
+      objetivo:       resumen.objetivo           ?? usuario?.objetivo ?? 'mantener',
+    }
+
     sesionDeHoy()
       .then(sesion => {
-        const fueAlGym = sesion?.completada === true
-
         setCargandoFrase(true)
-        getBruceFrase({
-          calorias_hoy:  resumen.totales?.calorias ?? 0,
-          meta_calorias: resumen.metas?.calorias   ?? 1900,
-          proteina_hoy:  resumen.totales?.proteina ?? 0,
-          meta_proteina: resumen.metas?.proteina   ?? 140,
-          fue_al_gym:    fueAlGym,
-          es_dia_gym:    !descanso,
-          hora:          h,
-        })
+        getBruceFrase({ ...contextoBase, fue_al_gym: sesion?.completada === true })
           .then(data => {
             setFrase(data.frase)
             setPose(esNoche ? 'batman' : (data.pose ?? 'normal'))
           })
-          .catch(() => {
-            setFrase('La consistencia gana siempre. Siempre.')
-            setPose('normal')
-          })
+          .catch(() => { setFrase('La consistencia gana siempre. Siempre.'); setPose('normal') })
           .finally(() => setCargandoFrase(false))
       })
       .catch(() => {
-        // Si falla sesionDeHoy, igual llama a Bruce sin dato de gym
         setCargandoFrase(true)
-        getBruceFrase({
-          calorias_hoy:  resumen.totales?.calorias ?? 0,
-          meta_calorias: resumen.metas?.calorias   ?? 1900,
-          proteina_hoy:  resumen.totales?.proteina ?? 0,
-          meta_proteina: resumen.metas?.proteina   ?? 140,
-          fue_al_gym:    false,
-          es_dia_gym:    !descanso,
-          hora:          h,
-        })
+        getBruceFrase({ ...contextoBase, fue_al_gym: false })
           .then(data => { setFrase(data.frase); setPose(data.pose ?? 'normal') })
           .catch(() => setFrase('La consistencia gana siempre. Siempre.'))
           .finally(() => setCargandoFrase(false))
@@ -481,7 +474,7 @@ export default function HomeScreen({ t, lang, setLang, screen, usuario, onGoToPr
         </div>
 
         {/* Bruce */}
-        <BruceCard resumen={resumen} animado={animado} onOpenChat={onOpenChat} />
+        <BruceCard resumen={resumen} animado={animado} onOpenChat={onOpenChat} usuario={usuario} />
 
         {error && (
           <div style={{

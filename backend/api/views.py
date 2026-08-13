@@ -420,8 +420,10 @@ Responde ÚNICAMENTE con este JSON válido:
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def resumen_hoy(request):
+    from datetime import timedelta
     hoy     = timezone.localdate()
-    comidas = Comida.objects.filter(usuario=request.user, fecha=hoy)
+    user    = request.user
+    comidas = Comida.objects.filter(usuario=user, fecha=hoy)
 
     totales = {
         'calorias': sum(c.calorias for c in comidas),
@@ -430,7 +432,6 @@ def resumen_hoy(request):
         'grasas':   round(sum(c.grasas   for c in comidas), 1),
     }
 
-    user  = request.user
     metas = {
         'calorias': user.meta_calorias,
         'proteina': user.meta_proteina,
@@ -438,11 +439,27 @@ def resumen_hoy(request):
         'grasas':   user.meta_grasas,
     }
 
+    # Rachas (hacia atrás desde hoy)
+    racha_gym = 0
+    dia = hoy
+    while SesionGym.objects.filter(usuario=user, fecha=dia, completada=True).exists():
+        racha_gym += 1
+        dia -= timedelta(days=1)
+
+    racha_comida = 0
+    dia = hoy
+    while Comida.objects.filter(usuario=user, fecha=dia).exists():
+        racha_comida += 1
+        dia -= timedelta(days=1)
+
     return Response({
-        'fecha':   hoy.isoformat(),
-        'totales': totales,
-        'metas':   metas,
-        'comidas': ComidaSerializer(comidas, many=True).data,
+        'fecha':        hoy.isoformat(),
+        'totales':      totales,
+        'metas':        metas,
+        'comidas':      ComidaSerializer(comidas, many=True).data,
+        'racha_gym':    racha_gym,
+        'racha_comida': racha_comida,
+        'objetivo':     getattr(user, 'objetivo', 'mantener'),
     })
 
 
