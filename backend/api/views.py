@@ -1517,6 +1517,8 @@ def ejercicios_personalizados(request):
 
 def _send_push(sub, titulo, cuerpo):
     """Envía un Web Push a una suscripción. Elimina la sub si caducó (410)."""
+    import logging
+    logger = logging.getLogger(__name__)
     try:
         from pywebpush import webpush, WebPushException
         webpush(
@@ -1528,12 +1530,16 @@ def _send_push(sub, titulo, cuerpo):
             vapid_private_key=settings.VAPID_PRIVATE_KEY,
             vapid_claims={'sub': f'mailto:{settings.VAPID_CLAIM_EMAIL}'},
         )
-        return True
+        return True, None
     except Exception as exc:
         resp = getattr(exc, 'response', None)
-        if resp is not None and resp.status_code == 410:
+        status_code = resp.status_code if resp is not None else None
+        error_body  = resp.text[:200] if resp is not None else str(exc)[:200]
+        logger.error('push_fail sub=%s status=%s err=%s', sub.id, status_code, error_body)
+        print(f'[push_fail] sub={sub.id} endpoint={sub.endpoint[:40]} status={status_code} err={error_body}')
+        if status_code == 410:
             sub.delete()
-        return False
+        return False, f'{status_code}: {error_body}'
 
 
 @api_view(['POST'])
@@ -1629,7 +1635,8 @@ def push_check(request):
 
     enviados = 0
     for sub in subs:
-        if _send_push(sub, 'Bruce dice:', frase):
+        ok, _ = _send_push(sub, 'Bruce dice:', frase)
+        if ok:
             sub.ultima_notif = hoy
             sub.save(update_fields=['ultima_notif'])
             enviados += 1
@@ -1682,8 +1689,9 @@ def cron_notificaciones(request):
         return Response({'ok': True, 'skipped': f'no slot for hour {hora} (Colombia)'})
 
     subs    = PushSubscription.objects.select_related('usuario').all()
-    totales = 0
+    totales  = 0
     enviados = 0
+    errores  = []
 
     for sub in subs:
         totales += 1
@@ -1761,10 +1769,13 @@ def cron_notificaciones(request):
             }
             frase = mensajes_fallback[slot_actual]
 
-        if _send_push(sub, 'Bruce dice:', frase):
+        ok, err = _send_push(sub, 'Bruce dice:', frase)
+        if ok:
             sub.slots_enviados = list(sub.slots_enviados) + [slot_actual]
             sub.save(update_fields=['slots_enviados', 'slots_fecha'])
             enviados += 1
+        else:
+            errores.append({'sub': sub.id, 'error': err})
 
     return Response({
         'ok':       True,
@@ -1772,6 +1783,7 @@ def cron_notificaciones(request):
         'hora_co':  hora,
         'enviados': enviados,
         'totales':  totales,
+        'errores':  errores,
     })
 
 
