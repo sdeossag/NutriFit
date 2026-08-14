@@ -67,4 +67,7 @@ urlpatterns = [
     path('push/unsubscribe/',           views.push_desuscribir,     name='push-unsubscribe'),
     path('push/estado/',                views.push_estado,          name='push-estado'),
     path('push/check/',                 views.push_check,           name='push-check'),
+
+    # ─────────────────── HEALTH CHECK ────────────────────────
+    path('health/',                     views.health,               name='health'),
 ]

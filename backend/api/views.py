@@ -368,7 +368,7 @@ def generar_plan_groq(request):
         'Respondes únicamente con JSON válido, sin texto adicional.'
     )
 
-    prompt = f"""Crea una alacena personalizada para este usuario colombiano con objetivo de {objetivo_texto}.
+    prompt = f"""Crea un plan nutricional personalizado para este usuario colombiano con objetivo de {objetivo_texto}.
 
 METAS DIARIAS:
 - Calorías: {user.meta_calorias} kcal
@@ -376,32 +376,44 @@ METAS DIARIAS:
 
 PREFERENCIAS:
 - Le gustan: {gustados}
-- No le gustan: {no_gustados}
+- NO le gustan (EXCLUIR): {no_gustados}
 - Restricciones: {restricciones}
 
-INSTRUCCIONES:
-1. Genera entre 15 y 20 alimentos o preparaciones concretas, variadas y reales.
-2. Prioriza alimentos colombianos o conseguibles en supermercados colombianos (Éxito, D1, Ara, Jumbo).
-3. Distribuye entre: desayunos, almuerzos, cenas y snacks.
-4. Los macros deben ser precisos para la porción indicada, no valores genéricos.
-5. Cada porción debe ser práctica (no "100g" de pollo crudo — di "1 pechuga mediana cocida (120g)").
-6. Para objetivo de ganar músculo: prioriza fuentes proteicas y carbos de calidad.
-   Para perder grasa: prioriza volumen con pocas calorías y alta saciedad.
+INSTRUCCIONES ALIMENTOS:
+1. Genera entre 18 y 22 alimentos o preparaciones concretas, variadas y reales.
+2. USA los alimentos que le gustan. NUNCA uses los que no le gustan ni los que van contra sus restricciones.
+3. Prioriza alimentos colombianos o conseguibles en supermercados colombianos (Éxito, D1, Ara, Jumbo).
+4. Distribuye equilibradamente: desayunos (4-5), almuerzos (4-5), cenas (4-5), snacks (4-5).
+5. Los macros deben ser precisos para la porción indicada, no valores genéricos.
+6. Cada porción debe ser práctica (ej: "1 pechuga mediana cocida (120g)", no "100g pollo crudo").
+7. Para perder grasa: prioriza volumen con pocas calorías y alta proteína.
+   Para ganar músculo: prioriza proteínas completas y carbos de calidad.
    Para mantener: balance entre todos los macros.
 
-Responde ÚNICAMENTE con este JSON válido:
+INSTRUCCIONES DÍA DE EJEMPLO:
+- Crea UN día de comidas de ejemplo usando solo alimentos de la lista anterior.
+- Las 4 comidas del día (desayuno, almuerzo, cena, snack) deben sumar aproximadamente las metas diarias.
+- Usa nombres exactos de los alimentos de la lista "alimentos".
+
+Responde ÚNICAMENTE con este JSON válido, sin texto adicional:
 {{
-  "plan_descripcion": "2 oraciones describiendo el enfoque del plan y por qué se adaptó a este perfil",
+  "plan_descripcion": "2 oraciones describiendo el enfoque del plan y cómo se adaptó a las preferencias específicas",
   "alimentos": [
     {{
       "nombre": "nombre del alimento o preparación",
-      "descripcion": "porción específica y práctica, ej: 1 pechuga mediana cocida (120g)",
+      "descripcion": "porción específica y práctica",
       "calorias": 000,
       "proteina": 00.0,
       "carbos": 00.0,
       "grasas": 00.0
     }}
-  ]
+  ],
+  "dia_ejemplo": {{
+    "desayuno": {{ "nombre": "nombre exacto del alimento", "descripcion": "porción", "calorias": 000, "proteina": 00.0, "carbos": 00.0, "grasas": 00.0 }},
+    "almuerzo": {{ "nombre": "nombre exacto del alimento", "descripcion": "porción", "calorias": 000, "proteina": 00.0, "carbos": 00.0, "grasas": 00.0 }},
+    "cena":     {{ "nombre": "nombre exacto del alimento", "descripcion": "porción", "calorias": 000, "proteina": 00.0, "carbos": 00.0, "grasas": 00.0 }},
+    "snack":    {{ "nombre": "nombre exacto del alimento", "descripcion": "porción", "calorias": 000, "proteina": 00.0, "carbos": 00.0, "grasas": 00.0 }}
+  }}
 }}"""
 
     payload = {
@@ -410,13 +422,13 @@ Responde ÚNICAMENTE con este JSON válido:
             {'role': 'system', 'content': system_msg},
             {'role': 'user',   'content': prompt},
         ],
-        'max_tokens': 2500,
+        'max_tokens': 3500,
         'temperature': 0.3,
         'reasoning_effort': 'none',
     }
 
     try:
-        contenido = _groq_chat(payload, timeout=45)
+        contenido = _groq_chat(payload, timeout=60)
         data = _extraer_json(contenido)
         return Response(data)
     except requests.RequestException as e:
@@ -1145,14 +1157,25 @@ def bruce_chat(request, pk):
     pct_cal  = round((totales['calorias'] / metas['calorias']) * 100) if metas['calorias'] else 0
     pct_prot = round((totales['proteina'] / metas['proteina']) * 100) if metas['proteina'] else 0
 
-    contexto_dia = f"""ESTADO DE {nombre.upper()} HOY ({hoy.strftime('%A %d de %B')}):
+    gustados      = ', '.join(getattr(user, 'alimentos_gustados',    None) or []) or 'variado'
+    no_gustados   = ', '.join(getattr(user, 'alimentos_no_gustados', None) or []) or 'ninguno'
+    restricciones = ', '.join(getattr(user, 'restricciones_dieta',   None) or []) or 'ninguna'
+    peso_objetivo = f'{user.peso_objetivo_kg} kg' if getattr(user, 'peso_objetivo_kg', None) else 'no establecido'
+
+    contexto_dia = f"""PERFIL DE {nombre.upper()}:
 • Objetivo: {objetivo_texto}
+• Peso actual: {f'{ultimo_peso.peso_kg} kg' if ultimo_peso else 'no registrado'} | Peso objetivo: {peso_objetivo}
+• Alimentos que le gustan: {gustados}
+• Alimentos que NO le gustan: {no_gustados}
+• Restricciones dieta: {restricciones}
+• Metas: {metas['calorias']} kcal | {metas['proteina']}g prot | {metas['carbos']}g carbos | {metas['grasas']}g grasas
+
+HOY ({hoy.strftime('%A %d de %B')}):
 • Calorías: {totales['calorias']}/{metas['calorias']} kcal ({pct_cal}%)
 • Proteína: {totales['proteina']}g/{metas['proteina']}g ({pct_prot}%)
 • Carbos: {totales['carbos']}g/{metas['carbos']}g | Grasas: {totales['grasas']}g/{metas['grasas']}g
 • Gym hoy: {'completó la sesión' if fue_al_gym else 'no fue'}
-• Racha gym: {racha_gym} días | Racha registro comida: {racha_comida} días
-• Peso actual: {f'{ultimo_peso.peso_kg} kg' if ultimo_peso else 'no registrado'}"""
+• Racha gym: {racha_gym} días | Racha registro comida: {racha_comida} días"""
 
     # Historial de la sesión (últimos 20 mensajes)
     historial = MensajeChat.objects.filter(sesion=sesion).order_by('-creado_en')[:20]
@@ -1173,14 +1196,16 @@ PERSONALIDAD:
 - No repites consejos genéricos — siempre basas tu respuesta en los números reales del usuario.
 
 ESTILO DE RESPUESTA:
-- Máximo 3-4 oraciones salvo que pidan más detalle o un plan.
-- Sin preámbulos del tipo "¡Claro!" o "¡Buena pregunta!" — ve directo al punto.
-- Si te preguntan calorías de algo, da el número exacto con la porción ("100g de pechuga cocida = ~165 kcal, 31g proteína").
-- Si te piden un plan de comidas o entrenamiento, dalo completo y estructurado.
+- Máximo 3-4 oraciones salvo que pidan más detalle, un plan o una receta.
+- Sin preámbulos del tipo "Claro!" o "Buena pregunta!" — ve directo al punto.
+- Si te preguntan calorías, da número exacto con porción ("100g pechuga cocida = ~165 kcal, 31g prot").
+- Si piden plan de comidas o entrenamiento: dalo completo y estructurado.
+- Si piden una RECETA: da nombre, ingredientes con cantidades, pasos numerados cortos y macros totales al final. Usa SIEMPRE los alimentos que le gustan al usuario y respeta sus restricciones.
 
 CONOCIMIENTO:
 - Nutrición, macros, déficit/superávit calórico, timing de comidas, suplementación básica.
 - Gym: técnica, volumen, progresión de cargas, descanso.
+- Recetas colombianas saludables adaptadas a los macros del usuario.
 - Si te preguntan algo fuera de fitness/nutrición: redirige con humor ("Eso no lo sé, soy perro entrenador, no abogado").
 
 {contexto_dia}"""
@@ -1192,7 +1217,7 @@ CONOCIMIENTO:
     payload = {
         'model':            'qwen/qwen3.6-27b',
         'messages':         messages,
-        'max_tokens':       450,
+        'max_tokens':       800,
         'temperature':      0.8,
         'reasoning_format': 'hidden',
     }
@@ -1653,3 +1678,13 @@ def agua_detalle(request, pk):
         return Response(status=204)
     except RegistroAgua.DoesNotExist:
         return Response(status=404)
+
+
+# ──────────────────────────────────────────────
+#  HEALTH CHECK (UptimeRobot)
+# ──────────────────────────────────────────────
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def health(request):
+    return Response({'status': 'ok', 'service': 'nutrifit-api'})

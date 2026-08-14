@@ -219,6 +219,44 @@ function PantallaPlan({ plan, calorias, proteina, carbos, grasas, onEntrar }) {
         )}
       </div>
 
+      {/* Día de ejemplo */}
+      {plan?.dia_ejemplo && (
+        <>
+          <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Ejemplo de un día completo
+          </p>
+          <div style={{ marginBottom: '28px' }}>
+            {[
+              { key: 'desayuno', label: 'Desayuno' },
+              { key: 'almuerzo', label: 'Almuerzo' },
+              { key: 'cena',     label: 'Cena'     },
+              { key: 'snack',    label: 'Snack'    },
+            ].map(({ key, label }) => {
+              const comida = plan.dia_ejemplo[key]
+              if (!comida) return null
+              return (
+                <div key={key} style={{
+                  background: '#131313', borderRadius: '14px',
+                  border: '0.5px solid rgba(255,255,255,0.06)',
+                  padding: '12px 16px', marginBottom: '8px',
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                }}>
+                  <div>
+                    <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '2px' }}>{label}</p>
+                    <p style={{ fontSize: '14px', fontWeight: '600', marginBottom: '2px' }}>{comida.nombre}</p>
+                    <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>{comida.descripcion}</p>
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <p style={{ fontSize: '14px', fontWeight: '700', color: '#4ade80' }}>{comida.calorias} kcal</p>
+                    <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>{comida.proteina}g prot</p>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
+
       <button onClick={onEntrar} style={S.btn(false)}>
         Entrar a NutriFit 🚀
       </button>
@@ -248,7 +286,7 @@ export default function OnboardingScreen({ usuario, onComplete }) {
   const [plan,    setPlan]    = useState(null)
   const [error,   setError]   = useState(null)
 
-  const TOTAL_PASOS = 9
+  const TOTAL_PASOS = 10
 
   // Animación de transición entre pasos
   const irAPaso = (n) => {
@@ -568,13 +606,39 @@ export default function OnboardingScreen({ usuario, onComplete }) {
           </div>
         )
 
-      // 9 — Restricciones + finalizar
+      // 9 — Alimentos que NO le gustan
       case 9:
         return (
           <div style={transStyle}>
             <BtnBack onClick={anterior} />
+            <h2 style={S.title}>¿Qué alimentos<br />no te gustan?</h2>
+            <p style={S.subtitle}>Bruce los excluirá de tu plan. Puedes saltarte esto si no aplica.</p>
+            <div style={{ marginBottom: '20px', maxHeight: '300px', overflowY: 'auto' }}>
+              {NO_GUSTADOS_OPCIONES.map(a => (
+                <span key={a} onClick={() => toggleChip('alimentos_no_gustados', a)}
+                  style={{
+                    ...S.chip(datos.alimentos_no_gustados.includes(a)),
+                    ...(datos.alimentos_no_gustados.includes(a) ? { background: 'rgba(248,113,113,0.15)', color: '#f87171', border: '1px solid #f87171' } : {}),
+                  }}>
+                  {a}
+                </span>
+              ))}
+            </div>
+            <button onClick={siguiente} style={S.btn(false)}>
+              {datos.alimentos_no_gustados.length === 0
+                ? 'Saltarse →'
+                : `Continuar (${datos.alimentos_no_gustados.length} excluidos) →`}
+            </button>
+          </div>
+        )
+
+      // 10 — Restricciones + finalizar
+      case 10:
+        return (
+          <div style={transStyle}>
+            <BtnBack onClick={anterior} />
             <h2 style={S.title}>¿Tienes alguna<br />restricción?</h2>
-            <p style={S.subtitle}>Dietas especiales o alimentos que evitas</p>
+            <p style={S.subtitle}>Dietas especiales o alimentos que evitas por salud o creencias</p>
             <div style={{ marginBottom: '20px' }}>
               {RESTRICCIONES_OPCIONES.map(({ id, label, emoji }) => (
                 <div key={id} onClick={() => {
