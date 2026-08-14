@@ -1515,19 +1515,32 @@ def ejercicios_personalizados(request):
 #  PUSH NOTIFICATIONS
 # ──────────────────────────────────────────────
 
+def _get_vapid_private_key():
+    """Devuelve la clave VAPID en formato base64url que pywebpush entiende."""
+    import base64
+    key_str = settings.VAPID_PRIVATE_KEY
+    if not key_str:
+        return key_str
+    if key_str.startswith('-----'):
+        from cryptography.hazmat.primitives.serialization import load_pem_private_key
+        key_obj = load_pem_private_key(key_str.encode(), password=None)
+        return base64.urlsafe_b64encode(key_obj.private_bytes_raw()).rstrip(b'=').decode()
+    return key_str
+
+
 def _send_push(sub, titulo, cuerpo):
     """Envía un Web Push a una suscripción. Elimina la sub si caducó (410)."""
     import logging
     logger = logging.getLogger(__name__)
     try:
-        from pywebpush import webpush, WebPushException
+        from pywebpush import webpush
         webpush(
             subscription_info={
                 'endpoint': sub.endpoint,
                 'keys': {'p256dh': sub.p256dh, 'auth': sub.auth},
             },
             data=json.dumps({'title': titulo, 'body': cuerpo}),
-            vapid_private_key=settings.VAPID_PRIVATE_KEY,
+            vapid_private_key=_get_vapid_private_key(),
             vapid_claims={'sub': f'mailto:{settings.VAPID_CLAIM_EMAIL}'},
         )
         return True, None
@@ -1536,7 +1549,7 @@ def _send_push(sub, titulo, cuerpo):
         status_code = resp.status_code if resp is not None else None
         error_body  = resp.text[:200] if resp is not None else str(exc)[:200]
         logger.error('push_fail sub=%s status=%s err=%s', sub.id, status_code, error_body)
-        print(f'[push_fail] sub={sub.id} endpoint={sub.endpoint[:40]} status={status_code} err={error_body}')
+        print(f'[push_fail] sub={sub.id} status={status_code} err={error_body}')
         if status_code == 410:
             sub.delete()
         return False, f'{status_code}: {error_body}'
