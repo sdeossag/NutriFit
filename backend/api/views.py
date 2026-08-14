@@ -1524,7 +1524,8 @@ def _get_vapid_private_key():
     if key_str.startswith('-----'):
         from cryptography.hazmat.primitives.serialization import load_pem_private_key
         key_obj = load_pem_private_key(key_str.encode(), password=None)
-        return base64.urlsafe_b64encode(key_obj.private_bytes_raw()).rstrip(b'=').decode()
+        d_bytes = key_obj.private_numbers().private_value.to_bytes(32, 'big')
+        return base64.urlsafe_b64encode(d_bytes).rstrip(b'=').decode()
     return key_str
 
 
