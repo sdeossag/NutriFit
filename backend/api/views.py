@@ -1856,7 +1856,7 @@ def agua_detalle(request, pk):
 #  HEALTH CHECK (UptimeRobot)
 # ──────────────────────────────────────────────
 
-@api_view(['GET'])
+@api_view(['GET', 'HEAD'])
 @permission_classes([AllowAny])
 def health(request):
     return Response({'status': 'ok', 'service': 'nutrifit-api'})
