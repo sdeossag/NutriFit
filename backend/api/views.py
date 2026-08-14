@@ -1667,15 +1667,19 @@ def cron_notificaciones(request):
     hoy       = ahora.date()
     hora      = ahora.hour
 
-    # Determinar qué slot corresponde a esta hora
-    slot_actual = None
-    for nombre_slot, hora_slot in _SLOTS.items():
-        if hora_slot <= hora < hora_slot + 2:
-            slot_actual = nombre_slot
-            break
+    # Parámetro ?slot= para forzar un slot específico (útil para probar manualmente)
+    slot_forzado = request.GET.get('slot', '')
+    if slot_forzado in _SLOTS:
+        slot_actual = slot_forzado
+    else:
+        slot_actual = None
+        for nombre_slot, hora_slot in _SLOTS.items():
+            if hora_slot <= hora < hora_slot + 2:
+                slot_actual = nombre_slot
+                break
 
     if not slot_actual:
-        return Response({'ok': True, 'skipped': f'no slot for hour {hora}'})
+        return Response({'ok': True, 'skipped': f'no slot for hour {hora} (Colombia)'})
 
     subs    = PushSubscription.objects.select_related('usuario').all()
     totales = 0
@@ -1685,8 +1689,8 @@ def cron_notificaciones(request):
         totales += 1
         user = sub.usuario
 
-        # Resetear tracking si es un día nuevo
-        if sub.slots_fecha != hoy:
+        # Resetear tracking si es un día nuevo o si se pide reset manual
+        if sub.slots_fecha != hoy or request.GET.get('reset') == '1':
             sub.slots_enviados = []
             sub.slots_fecha    = hoy
 
