@@ -1517,16 +1517,7 @@ def ejercicios_personalizados(request):
 
 def _get_vapid_private_key():
     """Devuelve la clave VAPID en formato base64url que pywebpush entiende."""
-    import base64
-    key_str = settings.VAPID_PRIVATE_KEY
-    if not key_str:
-        return key_str
-    if key_str.startswith('-----'):
-        from cryptography.hazmat.primitives.serialization import load_pem_private_key
-        key_obj = load_pem_private_key(key_str.encode(), password=None)
-        d_bytes = key_obj.private_numbers().private_value.to_bytes(32, 'big')
-        return base64.urlsafe_b64encode(d_bytes).rstrip(b'=').decode()
-    return key_str
+    return settings.VAPID_PRIVATE_KEY
 
 
 def _send_push(sub, titulo, cuerpo):
