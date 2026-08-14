@@ -7,6 +7,7 @@ from google.auth.transport import requests as google_requests
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.db import models
 from django.utils import timezone
 
 from rest_framework import status
@@ -18,7 +19,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import (
     Comida, SesionGym, EjercicioLog, PesoCorporal, AlimentoAlacena,
-    MensajeChat, SesionChat, RutinaDia, EjercicioPersonalizado, PushSubscription
+    MensajeChat, SesionChat, RutinaDia, EjercicioPersonalizado, PushSubscription,
+    RegistroAgua,
 )
 from .serializers import (
     ComidaSerializer, SesionGymSerializer,
@@ -462,12 +464,17 @@ def resumen_hoy(request):
         racha_comida += 1
         dia -= timedelta(days=1)
 
+    agua_ml = RegistroAgua.objects.filter(usuario=user, fecha=hoy).aggregate(
+        total=models.Sum('cantidad_ml')
+    )['total'] or 0
+
     return Response({
         'fecha':        hoy.isoformat(),
         'totales':      totales,
         'metas':        metas,
         'comidas':      ComidaSerializer(comidas, many=True).data,
         'racha_gym':    racha_gym,
+        'agua_ml':      agua_ml,
         'racha_comida': racha_comida,
         'objetivo':     getattr(user, 'objetivo', 'mantener'),
     })
@@ -1599,3 +1606,46 @@ def push_check(request):
             enviados += 1
 
     return Response({'enviado': enviados > 0, 'frase': frase})
+
+
+# ──────────────────────────────────────────────
+#  AGUA
+# ──────────────────────────────────────────────
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def agua(request):
+    hoy  = timezone.localdate()
+    user = request.user
+
+    if request.method == 'GET':
+        fecha = request.query_params.get('fecha', hoy.isoformat())
+        registros = RegistroAgua.objects.filter(usuario=user, fecha=fecha)
+        total_ml  = registros.aggregate(total=models.Sum('cantidad_ml'))['total'] or 0
+        return Response({
+            'fecha':    fecha,
+            'total_ml': total_ml,
+            'registros': [{'id': r.id, 'cantidad_ml': r.cantidad_ml} for r in registros],
+        })
+
+    cantidad_ml = int(request.data.get('cantidad_ml', 0))
+    if cantidad_ml <= 0:
+        return Response({'error': 'cantidad_ml debe ser mayor a 0'}, status=400)
+
+    fecha = request.data.get('fecha', hoy.isoformat())
+    registro = RegistroAgua.objects.create(usuario=user, fecha=fecha, cantidad_ml=cantidad_ml)
+    total_ml  = RegistroAgua.objects.filter(usuario=user, fecha=fecha).aggregate(
+        total=models.Sum('cantidad_ml')
+    )['total'] or 0
+    return Response({'id': registro.id, 'cantidad_ml': registro.cantidad_ml, 'total_ml': total_ml}, status=201)
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def agua_detalle(request, pk):
+    try:
+        registro = RegistroAgua.objects.get(pk=pk, usuario=request.user)
+        registro.delete()
+        return Response(status=204)
+    except RegistroAgua.DoesNotExist:
+        return Response(status=404)

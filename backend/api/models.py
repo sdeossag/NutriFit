@@ -338,6 +338,21 @@ class EjercicioPersonalizado(models.Model):
 #  PUSH NOTIFICATIONS
 # ──────────────────────────────────────────────
 
+class RegistroAgua(models.Model):
+    usuario     = models.ForeignKey('Usuario', on_delete=models.CASCADE, related_name='registros_agua')
+    fecha       = models.DateField()
+    cantidad_ml = models.PositiveIntegerField()
+    creado_en   = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering            = ['-creado_en']
+        verbose_name        = 'Registro de agua'
+        verbose_name_plural = 'Registros de agua'
+
+    def __str__(self):
+        return f"{self.usuario} — {self.cantidad_ml}ml el {self.fecha}"
+
+
 class PushSubscription(models.Model):
     usuario      = models.ForeignKey('Usuario', on_delete=models.CASCADE, related_name='push_subscriptions')
     endpoint     = models.TextField(unique=True)
