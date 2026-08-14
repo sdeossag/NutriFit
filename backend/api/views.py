@@ -1531,7 +1531,7 @@ def _send_push(sub, titulo, cuerpo):
                 'endpoint': sub.endpoint,
                 'keys': {'p256dh': sub.p256dh, 'auth': sub.auth},
             },
-            data=json.dumps({'title': titulo, 'body': cuerpo}),
+            data=json.dumps({'title': titulo, 'body': cuerpo}, ensure_ascii=False),
             vapid_private_key=_get_vapid_private_key(),
             vapid_claims={'sub': f'mailto:{settings.VAPID_CLAIM_EMAIL}'},
         )
@@ -1756,13 +1756,19 @@ def cron_notificaciones(request):
         )
         gym_estado = 'sí' if fue_gym else ('día de descanso' if es_descanso else 'no ha ido')
 
+        tono = {
+            'manana':   'energético y motivador para arrancar el día',
+            'mediodia': 'directo y práctico, como recordatorio',
+            'tarde':    'urgente pero sin regañar',
+            'noche':    'accountability final del día, corto y contundente',
+        }[slot_actual]
         prompt = (
-            f"Eres Bruce, un dachshund coach directo y motivador. "
-            f"Escríbele a {nombre} una notificación push de máximo 85 caracteres. "
-            f"Tono: {'energético y motivador' if slot_actual == 'manana' else 'directo y práctico' if slot_actual == 'mediodia' else 'urgente pero sin regañar' if slot_actual == 'tarde' else 'accountability final del día'}. "
-            f"Sin emojis. Sin comillas. Solo el texto.\n\n"
-            f"Contexto: son las {hora}h, slot={slot_actual}, objetivo={objetivo_txt}, "
-            f"calorías hoy={calorias_hoy}/{meta_cal} ({round(pct_cal*100)}%), "
+            f"Eres Bruce, un perro salchicha coach de fitness. Hablas español colombiano informal. "
+            f"Usa tildes y ñ correctamente (mañana, calorías, proteína, etc). "
+            f"Escríbele a {nombre} un mensaje push de máximo 80 caracteres. "
+            f"Tono: {tono}. Sin emojis. Sin comillas. Sin prefijos como 'Bruce:'. Solo el texto directo.\n\n"
+            f"Datos: {hora}h Colombia, objetivo={objetivo_txt}, "
+            f"calorías={calorias_hoy}/{meta_cal} ({round(pct_cal*100)}%), "
             f"proteína={proteina_hoy}g/{meta_prot}g, gym={gym_estado}."
         )
 
