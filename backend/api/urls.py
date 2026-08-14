@@ -68,6 +68,7 @@ urlpatterns = [
     path('push/estado/',                views.push_estado,          name='push-estado'),
     path('push/check/',                 views.push_check,           name='push-check'),
     path('push/cron/',                  views.cron_notificaciones,  name='push-cron'),
+    path('push/purge/',                 views.push_purge,           name='push-purge'),
 
     # ─────────────────── HEALTH CHECK ────────────────────────
     path('health/',                     views.health,               name='health'),

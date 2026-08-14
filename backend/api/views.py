@@ -1660,6 +1660,17 @@ _SLOTS = {
 }
 
 
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def push_purge(request):
+    """Borra todas las suscripciones push (para resetear tras cambiar claves VAPID)."""
+    secret = request.GET.get('key', '')
+    if getattr(settings, 'CRON_SECRET', '') and secret != settings.CRON_SECRET:
+        return Response({'error': 'forbidden'}, status=403)
+    count, _ = PushSubscription.objects.all().delete()
+    return Response({'eliminadas': count})
+
+
 @api_view(['GET', 'POST'])
 @permission_classes([AllowAny])
 def cron_notificaciones(request):
