@@ -179,8 +179,9 @@ export const logEjercicio      = (data)   => post('/ejercicios/log/', data)
 
 // ── Progress ──────────────────────────────────────────────────────────────────
 
-export const getProgresoSemanal = ()     => get('/progreso/')
-export const registrarPeso      = (data) => post('/peso/', data)
+export const getProgresoSemanal  = ()     => get('/progreso/')
+export const getProgresoCompleto = ()     => get('/progreso-completo/')
+export const registrarPeso       = (data) => post('/peso/', data)
 
 // ── Alacena ───────────────────────────────────────────────────────────────────
 
@@ -207,3 +208,8 @@ export const guardarRutinaDia = (data) => put('/rutinas-dia/', data)
 // ── Ejercicios personalizados del pool ───────────────────────────────────
 export const getEjerciciosPersonalizados   = ()     => get('/ejercicios-personalizados/')
 export const crearEjercicioPersonalizado   = (data) => post('/ejercicios-personalizados/', data)
+
+// ── Agua ──────────────────────────────────────────────────────────────────────
+export const getAgua       = (fecha) => get(`/agua/?fecha=${fecha}`)
+export const registrarAgua = (data)  => post('/agua/', data)
+export const eliminarAgua  = (id)    => del_(`/agua/${id}/`)

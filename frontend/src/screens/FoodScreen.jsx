@@ -2,11 +2,12 @@ import { useState, useEffect, useRef } from 'react'
 import {
   IconCamera, IconPlus, IconTrash, IconX, IconCheck,
   IconSearch, IconFlame, IconPencil, IconPackage, IconWorld, IconRefresh,
+  IconDroplet, IconBottle,
 } from '@tabler/icons-react'
 import {
   getComidas, agregarComida, eliminarComida, analizarFoto,
   getAlacena, agregarAAlacena, editarAlacena, eliminarAlacena,
-  usarAlacena, analizarEtiqueta,
+  usarAlacena, analizarEtiqueta, getAgua, registrarAgua, eliminarAgua,
 } from '../api'
 import bruceFace from '../assets/bruce-face.png'
 
@@ -378,6 +379,14 @@ export default function FoodScreen({ t, screen }) {
   const [seleccionado,  setSeleccionado]  = useState(null)
   const [formEditar,    setFormEditar]    = useState(null)
 
+  // ── Agua ──
+  const [aguaMl,       setAguaMl]       = useState(0)
+  const [aguaLogs,     setAguaLogs]     = useState([])   // [{ id, cantidad_ml }]
+  const [termoMl,      setTermoMl]      = useState(() => parseInt(localStorage.getItem('nutrifit_termo_ml') || '0'))
+  const [editandoTermo, setEditandoTermo] = useState(false)
+  const [termoInput,   setTermoInput]   = useState('')
+  const META_AGUA_ML = 2500
+
   const fileInputPlato    = useRef(null)
   const fileInputEtiqueta = useRef(null)
 
@@ -389,9 +398,17 @@ export default function FoodScreen({ t, screen }) {
       .finally(() => setCargando(false))
   }
 
+  const cargarAgua = () => {
+    getAgua(hoyISO()).then(data => {
+      setAguaMl(data.total_ml ?? 0)
+      setAguaLogs(data.registros ?? [])
+    }).catch(() => {})
+  }
+
   useEffect(() => {
     if (screen !== 'food') return
     cargarComidas()
+    cargarAgua()
     getAlacena().then(data => {
       if (data.length === 0) {
         Promise.all(ALACENA_INICIAL.map(a => agregarAAlacena(a).catch(() => {}))).then(() => {
@@ -491,6 +508,32 @@ export default function FoodScreen({ t, screen }) {
   const borrarComida = async (id) => {
     try { await eliminarComida(id); setComidas(prev => prev.filter(c => c.id !== id)) }
     catch { setError('Error al eliminar.') }
+  }
+
+  const agregarAgua = async (ml) => {
+    try {
+      const data = await registrarAgua({ cantidad_ml: ml, fecha: hoyISO() })
+      setAguaMl(data.total_ml)
+      setAguaLogs(prev => [{ id: data.id, cantidad_ml: ml }, ...prev])
+    } catch { setError('Error al registrar agua.') }
+  }
+
+  const deshacerUltimoAgua = async () => {
+    if (aguaLogs.length === 0) return
+    const ultimo = aguaLogs[0]
+    try {
+      await eliminarAgua(ultimo.id)
+      setAguaLogs(prev => prev.slice(1))
+      setAguaMl(prev => Math.max(0, prev - ultimo.cantidad_ml))
+    } catch { setError('Error al eliminar registro.') }
+  }
+
+  const guardarTermo = (ml) => {
+    const v = parseInt(ml)
+    if (!v || v <= 0) return
+    localStorage.setItem('nutrifit_termo_ml', String(v))
+    setTermoMl(v)
+    setEditandoTermo(false)
   }
 
   const alacenaFiltrada = alacena.filter(a =>
@@ -642,6 +685,141 @@ export default function FoodScreen({ t, screen }) {
           </div>
         ))}
       </div>
+
+      {/* ── Agua ── */}
+      {(() => {
+        const pct     = Math.min(aguaMl / META_AGUA_ML, 1)
+        const litros  = (aguaMl / 1000).toFixed(1)
+        const metaL   = (META_AGUA_ML / 1000).toFixed(1)
+        const RAPIDOS = [200, 350, 500, 750]
+        return (
+          <div style={{
+            background: '#131313', borderRadius: '20px',
+            border: '0.5px solid rgba(34,211,238,0.15)',
+            padding: '16px', marginBottom: '12px',
+          }}>
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <IconDroplet size={18} color='#22d3ee' />
+                <span style={{ fontWeight: '700', fontSize: '15px' }}>Agua</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '14px', fontWeight: '700', color: pct >= 1 ? '#4ade80' : '#22d3ee' }}>
+                  {litros} / {metaL} L
+                </span>
+                {aguaLogs.length > 0 && (
+                  <button
+                    onClick={deshacerUltimoAgua}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.25)', fontSize: '11px', padding: '2px 6px' }}
+                  >
+                    ↩ deshacer
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Barra de progreso */}
+            <div style={{ height: '4px', background: 'rgba(255,255,255,0.07)', borderRadius: '2px', overflow: 'hidden', marginBottom: '14px' }}>
+              <div style={{
+                height: '100%', borderRadius: '2px',
+                background: pct >= 1 ? '#4ade80' : '#22d3ee',
+                width: `${pct * 100}%`,
+                transition: 'width 0.4s ease',
+              }} />
+            </div>
+
+            {/* Botones rápidos */}
+            <div style={{ display: 'flex', gap: '7px', marginBottom: termoMl > 0 || editandoTermo ? '10px' : '0' }}>
+              {RAPIDOS.map(ml => (
+                <button key={ml} onClick={() => agregarAgua(ml)} style={{
+                  flex: 1, padding: '10px 4px', borderRadius: '12px', border: 'none',
+                  background: 'rgba(34,211,238,0.1)', color: '#22d3ee',
+                  fontSize: '12px', fontWeight: '700', cursor: 'pointer',
+                }}>
+                  {ml < 1000 ? `${ml}ml` : `${ml / 1000}L`}
+                </button>
+              ))}
+            </div>
+
+            {/* Termo / botella guardada */}
+            {!editandoTermo && termoMl > 0 && (
+              <div style={{ display: 'flex', gap: '7px', marginTop: '8px' }}>
+                <button
+                  onClick={() => agregarAgua(termoMl)}
+                  style={{
+                    flex: 1, padding: '10px 12px', borderRadius: '12px', border: '1px solid rgba(34,211,238,0.25)',
+                    background: 'rgba(34,211,238,0.07)', color: '#22d3ee',
+                    fontSize: '13px', fontWeight: '700', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                  }}
+                >
+                  <IconBottle size={15} /> Mi termo ({termoMl}ml)
+                </button>
+                <button
+                  onClick={() => { setEditandoTermo(true); setTermoInput(String(termoMl)) }}
+                  style={{ background: 'rgba(255,255,255,0.05)', border: 'none', borderRadius: '12px', padding: '10px 12px', cursor: 'pointer', color: 'rgba(255,255,255,0.3)', fontSize: '11px' }}
+                >
+                  editar
+                </button>
+              </div>
+            )}
+
+            {/* Sin termo guardado — botón para configurar */}
+            {!editandoTermo && termoMl === 0 && (
+              <button
+                onClick={() => { setEditandoTermo(true); setTermoInput('') }}
+                style={{
+                  marginTop: '8px', width: '100%', padding: '9px', borderRadius: '12px',
+                  border: '1px dashed rgba(34,211,238,0.2)', background: 'none',
+                  color: 'rgba(34,211,238,0.5)', fontSize: '12px', fontWeight: '600', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                }}
+              >
+                <IconBottle size={13} /> Guardar mi termo o botella
+              </button>
+            )}
+
+            {/* Formulario de termo */}
+            {editandoTermo && (
+              <div style={{ display: 'flex', gap: '7px', marginTop: '8px' }}>
+                <input
+                  autoFocus
+                  type='number'
+                  placeholder='Capacidad en ml (ej: 600)'
+                  value={termoInput}
+                  onChange={e => setTermoInput(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && guardarTermo(termoInput)}
+                  style={{
+                    flex: 1, background: 'rgba(255,255,255,0.07)',
+                    border: '0.5px solid rgba(34,211,238,0.3)', borderRadius: '12px',
+                    color: '#fff', fontSize: '14px', padding: '10px 12px',
+                    outline: 'none', fontFamily: 'inherit',
+                  }}
+                />
+                <button
+                  onClick={() => guardarTermo(termoInput)}
+                  disabled={!termoInput || parseInt(termoInput) <= 0}
+                  style={{
+                    background: termoInput ? '#22d3ee' : 'rgba(255,255,255,0.06)',
+                    color: termoInput ? '#000' : 'rgba(255,255,255,0.3)',
+                    border: 'none', borderRadius: '12px', padding: '10px 14px',
+                    fontSize: '13px', fontWeight: '700', cursor: 'pointer',
+                  }}
+                >
+                  Guardar
+                </button>
+                <button
+                  onClick={() => setEditandoTermo(false)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.3)', padding: '8px' }}
+                >
+                  <IconX size={14} />
+                </button>
+              </div>
+            )}
+          </div>
+        )
+      })()}
 
       {/* ── Botón alacena ── */}
       <button

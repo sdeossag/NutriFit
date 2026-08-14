@@ -1,5 +1,9 @@
-// VitePWA inyecta aquí el listado de archivos precacheados
-const _manifest = self.__WB_MANIFEST
+// Workbox injectManifest injection point — esbuild no puede eliminar un write a self
+self.__WB_MANIFEST_ENTRIES = self.__WB_MANIFEST
+
+// Tomar control inmediatamente sin esperar a que cierren las pestañas abiertas
+self.addEventListener('install', () => self.skipWaiting())
+self.addEventListener('activate', e => e.waitUntil(clients.claim()))
 
 // ── Push handler ─────────────────────────────────────────────────────────
 self.addEventListener('push', event => {

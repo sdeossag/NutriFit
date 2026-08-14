@@ -49,7 +49,6 @@ const RUTINAS_DEFAULT = {
   6: { nombre: 'Descanso', id: 'R', emoji: '🛌', ejercicios: [] },
 }
 
-// Pool global de ejercicios disponibles
 const POOL_DEFAULT = [
   { nombre: 'Sentadilla',             musculo: 'Piernas',   series: 4, reps: '8',   peso: '60 kg'    },
   { nombre: 'Prensa de pierna',       musculo: 'Piernas',   series: 4, reps: '12',  peso: '120 kg'   },
@@ -97,24 +96,82 @@ const COLORES_RUTINA = {
   'R': { bg: 'rgba(255,255,255,0.05)', border: 'rgba(255,255,255,0.06)', text: 'rgba(255,255,255,0.3)', glow: 'transparent' },
 }
 
-// Mismo sistema de colores del calendario, por grupo muscular
 const COLORES_MUSCULO = {
-  'Piernas':  { text: '#4ade80', bg: 'rgba(74,222,128,0.12)' },   // verde  — rutina A
-  'Pecho':    { text: '#60a5fa', bg: 'rgba(96,165,250,0.12)' },   // azul   — rutina B
-  'Hombros':  { text: '#60a5fa', bg: 'rgba(96,165,250,0.12)' },   // azul   — rutina B
-  'Espalda':  { text: '#a78bfa', bg: 'rgba(167,139,250,0.12)' },  // púrpura — rutina C
-  'Brazos':   { text: '#a78bfa', bg: 'rgba(167,139,250,0.12)' },  // púrpura — rutina C
-  'Core':     { text: '#4ade80', bg: 'rgba(74,222,128,0.12)' },   // verde  — complementario
-  'Cardio':   { text: '#fb923c', bg: 'rgba(251,146,60,0.12)' },   // naranja — rutina D
+  'Piernas':  { text: '#4ade80', bg: 'rgba(74,222,128,0.12)' },
+  'Pecho':    { text: '#60a5fa', bg: 'rgba(96,165,250,0.12)' },
+  'Hombros':  { text: '#60a5fa', bg: 'rgba(96,165,250,0.12)' },
+  'Espalda':  { text: '#a78bfa', bg: 'rgba(167,139,250,0.12)' },
+  'Brazos':   { text: '#a78bfa', bg: 'rgba(167,139,250,0.12)' },
+  'Core':     { text: '#4ade80', bg: 'rgba(74,222,128,0.12)' },
+  'Cardio':   { text: '#fb923c', bg: 'rgba(251,146,60,0.12)' },
 }
 
-
-// Devuelve { text, bg } para un ejercicio del pool, ya sea predefinido o personalizado
 function colorParaEjercicio(ex, colorFallback) {
   if (ex.custom && ex.color) {
-    return { text: ex.color, bg: ex.color + '26' } // 26 hex ≈ 15% alpha
+    return { text: ex.color, bg: ex.color + '26' }
   }
   return COLORES_MUSCULO[ex.musculo] ?? { text: colorFallback, bg: colorFallback + '20' }
+}
+
+// Busca el color del ejercicio en el pool si no lo tiene directo
+function getEjercicioColor(ex, pool, fallbackColor) {
+  if (ex.custom && ex.color) return { text: ex.color, bg: ex.color + '26' }
+  if (ex.musculo) return COLORES_MUSCULO[ex.musculo] ?? null
+  const fromPool = pool.find(p => p.nombre === ex.nombre)
+  if (fromPool?.musculo) return COLORES_MUSCULO[fromPool.musculo] ?? null
+  return null
+}
+
+// ─── RESUMEN SEMANAL ───────────────────────────────────────────────────────────
+function ResumenSemanal({ semana, completados, rutinas, pool }) {
+  const diasActivos = semana.filter(({ fecha }) => (completados[fecha] ?? []).length > 0).length
+
+  const musculosSemana = new Set()
+  semana.forEach(({ fecha, dayOfWeek }) => {
+    const dias = completados[fecha] ?? []
+    const rutina = rutinas[dayOfWeek]
+    dias.forEach(idx => {
+      const ex = rutina?.ejercicios?.[idx]
+      if (!ex) return
+      const musculo = ex.musculo || pool.find(p => p.nombre === ex.nombre)?.musculo
+      if (musculo) musculosSemana.add(musculo)
+    })
+  })
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: '12px',
+      background: '#131313', borderRadius: '18px',
+      border: '0.5px solid rgba(255,255,255,0.06)',
+      padding: '14px 16px', marginBottom: '20px',
+    }}>
+      <div style={{ textAlign: 'center', minWidth: '48px' }}>
+        <p style={{
+          fontSize: '28px', fontWeight: '800', lineHeight: 1,
+          color: diasActivos > 0 ? '#4ade80' : 'rgba(255,255,255,0.15)',
+        }}>{diasActivos}</p>
+        <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.3)', marginTop: '2px', fontWeight: '600' }}>/ 7 días</p>
+      </div>
+      <div style={{ width: '1px', height: '36px', background: 'rgba(255,255,255,0.07)', flexShrink: 0 }} />
+      <div style={{ flex: 1 }}>
+        {musculosSemana.size > 0 ? (
+          <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+            {[...musculosSemana].map(m => {
+              const col = COLORES_MUSCULO[m] ?? { text: '#4ade80', bg: 'rgba(74,222,128,0.12)' }
+              return (
+                <span key={m} style={{
+                  fontSize: '10px', fontWeight: '700', padding: '3px 9px',
+                  borderRadius: '20px', background: col.bg, color: col.text,
+                }}>{m}</span>
+              )
+            })}
+          </div>
+        ) : (
+          <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)' }}>Sin actividad esta semana</p>
+        )}
+      </div>
+    </div>
+  )
 }
 
 // ─── CONFETTI ──────────────────────────────────────────────────────────────────
@@ -183,7 +240,6 @@ function RestTimer({ color, onClose }) {
       display: 'flex', alignItems: 'center', gap: '12px',
       marginTop: '8px',
     }}>
-      {/* Circular progress */}
       <div style={{ position: 'relative', width: '54px', height: '54px', flexShrink: 0 }}>
         <svg width="54" height="54" style={{ transform: 'rotate(-90deg)' }}>
           <circle cx="27" cy="27" r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="3" />
@@ -204,7 +260,6 @@ function RestTimer({ color, onClose }) {
         </div>
       </div>
 
-      {/* Options */}
       <div style={{ flex: 1 }}>
         <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
           {OPTIONS.map(s => (
@@ -233,12 +288,12 @@ function RestTimer({ color, onClose }) {
 
 // ─── CREAR EJERCICIO PERSONALIZADO ──────────────────────────────────────────────
 function CrearEjercicioForm({ colores, onCrear, onCancel }) {
-  const [nombre, setNombre]     = useState('')
-  const [musculo, setMusculo]   = useState('')
-  const [series, setSeries]     = useState('3')
-  const [reps, setReps]         = useState('10')
-  const [peso, setPeso]         = useState('')
-  const [color, setColor]       = useState('#4ade80')
+  const [nombre, setNombre]   = useState('')
+  const [musculo, setMusculo] = useState('')
+  const [series, setSeries]   = useState('3')
+  const [reps, setReps]       = useState('10')
+  const [peso, setPeso]       = useState('')
+  const [color, setColor]     = useState('#4ade80')
 
   const puedeCrear = nombre.trim().length > 0
 
@@ -289,36 +344,19 @@ function CrearEjercicioForm({ colores, onCrear, onCancel }) {
 
       <div style={{ marginBottom: '10px' }}>
         <span style={labelStyle}>Nombre del ejercicio</span>
-        <input
-          value={nombre}
-          onChange={e => setNombre(e.target.value)}
-          placeholder='Ej. Hip thrust'
-          style={inputStyle}
-        />
+        <input value={nombre} onChange={e => setNombre(e.target.value)} placeholder='Ej. Hip thrust' style={inputStyle} />
       </div>
 
       <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
         <div style={{ flex: 1 }}>
           <span style={labelStyle}>Categoría / músculo</span>
-          <input
-            value={musculo}
-            onChange={e => setMusculo(e.target.value)}
-            placeholder='Ej. Glúteos'
-            style={inputStyle}
-          />
+          <input value={musculo} onChange={e => setMusculo(e.target.value)} placeholder='Ej. Glúteos' style={inputStyle} />
         </div>
         <div style={{ width: '64px', flexShrink: 0 }}>
           <span style={labelStyle}>Color</span>
           <input
-            type='color'
-            value={color}
-            onChange={e => setColor(e.target.value)}
-            style={{
-              width: '100%', height: '40px', borderRadius: '12px',
-              border: '0.5px solid rgba(255,255,255,0.12)',
-              background: 'rgba(255,255,255,0.07)',
-              padding: '4px', cursor: 'pointer',
-            }}
+            type='color' value={color} onChange={e => setColor(e.target.value)}
+            style={{ width: '100%', height: '40px', borderRadius: '12px', border: '0.5px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.07)', padding: '4px', cursor: 'pointer' }}
           />
         </div>
       </div>
@@ -326,30 +364,15 @@ function CrearEjercicioForm({ colores, onCrear, onCancel }) {
       <div style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
         <div style={{ flex: 1 }}>
           <span style={labelStyle}>Series</span>
-          <input
-            type='number' min='1'
-            value={series}
-            onChange={e => setSeries(e.target.value)}
-            style={inputStyle}
-          />
+          <input type='number' min='1' value={series} onChange={e => setSeries(e.target.value)} style={inputStyle} />
         </div>
         <div style={{ flex: 1 }}>
           <span style={labelStyle}>Reps</span>
-          <input
-            value={reps}
-            onChange={e => setReps(e.target.value)}
-            placeholder='Ej. 10 o 45s'
-            style={inputStyle}
-          />
+          <input value={reps} onChange={e => setReps(e.target.value)} placeholder='Ej. 10 o 45s' style={inputStyle} />
         </div>
         <div style={{ flex: 1 }}>
           <span style={labelStyle}>Peso</span>
-          <input
-            value={peso}
-            onChange={e => setPeso(e.target.value)}
-            placeholder='Ej. 20 kg'
-            style={inputStyle}
-          />
+          <input value={peso} onChange={e => setPeso(e.target.value)} placeholder='Ej. 20 kg' style={inputStyle} />
         </div>
       </div>
 
@@ -381,7 +404,7 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose, onCre
   const [vistaPool, setVistaPool]   = useState(false)
   const [busqueda, setBusqueda]     = useState('')
   const [filtroMus, setFiltroMus]   = useState('Todos')
-  const [mostrarCrear, setMostrarCrear] = useState(false)
+  const [mostrarCrear, setMostrarCrear]     = useState(false)
   const [mostrarPalette, setMostrarPalette] = useState(false)
 
   const musculos = ['Todos', ...new Set(pool.map(e => e.musculo))]
@@ -393,13 +416,8 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose, onCre
     return matchMus && matchBus && !yaEsta
   })
 
-  const agregarDelPool = (ex) => {
-    setEjercicios(prev => [...prev, { ...ex }])
-  }
-
-  const quitarEjercicio = (idx) => {
-    setEjercicios(prev => prev.filter((_, i) => i !== idx))
-  }
+  const agregarDelPool  = (ex) => setEjercicios(prev => [...prev, { ...ex }])
+  const quitarEjercicio = (idx) => setEjercicios(prev => prev.filter((_, i) => i !== idx))
 
   const moverEjercicio = (idx, dir) => {
     setEjercicios(prev => {
@@ -418,16 +436,7 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose, onCre
   }
 
   return (
-    <div style={{
-      position: 'absolute', inset: 0, zIndex: 50,
-      background: '#0d0d0d',
-      display: 'flex', flexDirection: 'column',
-      overflowY: 'auto',
-    }}>
-      {/* Header — padding superior fijo generoso para despejar el notch/Dynamic Island del iPhone.
-          Se usa un valor fijo (no solo env()) porque env(safe-area-inset-top) requiere
-          viewport-fit=cover en el <meta name="viewport"> del index.html para funcionar;
-          si esa meta no está presente, env() devuelve 0px y el header queda pegado arriba. */}
+    <div style={{ position: 'absolute', inset: 0, zIndex: 50, background: '#0d0d0d', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
       <div style={{
         padding: 'max(48px, env(safe-area-inset-top, 48px)) 16px 16px',
         borderBottom: '0.5px solid rgba(255,255,255,0.06)',
@@ -455,11 +464,7 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose, onCre
             />
             <button
               onClick={() => setMostrarPalette(p => !p)}
-              title='Cambiar emoji'
-              style={{
-                background: 'transparent', border: 'none', cursor: 'pointer',
-                fontSize: '22px', lineHeight: 1, padding: '6px', color: '#fff'
-              }}
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '22px', lineHeight: 1, padding: '6px', color: '#fff' }}
             >
               {emoji}
             </button>
@@ -467,8 +472,6 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose, onCre
           <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', marginTop: '2px' }}>
             {ejercicios.length} ejercicios
           </p>
-
-          {/* Emoji palette */}
           {mostrarPalette && (
             <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
               {['💪','🏃','🚴','🏊','🦾','🏋️‍♀️','🧘','🔁','🛌','🔥','⚡️','😊','🥇','🧠','💥'].map(em => (
@@ -477,25 +480,21 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose, onCre
                 }}>{em}</button>
               ))}
               <input
-                placeholder='Pegar emoji'
-                value={emoji}
-                onChange={e => setEmoji(e.target.value)}
+                placeholder='Pegar emoji' value={emoji} onChange={e => setEmoji(e.target.value)}
                 style={{ background: 'rgba(255,255,255,0.03)', border: '0.5px solid rgba(255,255,255,0.06)', padding: '8px', borderRadius: '10px', color: '#fff', minWidth: '100px' }}
               />
             </div>
           )}
         </div>
         <button onClick={() => onSave({ nombre, ejercicios, emoji })} style={{
-          background: colores.text, color: '#000',
-          border: 'none', borderRadius: '12px',
-          padding: '12px 18px', fontSize: '13px', fontWeight: '700',
-          cursor: 'pointer', flexShrink: 0, minHeight: '40px',
+          background: colores.text, color: '#000', border: 'none', borderRadius: '12px',
+          padding: '12px 18px', fontSize: '13px', fontWeight: '700', cursor: 'pointer',
+          flexShrink: 0, minHeight: '40px',
         }}>
           Guardar
         </button>
       </div>
 
-      {/* Toggle lista / pool */}
       <div style={{ display: 'flex', padding: '12px 16px', gap: '8px', flexShrink: 0 }}>
         {[
           { id: false, label: `Mi rutina (${ejercicios.length})` },
@@ -512,12 +511,8 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose, onCre
         ))}
       </div>
 
-      <div style={{
-        flex: 1, overflowY: 'auto',
-        padding: `0 16px max(32px, env(safe-area-inset-bottom, 32px))`,
-      }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: `0 16px max(32px, env(safe-area-inset-bottom, 32px))` }}>
         {!vistaPool ? (
-          /* ── Lista de ejercicios actuales ── */
           ejercicios.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '48px 0', color: 'rgba(255,255,255,0.2)' }}>
               <p style={{ fontSize: '32px', marginBottom: '8px' }}>💪</p>
@@ -526,27 +521,18 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose, onCre
             </div>
           ) : (
             ejercicios.map((ex, i) => (
-              <div key={i} style={{
-                display: 'flex', alignItems: 'center', gap: '10px',
-                padding: '12px 0',
-                borderBottom: '0.5px solid rgba(255,255,255,0.04)',
-              }}>
-                {/* Reorder */}
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 0', borderBottom: '0.5px solid rgba(255,255,255,0.04)' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                   <button onClick={() => moverEjercicio(i, -1)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: i === 0 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.3)', padding: '2px', lineHeight: 1, fontSize: '10px' }}>▲</button>
                   <button onClick={() => moverEjercicio(i, 1)}  style={{ background: 'none', border: 'none', cursor: 'pointer', color: i === ejercicios.length-1 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.3)', padding: '2px', lineHeight: 1, fontSize: '10px' }}>▼</button>
                 </div>
-
-                {/* Color dot para personalizados */}
                 {ex.custom && ex.color && (
                   <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: ex.color, flexShrink: 0 }} />
                 )}
-
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <p style={{ fontSize: '13px', fontWeight: '600', marginBottom: '3px' }}>{ex.nombre}</p>
                   <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>{ex.series}x{ex.reps} - {ex.peso}</p>
                 </div>
-
                 <button onClick={() => quitarEjercicio(i)} style={{
                   background: 'rgba(239,68,68,0.1)', border: 'none',
                   width: '28px', height: '28px', borderRadius: '8px',
@@ -559,40 +545,26 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose, onCre
             ))
           )
         ) : (
-          /* ── Pool de ejercicios ── */
           <>
-            {/* Botón crear ejercicio personalizado */}
             {!mostrarCrear && (
-              <button
-                onClick={() => setMostrarCrear(true)}
-                style={{
-                  width: '100%', padding: '12px', borderRadius: '14px',
-                  border: `0.5px dashed ${colores.text}40`,
-                  background: `${colores.text}10`,
-                  color: colores.text, fontSize: '12px', fontWeight: '700',
-                  cursor: 'pointer', marginBottom: '12px',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                }}
-              >
+              <button onClick={() => setMostrarCrear(true)} style={{
+                width: '100%', padding: '12px', borderRadius: '14px',
+                border: `0.5px dashed ${colores.text}40`,
+                background: `${colores.text}10`,
+                color: colores.text, fontSize: '12px', fontWeight: '700',
+                cursor: 'pointer', marginBottom: '12px',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+              }}>
                 <IconPalette size={14} />
                 Crear ejercicio personalizado
               </button>
             )}
 
             {mostrarCrear && (
-              <CrearEjercicioForm
-                colores={colores}
-                onCrear={handleCrearEjercicio}
-                onCancel={() => setMostrarCrear(false)}
-              />
+              <CrearEjercicioForm colores={colores} onCrear={handleCrearEjercicio} onCancel={() => setMostrarCrear(false)} />
             )}
 
-            {/* Búsqueda */}
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: '8px',
-              background: 'rgba(255,255,255,0.05)', borderRadius: '12px',
-              padding: '10px 12px', marginBottom: '12px',
-            }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '10px 12px', marginBottom: '12px' }}>
               <IconSearch size={14} color='rgba(255,255,255,0.3)' />
               <input
                 value={busqueda} onChange={e => setBusqueda(e.target.value)}
@@ -601,7 +573,6 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose, onCre
               />
             </div>
 
-            {/* Filtro por músculo */}
             <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '10px', marginBottom: '10px' }}>
               {musculos.map(m => {
                 const mc = COLORES_MUSCULO[m] ?? { text: colores.text, bg: `${colores.text}20` }
@@ -611,8 +582,7 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose, onCre
                     whiteSpace: 'nowrap', padding: '6px 12px', borderRadius: '20px', border: 'none',
                     background: activo ? mc.text : 'rgba(255,255,255,0.07)',
                     color: activo ? '#000' : 'rgba(255,255,255,0.5)',
-                    fontSize: '11px', fontWeight: '600', cursor: 'pointer',
-                    transition: 'all 0.15s',
+                    fontSize: '11px', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s',
                   }}>
                     {m}
                   </button>
@@ -623,18 +593,11 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose, onCre
             {poolFiltrado.map((ex, i) => {
               const mc = colorParaEjercicio(ex, colores.text)
               return (
-                <div key={i} style={{
-                  display: 'flex', alignItems: 'center', gap: '10px',
-                  padding: '12px 0',
-                  borderBottom: '0.5px solid rgba(255,255,255,0.04)',
-                }}>
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 0', borderBottom: '0.5px solid rgba(255,255,255,0.04)' }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ fontSize: '13px', fontWeight: '600', marginBottom: '3px' }}>{ex.nombre}</p>
                     <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                      <span style={{
-                        fontSize: '9px', padding: '2px 7px', borderRadius: '20px',
-                        background: mc.bg, color: mc.text, fontWeight: '700',
-                      }}>{ex.musculo}</span>
+                      <span style={{ fontSize: '9px', padding: '2px 7px', borderRadius: '20px', background: mc.bg, color: mc.text, fontWeight: '700' }}>{ex.musculo}</span>
                       <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>{ex.series}x{ex.reps} - {ex.peso}</span>
                     </div>
                   </div>
@@ -658,25 +621,22 @@ function RutinaEditor({ rutina, dayOfWeek, colores, pool, onSave, onClose, onCre
 
 // ─── COMPONENTE PRINCIPAL ──────────────────────────────────────────────────────
 export default function GymScreen({ t }) {
-  // Arrancan con los valores por defecto; se sobreescriben con lo que venga
-  // del backend en cuanto cargue (ver useEffect de carga inicial más abajo).
-  const [rutinas, setRutinas]           = useState(RUTINAS_DEFAULT)
-  const [pool, setPool]                 = useState(POOL_DEFAULT)
-  const [cargandoRutinas, setCargandoRutinas] = useState(true)
-  const [selectedFecha, setSelectedFecha] = useState(null)
-  const [completados, setCompletados]   = useState({})
-  const [logData, setLogData]           = useState({})       // { fecha: { idx: { peso, reps, nota } } }
-  const [expandido, setExpandido]       = useState({})       // { fecha_idx: bool }
-  const [timerAbierto, setTimerAbierto] = useState(null)     // 'fecha_idx' | null
-  const [guardando, setGuardando]       = useState(false)
-  const [guardado, setGuardado]         = useState({})
-  const [confetti, setConfetti]         = useState(false)
-  const [editorDia, setEditorDia]       = useState(null)     // dayOfWeek | null
-  const [semanaAnterior, setSemanaAnterior] = useState({})   // { fecha: [ejerciciosGuardados] }
+  const [rutinas, setRutinas]                   = useState(RUTINAS_DEFAULT)
+  const [pool, setPool]                         = useState(POOL_DEFAULT)
+  const [cargandoRutinas, setCargandoRutinas]   = useState(true)
+  const [selectedFecha, setSelectedFecha]       = useState(null)
+  const [completados, setCompletados]           = useState({})
+  const [logData, setLogData]                   = useState({})
+  const [expandido, setExpandido]               = useState({})
+  const [timerAbierto, setTimerAbierto]         = useState(null)
+  const [guardando, setGuardando]               = useState(false)
+  const [guardado, setGuardado]                 = useState({})
+  const [confetti, setConfetti]                 = useState(false)
+  const [editorDia, setEditorDia]               = useState(null)
+  const [semanaAnterior, setSemanaAnterior]     = useState({})
 
   const [hoy] = useState(() => new Date().toISOString().split('T')[0])
 
-  // ── Cargar rutinas personalizadas y pool de ejercicios desde el backend ──
   useEffect(() => {
     let cancelado = false
 
@@ -689,7 +649,6 @@ export default function GymScreen({ t }) {
 
         if (cancelado) return
 
-        // Merge: empieza de los defaults y sobreescribe los días que el usuario editó
         if (rutinasGuardadas && Object.keys(rutinasGuardadas).length > 0) {
           setRutinas(prev => {
             const merged = { ...prev }
@@ -719,7 +678,6 @@ export default function GymScreen({ t }) {
     return () => { cancelado = true }
   }, [])
 
-  // ── Semana actual ──
   const semana = [...Array(7)].map((_, i) => {
     const d = new Date()
     d.setDate(d.getDate() - (6 - i))
@@ -728,7 +686,6 @@ export default function GymScreen({ t }) {
     return { fecha, dayOfWeek, d }
   })
 
-  // ── Cargar sesión de una fecha ──
   const cargarSesionFecha = useCallback(async (fecha) => {
     try {
       const sesion = await getSesionFecha(fecha)
@@ -761,7 +718,6 @@ export default function GymScreen({ t }) {
     }
   }, [rutinas])
 
-  // ── Cargar TODAS las sesiones de la semana al montar ── (fix del bug del calendario)
   useEffect(() => {
     const cargarTodas = async () => {
       await Promise.all(semana.map(({ fecha }) => cargarSesionFecha(fecha)))
@@ -774,14 +730,12 @@ export default function GymScreen({ t }) {
     if (!selectedFecha) setSelectedFecha(hoy)
   }, [hoy, selectedFecha])
 
-  // ── Toggle ejercicio — nunca se bloquea, guardado solo es visual ──
   const toggleEjercicio = (fecha, idx) => {
     setCompletados(prev => {
       const lista = prev[fecha] ?? []
       const yaEsta = lista.includes(idx)
       const nueva  = yaEsta ? lista.filter(i => i !== idx) : [...lista, idx]
 
-      // Check confetti
       const rutina = rutinas[semana.find(d => d.fecha === fecha)?.dayOfWeek]
       if (rutina?.ejercicios?.length > 0 && nueva.length === rutina.ejercicios.length) {
         setConfetti(true)
@@ -790,7 +744,6 @@ export default function GymScreen({ t }) {
       return { ...prev, [fecha]: nueva }
     })
 
-    // Al volver a tocar un ejercicio, permitir guardar de nuevo
     setGuardado(prev => {
       if (!prev[fecha]) return prev
       const { [fecha]: _omit, ...resto } = prev
@@ -798,7 +751,6 @@ export default function GymScreen({ t }) {
     })
   }
 
-  // ── Log inline ──
   const updateLog = (fecha, idx, field, value) => {
     setLogData(prev => ({
       ...prev,
@@ -806,7 +758,6 @@ export default function GymScreen({ t }) {
     }))
   }
 
-  // ── Guardar sesión ──
   const guardarSesion = async (fecha, dayOfWeek) => {
     const rutina = rutinas[dayOfWeek]
     const completadosDelDia = completados[fecha] || []
@@ -827,6 +778,7 @@ export default function GymScreen({ t }) {
         try {
           await logEjercicio({
             fecha, nombre: ejercicio.nombre,
+            musculo: ejercicio.musculo || '',
             series: ejercicio.series,
             reps: logEx.reps || ejercicio.reps,
             peso_kg: pesoKg,
@@ -835,7 +787,6 @@ export default function GymScreen({ t }) {
         } catch {}
       }
       setGuardado(prev => ({ ...prev, [fecha]: true }))
-      // Después de un momento se vuelve a permitir guardar (por si el usuario sigue marcando)
       setTimeout(() => {
         setGuardado(prev => {
           const { [fecha]: _omit, ...resto } = prev
@@ -849,11 +800,8 @@ export default function GymScreen({ t }) {
     }
   }
 
-  // ── Editor de rutina — guarda en el backend para que se vea en todos los dispositivos ──
   const handleSaveRutina = async (dayOfWeek, { nombre, ejercicios, emoji: newEmoji }) => {
     const rutinaActual = rutinas[dayOfWeek]
-
-    // Actualización optimista: se ve el cambio al instante en la UI
     setRutinas(prev => ({
       ...prev,
       [dayOfWeek]: { ...prev[dayOfWeek], nombre, ejercicios, emoji: newEmoji ?? prev[dayOfWeek].emoji },
@@ -870,16 +818,12 @@ export default function GymScreen({ t }) {
       })
     } catch (e) {
       console.error('Error guardando rutina en el servidor:', e)
-      // Si falla el guardado remoto, revertimos para no dar falsa sensación de éxito
       setRutinas(prev => ({ ...prev, [dayOfWeek]: rutinaActual }))
     }
   }
 
-  // ── Crear ejercicio personalizado — se guarda en el backend (pool compartido entre dispositivos) ──
   const handleCrearEjercicioPersonalizado = async (ejercicio) => {
-    // Actualización optimista
     setPool(prev => [...prev, ejercicio])
-
     try {
       await crearEjercicioPersonalizado({
         nombre: ejercicio.nombre,
@@ -894,16 +838,18 @@ export default function GymScreen({ t }) {
     }
   }
 
-  const diaSeleccionado       = semana.find(d => d.fecha === selectedFecha)
-  const rutinaSeleccionada    = diaSeleccionado ? rutinas[diaSeleccionado.dayOfWeek] : null
-  const colores               = rutinaSeleccionada ? COLORES_RUTINA[rutinaSeleccionada.id] : null
+  const diaSeleccionado          = semana.find(d => d.fecha === selectedFecha)
+  const rutinaSeleccionada       = diaSeleccionado ? rutinas[diaSeleccionado.dayOfWeek] : null
+  const colores                  = rutinaSeleccionada ? COLORES_RUTINA[rutinaSeleccionada.id] : null
   const completadosSeleccionados = completados[selectedFecha] ?? []
-  const diasAbr = ['L', 'M', 'X', 'J', 'V', 'S', 'D']
+  const totalEjerciciosDia       = rutinaSeleccionada?.ejercicios?.length ?? 0
+  const sesionCompleta           = totalEjerciciosDia > 0 && completadosSeleccionados.length === totalEjerciciosDia
+  const diasAbr                  = ['L', 'M', 'X', 'J', 'V', 'S', 'D']
 
   return (
     <div style={{ padding: '44px 16px 0', position: 'relative', minHeight: '100%' }}>
 
-      {/* Editor de rutina — overlay dentro del contenedor */}
+      {/* Editor de rutina — overlay */}
       {editorDia !== null && (
         <RutinaEditor
           rutina={rutinas[editorDia]}
@@ -926,29 +872,36 @@ export default function GymScreen({ t }) {
           width: '38px', height: '38px', borderRadius: '50%', flexShrink: 0,
           background: 'linear-gradient(135deg, #064e3b, #16a34a)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          overflow: 'hidden',
-          boxShadow: '0 2px 12px rgba(74,222,128,0.25)',
+          overflow: 'hidden', boxShadow: '0 2px 12px rgba(74,222,128,0.25)',
         }}>
           <img src={bruceFace} alt='Bruce' style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         </div>
       </div>
 
+      {/* Resumen semanal */}
+      <ResumenSemanal semana={semana} completados={completados} rutinas={rutinas} pool={pool} />
+
       {/* Calendario horizontal */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '28px', overflowX: 'auto', paddingBottom: '4px' }}>
         {semana.map(({ fecha, dayOfWeek, d }) => {
-          const rutina      = rutinas[dayOfWeek]
-          const coloresDia  = COLORES_RUTINA[rutina.id]
-          const esSeleccionado = fecha === selectedFecha
-          const numDia      = d.getDate()
+          const rutina          = rutinas[dayOfWeek]
+          const coloresDia      = COLORES_RUTINA[rutina.id]
+          const esSeleccionado  = fecha === selectedFecha
+          const esHoy           = fecha === hoy
+          const numDia          = d.getDate()
           const completadosDelDia = completados[fecha] || []
           const totalEjercicios   = rutina.ejercicios.length
-          const pct         = totalEjercicios > 0 ? completadosDelDia.length / totalEjercicios : 0
-          const terminado   = pct === 1 && totalEjercicios > 0
+          const pct             = totalEjercicios > 0 ? completadosDelDia.length / totalEjercicios : 0
+          const terminado       = pct === 1 && totalEjercicios > 0
 
           return (
             <button key={fecha} onClick={() => setSelectedFecha(fecha)} style={{
               minWidth: '56px', height: '80px', borderRadius: '14px',
-              border: esSeleccionado ? `0.5px solid ${coloresDia.text}` : '0.5px solid rgba(255,255,255,0.06)',
+              border: esSeleccionado
+                ? `1.5px solid ${coloresDia.text}`
+                : esHoy
+                  ? `1px solid ${coloresDia.text}60`
+                  : '0.5px solid rgba(255,255,255,0.06)',
               background: 'transparent', position: 'relative', overflow: 'hidden',
               display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
               gap: '4px', cursor: 'pointer', color: 'inherit', padding: '0',
@@ -963,9 +916,14 @@ export default function GymScreen({ t }) {
                 transition: 'height 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
                 pointerEvents: 'none',
               }} />
+
               <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
-                <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)', fontWeight: '600' }}>{diasAbr[dayOfWeek]}</span>
-                <span style={{ fontSize: '16px', fontWeight: '700', color: esSeleccionado ? coloresDia.text : 'rgba(255,255,255,0.7)' }}>{numDia}</span>
+                <span style={{ fontSize: '10px', color: esHoy ? coloresDia.text : 'rgba(255,255,255,0.4)', fontWeight: esHoy ? '700' : '600' }}>
+                  {diasAbr[dayOfWeek]}
+                </span>
+                <span style={{ fontSize: '16px', fontWeight: '700', color: esSeleccionado ? coloresDia.text : 'rgba(255,255,255,0.7)' }}>
+                  {numDia}
+                </span>
                 <div style={{
                   height: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center',
                   transform: terminado ? 'scale(1)' : 'scale(0.5)',
@@ -976,6 +934,15 @@ export default function GymScreen({ t }) {
                 </div>
                 <span style={{ fontSize: '16px' }}>{rutina.emoji}</span>
               </div>
+
+              {/* Punto "hoy" en la parte superior */}
+              {esHoy && !esSeleccionado && (
+                <div style={{
+                  position: 'absolute', top: '6px', left: '50%', transform: 'translateX(-50%)',
+                  width: '4px', height: '4px', borderRadius: '50%',
+                  background: coloresDia.text, opacity: 0.8,
+                }} />
+              )}
             </button>
           )
         })}
@@ -985,43 +952,56 @@ export default function GymScreen({ t }) {
       {rutinaSeleccionada && (
         <div style={{
           background: '#131313', borderRadius: '22px',
-          border: '0.5px solid rgba(255,255,255,0.06)',
+          border: sesionCompleta
+            ? `1px solid ${colores.text}50`
+            : '0.5px solid rgba(255,255,255,0.06)',
           overflow: 'hidden', position: 'relative',
+          transition: 'border-color 0.4s ease',
+          boxShadow: sesionCompleta ? `0 0 24px ${colores.glow}30` : 'none',
         }}>
-          {/* Confetti al completar */}
           {confetti && <Confetti color={colores.text} />}
 
           {/* Header rutina */}
           <div style={{
-            background: colores.bg, border: `0.5px solid ${colores.border}`,
+            background: sesionCompleta ? colores.text + '20' : colores.bg,
+            border: `0.5px solid ${colores.border}`,
             padding: '16px 20px',
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            transition: 'background 0.4s ease',
           }}>
             <div style={{ textAlign: 'left' }}>
-              <p style={{ fontSize: '13px', color: colores.text, fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '2px' }}>
-                {rutinaSeleccionada.nombre}
-              </p>
-              {rutinaSeleccionada.ejercicios.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
+                <p style={{ fontSize: '13px', color: colores.text, fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                  {rutinaSeleccionada.nombre}
+                </p>
+                {sesionCompleta && (
+                  <span style={{
+                    fontSize: '10px', fontWeight: '700', padding: '2px 8px',
+                    borderRadius: '20px', background: colores.text + '25', color: colores.text,
+                  }}>
+                    ✓ Completado
+                  </span>
+                )}
+              </div>
+              {totalEjerciciosDia > 0 && (
                 <p style={{ fontSize: '12px', color: colores.text, opacity: 0.7 }}>
-                  {completadosSeleccionados.length}/{rutinaSeleccionada.ejercicios.length} ejercicios
+                  {completadosSeleccionados.length}/{totalEjerciciosDia} ejercicios
                 </p>
               )}
             </div>
-            {/* Botón editar rutina */}
-            {rutinaSeleccionada.id !== 'R' && (
-              <button
-                onClick={() => setEditorDia(diaSeleccionado.dayOfWeek)}
-                style={{
-                  background: `${colores.text}15`, border: `0.5px solid ${colores.text}30`,
-                  borderRadius: '10px', padding: '7px 12px',
-                  display: 'flex', alignItems: 'center', gap: '5px',
-                  color: colores.text, fontSize: '11px', fontWeight: '700',
-                  cursor: 'pointer',
-                }}>
-                <IconPencil size={11} />
-                Editar
-              </button>
-            )}
+            {/* Botón editar — disponible en todos los días incluyendo descanso */}
+            <button
+              onClick={() => setEditorDia(diaSeleccionado.dayOfWeek)}
+              style={{
+                background: `${colores.text}15`, border: `0.5px solid ${colores.text}30`,
+                borderRadius: '10px', padding: '7px 12px',
+                display: 'flex', alignItems: 'center', gap: '5px',
+                color: colores.text, fontSize: '11px', fontWeight: '700',
+                cursor: 'pointer',
+              }}>
+              <IconPencil size={11} />
+              Editar
+            </button>
           </div>
 
           {/* Ejercicios */}
@@ -1035,21 +1015,22 @@ export default function GymScreen({ t }) {
                   const logEx      = logData[selectedFecha]?.[j] ?? {}
                   const timerKey   = `${selectedFecha}_${j}`
                   const timerOpen  = timerAbierto === timerKey
+                  const exColor    = getEjercicioColor(ex, pool, colores.text)
 
                   return (
                     <div key={j} style={{ borderBottom: '0.5px solid rgba(255,255,255,0.03)' }}>
                       {/* Fila principal */}
                       <div
-                        onClick={() => {
-                          const newExp = !isExpanded
-                          setExpandido(prev => ({ ...prev, [key]: newExp }))
-                        }}
+                        onClick={() => setExpandido(prev => ({ ...prev, [key]: !isExpanded }))}
                         style={{
                           display: 'flex', alignItems: 'center', gap: '12px',
-                          padding: '13px 16px',
+                          padding: '13px 16px 13px 0',
                           cursor: 'pointer',
                           background: hecho ? 'rgba(255,255,255,0.015)' : 'transparent',
                           transition: 'background 0.15s',
+                          // Acento de color por grupo muscular en el borde izquierdo
+                          borderLeft: exColor ? `3px solid ${exColor.text}50` : '3px solid transparent',
+                          paddingLeft: '14px',
                         }}
                       >
                         {/* Check */}
@@ -1067,11 +1048,6 @@ export default function GymScreen({ t }) {
                           {hecho && <IconCheck size={11} color='#0d0d0d' strokeWidth={3} />}
                         </div>
 
-                        {/* Color dot para personalizados */}
-                        {ex.custom && ex.color && (
-                          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: ex.color, flexShrink: 0 }} />
-                        )}
-
                         {/* Info */}
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <p style={{
@@ -1082,10 +1058,20 @@ export default function GymScreen({ t }) {
                           }}>
                             {ex.nombre}
                           </p>
-                          <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>
-                            {ex.series}x{ex.reps} - {ex.peso}
-                            {logEx.peso && <span style={{ color: colores.text, marginLeft: '6px', fontWeight: '700' }}>&#x2192; {logEx.peso} kg</span>}
-                          </p>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                            {exColor && (
+                              <span style={{
+                                fontSize: '9px', padding: '1px 6px', borderRadius: '20px',
+                                background: exColor.bg, color: exColor.text, fontWeight: '700',
+                              }}>
+                                {ex.musculo || pool.find(p => p.nombre === ex.nombre)?.musculo || ''}
+                              </span>
+                            )}
+                            <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>
+                              {ex.series}x{ex.reps} · {ex.peso}
+                              {logEx.peso && <span style={{ color: colores.text, marginLeft: '4px', fontWeight: '700' }}>→ {logEx.peso} kg</span>}
+                            </span>
+                          </div>
                         </div>
 
                         {/* Timer btn */}
@@ -1113,7 +1099,7 @@ export default function GymScreen({ t }) {
                         }}>▶</div>
                       </div>
 
-                      {/* Panel expandido: log de peso/reps/nota */}
+                      {/* Panel expandido */}
                       {isExpanded && (
                         <div style={{
                           padding: '12px 16px 16px 16px',
@@ -1186,37 +1172,60 @@ export default function GymScreen({ t }) {
               {/* Progreso y guardar */}
               {completadosSeleccionados.length > 0 && (
                 <div style={{ borderTop: '0.5px solid rgba(255,255,255,0.04)', padding: '16px' }}>
+                  {/* Barra de progreso */}
                   <div style={{ height: '3px', background: 'rgba(255,255,255,0.06)', borderRadius: '2px', overflow: 'hidden', marginBottom: '12px' }}>
                     <div style={{
                       height: '100%', background: colores.text, borderRadius: '2px',
                       transition: 'width 0.4s ease',
-                      width: `${(completadosSeleccionados.length / rutinaSeleccionada.ejercicios.length) * 100}%`,
+                      width: `${(completadosSeleccionados.length / totalEjerciciosDia) * 100}%`,
                     }} />
                   </div>
+
                   <button
                     onClick={() => guardarSesion(selectedFecha, diaSeleccionado.dayOfWeek)}
                     disabled={guardando}
                     style={{
                       width: '100%',
-                      background: guardado[selectedFecha] ? `${colores.text}15` : `${colores.text}20`,
-                      border: `0.5px solid ${colores.text}40`,
-                      borderRadius: '12px', color: colores.text,
-                      fontSize: '13px', fontWeight: '700', padding: '13px',
+                      background: guardado[selectedFecha]
+                        ? `${colores.text}15`
+                        : sesionCompleta
+                          ? colores.text
+                          : `${colores.text}20`,
+                      border: sesionCompleta && !guardado[selectedFecha]
+                        ? 'none'
+                        : `0.5px solid ${colores.text}40`,
+                      borderRadius: '14px',
+                      color: sesionCompleta && !guardado[selectedFecha] ? '#000' : colores.text,
+                      fontSize: '14px', fontWeight: '700',
+                      padding: sesionCompleta && !guardado[selectedFecha] ? '15px' : '13px',
                       cursor: guardando ? 'default' : 'pointer',
                       display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                      transition: 'all 0.2s',
+                      transition: 'all 0.3s ease',
                       opacity: guardando ? 0.6 : 1,
+                      boxShadow: sesionCompleta && !guardado[selectedFecha] ? `0 4px 20px ${colores.glow}50` : 'none',
                     }}
                   >
-                    <IconCheck size={14} />
-                    {guardado[selectedFecha] ? 'Guardado ✓' : guardando ? 'Guardando…' : `Guardar sesión (${completadosSeleccionados.length}/${rutinaSeleccionada.ejercicios.length})`}
+                    <IconCheck size={15} />
+                    {guardado[selectedFecha]
+                      ? 'Guardado ✓'
+                      : guardando
+                        ? 'Guardando…'
+                        : sesionCompleta
+                          ? '¡Guardar sesión completa!'
+                          : `Guardar (${completadosSeleccionados.length}/${totalEjerciciosDia})`
+                    }
                   </button>
                 </div>
               )}
             </>
           ) : (
-            <div style={{ padding: '32px 16px', textAlign: 'center', color: 'rgba(255,255,255,0.3)' }}>
-              <p style={{ fontSize: '14px' }}>🛌 Día de descanso</p>
+            /* Día de descanso — ahora editable */
+            <div style={{ padding: '32px 16px', textAlign: 'center' }}>
+              <p style={{ fontSize: '32px', marginBottom: '8px' }}>🛌</p>
+              <p style={{ fontSize: '14px', color: 'rgba(255,255,255,0.3)', marginBottom: '6px' }}>Día de descanso</p>
+              <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.15)' }}>
+                Toca "Editar" para añadir ejercicios
+              </p>
             </div>
           )}
         </div>

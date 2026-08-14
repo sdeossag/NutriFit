@@ -1,13 +1,7 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { IconTrendingDown, IconTrendingUp, IconBarbell, IconToolsKitchen2, IconInfoCircle, IconX } from '@tabler/icons-react'
-import { registrarPeso, getHistorialEjercicios } from '../api'
+import { registrarPeso, getProgresoCompleto, getHistorialEjercicios } from '../api'
 import bruceFace from '../assets/bruce-face.png'
-
-const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000/api'
-const get = (path) =>
-  fetch(`${BASE}${path}`, {
-    headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` },
-  }).then(r => { if (!r.ok) throw new Error(r.status); return r.json() })
 
 const C = {
   green:  '#4ade80',
@@ -750,7 +744,7 @@ export default function ProgressScreen({ t, screen }) {
     if (screen !== 'progress') return
     setCargando(true)
     setAnimado(false)
-    get('/progreso-completo/')
+    getProgresoCompleto()
       .then(d => { setData(d); setError(null) })
       .catch(() => setError(true))
       .finally(() => { setCargando(false); setTimeout(() => setAnimado(true), 100) })
@@ -763,7 +757,7 @@ export default function ProgressScreen({ t, screen }) {
     try {
       await registrarPeso({ peso_kg: kg })
       setNuevoPeso('')
-      const d = await get('/progreso-completo/')
+      const d = await getProgresoCompleto()
       setData(d)
     } catch { setError('Error al guardar el peso.') }
     finally { setGuardando(false) }
@@ -816,7 +810,7 @@ export default function ProgressScreen({ t, screen }) {
         {[
           { id: 'semana', label: 'Semana'  },
           { id: 'mes',    label: 'Mes'     },
-          { id: 'pesos',  label: 'Pesos'   },
+          { id: 'pesos',  label: 'Cargas'  },
         ].map(({ id, label }) => (
           <button key={id} onClick={() => setSeccion(id)} style={{
             flex: 1, padding: '9px 8px', borderRadius: 11, border: 'none',
@@ -973,9 +967,36 @@ export default function ProgressScreen({ t, screen }) {
                 </div>
               </div>
 
+              {/* Evolución de peso corporal */}
+              <div style={{
+                background: C.card, borderRadius: 22, border: `0.5px solid ${C.border}`, padding: 20,
+                opacity: animado ? 1 : 0, transition: 'all 0.5s ease 0.3s',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+                  <div>
+                    <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600, marginBottom: 4 }}>Evolucion de peso</p>
+                    {proyeccion && (
+                      <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>
+                        Tendencia:{' '}
+                        <span style={{ fontWeight: 700, color: proyeccion.tendencia_kg_semana <= 0 ? C.green : C.orange }}>
+                          {proyeccion.tendencia_kg_semana > 0 ? '+' : ''}{proyeccion.tendencia_kg_semana} kg/sem
+                        </span>
+                      </p>
+                    )}
+                  </div>
+                  {proyeccion?.dias_para_objetivo && (
+                    <div style={{ background: 'rgba(74,222,128,0.08)', border: '0.5px solid rgba(74,222,128,0.15)', borderRadius: 12, padding: '6px 12px', textAlign: 'right' }}>
+                      <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', marginBottom: 2 }}>Objetivo</p>
+                      <p style={{ fontSize: 13, fontWeight: 700, color: C.green }}>~{proyeccion.dias_para_objetivo}d</p>
+                    </div>
+                  )}
+                </div>
+                <GraficoPeso pesos={pesos} proyeccion={proyeccion} pesoObjetivo={pesoObjetivo} animado={animado} />
+              </div>
+
               {/* Logros */}
               {logros.length > 0 && (
-                <div style={{ opacity: animado ? 1 : 0, transition: 'opacity 0.5s ease 0.35s' }}>
+                <div style={{ opacity: animado ? 1 : 0, transition: 'opacity 0.5s ease 0.4s' }}>
                   <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600, marginBottom: 12 }}>Logros desbloqueados</p>
                   <Logros logros={logros} animado={animado} />
                 </div>
@@ -988,7 +1009,7 @@ export default function ProgressScreen({ t, screen }) {
                   border: `0.5px solid rgba(74,222,128,0.15)`,
                   borderRadius: 20, padding: 20,
                   display: 'flex', gap: 14, alignItems: 'center',
-                  opacity: animado ? 1 : 0, transition: 'opacity 0.5s ease 0.4s',
+                  opacity: animado ? 1 : 0, transition: 'opacity 0.5s ease 0.5s',
                 }}>
                   <BruceAvatar size={52} />
                   <div>

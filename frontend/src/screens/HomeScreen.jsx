@@ -341,7 +341,7 @@ export default function HomeScreen({ t, lang, setLang, screen, usuario, onGoToPr
     { label: t.protein, value: totales.proteina, unit: 'g', goal: metas.proteina, color: '#4ade80', icon: IconMeat,    pct: (totales.proteina / metas.proteina) * 100 },
     { label: t.carbs,   value: totales.carbos,   unit: 'g', goal: metas.carbos,   color: '#60a5fa', icon: IconWheat,   pct: (totales.carbos   / metas.carbos)   * 100 },
     { label: t.fats,    value: totales.grasas,   unit: 'g', goal: metas.grasas,   color: '#fb923c', icon: IconFlame,   pct: (totales.grasas   / metas.grasas)   * 100 },
-    { label: t.water,   value: 0,                unit: 'L', goal: 2.5,            color: '#22d3ee', icon: IconDroplet, pct: 0 },
+    { label: t.water,   value: +(( resumen?.agua_ml ?? 0) / 1000).toFixed(1), unit: 'L', goal: 2.5, color: '#22d3ee', icon: IconDroplet, pct: ((resumen?.agua_ml ?? 0) / 2500) * 100 },
   ]
 
   return (
