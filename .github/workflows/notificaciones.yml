@@ -1,0 +1,25 @@
+name: Notificaciones NutriFit
+
+on:
+  schedule:
+    # Todos los horarios en UTC. Colombia = UTC-5
+    - cron: '0 13 * * *'   # 8:00 AM Colombia
+    - cron: '0 17 * * *'   # 12:00 PM Colombia
+    - cron: '0 22 * * *'   # 5:00 PM Colombia
+    - cron: '0 1 * * *'    # 8:00 PM Colombia (día siguiente UTC)
+  workflow_dispatch:        # permite lanzarlo manualmente desde GitHub
+
+jobs:
+  notificar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Llamar endpoint de notificaciones
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "${{ secrets.BACKEND_URL }}/api/push/cron/?key=${{ secrets.CRON_SECRET }}")
+          echo "HTTP status: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "Error: el endpoint respondió $STATUS"
+            exit 1
+          fi

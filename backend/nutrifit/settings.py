@@ -98,6 +98,7 @@ GROQ_API_KEY    = os.getenv('GROQ_API_KEY', '')
 VAPID_PUBLIC_KEY   = os.getenv('VAPID_PUBLIC_KEY', '')
 VAPID_PRIVATE_KEY  = os.getenv('VAPID_PRIVATE_KEY', '').replace('\\n', '\n')
 VAPID_CLAIM_EMAIL  = os.getenv('VAPID_CLAIM_EMAIL', 'admin@nutrifit.app')
+CRON_SECRET        = os.getenv('CRON_SECRET', '')
 
 STATIC_URL  = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'

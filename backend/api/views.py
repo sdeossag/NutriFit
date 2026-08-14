@@ -1637,6 +1637,140 @@ def push_check(request):
     return Response({'enviado': enviados > 0, 'frase': frase})
 
 
+# ─── Slots para el cron ────────────────────────────────────────────────────
+# Cada slot define la hora de inicio (Colombia UTC-5) en la que aplica.
+# GitHub Actions llama al endpoint exactamente en esas horas.
+_SLOTS = {
+    'manana':   8,   # 8 AM  → siempre envía
+    'mediodia': 12,  # 12 PM → envía si usuario va rezagado
+    'tarde':    17,  # 5 PM  → segunda alerta si sigue rezagado
+    'noche':    20,  # 8 PM  → accountability final del día
+}
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([AllowAny])
+def cron_notificaciones(request):
+    """
+    Endpoint llamado por GitHub Actions 4 veces al día.
+    Evalúa el estado de cada usuario y envía una notificación contextual si aplica.
+    """
+    from zoneinfo import ZoneInfo
+
+    secret = request.GET.get('key', '') or request.headers.get('X-Cron-Key', '')
+    cron_secret = getattr(settings, 'CRON_SECRET', '')
+    if cron_secret and secret != cron_secret:
+        return Response({'error': 'forbidden'}, status=403)
+
+    bogota    = ZoneInfo('America/Bogota')
+    ahora     = timezone.now().astimezone(bogota)
+    hoy       = ahora.date()
+    hora      = ahora.hour
+
+    # Determinar qué slot corresponde a esta hora
+    slot_actual = None
+    for nombre_slot, hora_slot in _SLOTS.items():
+        if hora_slot <= hora < hora_slot + 2:
+            slot_actual = nombre_slot
+            break
+
+    if not slot_actual:
+        return Response({'ok': True, 'skipped': f'no slot for hour {hora}'})
+
+    subs    = PushSubscription.objects.select_related('usuario').all()
+    totales = 0
+    enviados = 0
+
+    for sub in subs:
+        totales += 1
+        user = sub.usuario
+
+        # Resetear tracking si es un día nuevo
+        if sub.slots_fecha != hoy:
+            sub.slots_enviados = []
+            sub.slots_fecha    = hoy
+
+        # Ya se envió en este slot hoy
+        if slot_actual in sub.slots_enviados:
+            continue
+
+        # Datos del usuario para evaluar condición
+        comidas_hoy  = Comida.objects.filter(usuario=user, fecha=hoy)
+        calorias_hoy = sum(c.calorias for c in comidas_hoy)
+        proteina_hoy = round(sum(c.proteina for c in comidas_hoy), 1)
+        meta_cal     = user.meta_calorias or 1900
+        meta_prot    = user.meta_proteina or 140
+        pct_cal      = (calorias_hoy / meta_cal) if meta_cal else 0
+
+        sesion      = SesionGym.objects.filter(usuario=user, fecha=hoy).first()
+        fue_gym     = sesion.completada if sesion else False
+        es_descanso = hoy.weekday() >= 5  # sábado/domingo
+
+        # Condición para enviar según el slot
+        if slot_actual == 'manana':
+            debe_enviar = True
+        elif slot_actual == 'mediodia':
+            gym_pendiente = sesion and not fue_gym and not es_descanso
+            debe_enviar   = pct_cal < 0.35 or gym_pendiente
+        elif slot_actual == 'tarde':
+            gym_pendiente = sesion and not fue_gym and not es_descanso
+            debe_enviar   = pct_cal < 0.60 or gym_pendiente
+        else:  # noche
+            gym_perdido = sesion and not fue_gym and not es_descanso
+            debe_enviar = pct_cal < 0.80 or gym_perdido
+
+        if not debe_enviar:
+            continue
+
+        nombre        = user.first_name or user.email.split('@')[0]
+        objetivo_txt  = {'perder': 'perder grasa', 'ganar': 'ganar músculo'}.get(
+            getattr(user, 'objetivo', 'mantener'), 'mantener peso'
+        )
+        gym_estado = 'sí' if fue_gym else ('día de descanso' if es_descanso else 'no ha ido')
+
+        prompt = (
+            f"Eres Bruce, un dachshund coach directo y motivador. "
+            f"Escríbele a {nombre} una notificación push de máximo 85 caracteres. "
+            f"Tono: {'energético y motivador' if slot_actual == 'manana' else 'directo y práctico' if slot_actual == 'mediodia' else 'urgente pero sin regañar' if slot_actual == 'tarde' else 'accountability final del día'}. "
+            f"Sin emojis. Sin comillas. Solo el texto.\n\n"
+            f"Contexto: son las {hora}h, slot={slot_actual}, objetivo={objetivo_txt}, "
+            f"calorías hoy={calorias_hoy}/{meta_cal} ({round(pct_cal*100)}%), "
+            f"proteína={proteina_hoy}g/{meta_prot}g, gym={gym_estado}."
+        )
+
+        try:
+            frase = _groq_chat({
+                'model': 'qwen/qwen3.6-27b',
+                'messages': [{'role': 'user', 'content': prompt}],
+                'max_tokens': 60,
+                'temperature': 0.9,
+                'reasoning_effort': 'none',
+                'reasoning_format': 'hidden',
+            }, timeout=12)
+            frase = _THINK_RE.sub('', frase).strip().strip('"').strip("'")
+        except Exception:
+            mensajes_fallback = {
+                'manana':   'Empieza el día registrando tu desayuno.',
+                'mediodia': 'Revisa cómo vas con tus calorías hoy.',
+                'tarde':    'Aún estás a tiempo de cumplir tu meta de hoy.',
+                'noche':    'Cierra el día con tus registros al día.',
+            }
+            frase = mensajes_fallback[slot_actual]
+
+        if _send_push(sub, 'Bruce dice:', frase):
+            sub.slots_enviados = list(sub.slots_enviados) + [slot_actual]
+            sub.save(update_fields=['slots_enviados', 'slots_fecha'])
+            enviados += 1
+
+    return Response({
+        'ok':       True,
+        'slot':     slot_actual,
+        'hora_co':  hora,
+        'enviados': enviados,
+        'totales':  totales,
+    })
+
+
 # ──────────────────────────────────────────────
 #  AGUA
 # ──────────────────────────────────────────────
