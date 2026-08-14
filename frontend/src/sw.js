@@ -1,7 +1,8 @@
-// Workbox injectManifest injection point — esbuild no puede eliminar un write a self
-self.__WB_MANIFEST_ENTRIES = self.__WB_MANIFEST
+import { precacheAndRoute } from 'workbox-precaching'
 
-// Tomar control inmediatamente sin esperar a que cierren las pestañas abiertas
+// Inyecta el listado de archivos para precaching — requerido por VitePWA injectManifest
+precacheAndRoute(self.__WB_MANIFEST)
+
 self.addEventListener('install', () => self.skipWaiting())
 self.addEventListener('activate', e => e.waitUntil(clients.claim()))
 
