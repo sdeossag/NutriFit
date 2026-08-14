@@ -612,6 +612,7 @@ def log_ejercicio(request):
         sesion=sesion,
         nombre=nombre,
         defaults={
+            'musculo': request.data.get('musculo', ''),
             'series':  request.data.get('series'),
             'reps':    request.data.get('reps'),
             'peso_kg': request.data.get('peso_kg'),
@@ -1371,20 +1372,23 @@ def historial_ejercicios(request):
         .order_by('sesion__fecha')
     )
 
-    por_ejercicio = defaultdict(list)
+    por_ejercicio = defaultdict(lambda: {'musculo': '', 'registros': []})
     for log in logs:
-        por_ejercicio[log.nombre].append({
+        entry = por_ejercicio[log.nombre]
+        entry['registros'].append({
             'fecha':   log.sesion.fecha.isoformat(),
             'peso_kg': log.peso_kg,
             'reps':    log.reps,
             'series':  log.series,
         })
+        if log.musculo and not entry['musculo']:
+            entry['musculo'] = log.musculo
 
     resultado = [
-        {'nombre': nombre, 'registros': registros}
-        for nombre, registros in sorted(
+        {'nombre': nombre, 'musculo': data['musculo'], 'registros': data['registros']}
+        for nombre, data in sorted(
             por_ejercicio.items(),
-            key=lambda x: len(x[1]),
+            key=lambda x: len(x[1]['registros']),
             reverse=True
         )
     ]

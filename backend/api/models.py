@@ -211,10 +211,11 @@ class SesionGym(models.Model):
 class EjercicioLog(models.Model):
     sesion     = models.ForeignKey(SesionGym, on_delete=models.CASCADE, related_name='ejercicios')
     nombre     = models.CharField(max_length=200)
+    musculo    = models.CharField(max_length=100, blank=True, default='')
     series     = models.IntegerField(default=3)
     reps       = models.CharField(max_length=50)
     peso_kg    = models.FloatField(null=True, blank=True)
-    notas      = models.TextField(blank=True)   # ← agregar esto
+    notas      = models.TextField(blank=True)
     completado = models.BooleanField(default=False)
 
     def __str__(self):
