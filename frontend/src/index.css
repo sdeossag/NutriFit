@@ -1,48 +1,598 @@
-* {
+/* ══════════════════════════════════════════════════════════════════════════
+   NutriFit — sistema de diseño
+   Tokens, base móvil, primitivas (botones, inputs, cards, filas) y motion.
+   Los estilos de layout siguen inline en cada pantalla; aquí vive lo que
+   inline no puede hacer: :active, :hover, :focus-visible, media queries.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Color */
+  --bg:        #0a0a0a;
+  --surface-1: #141416;   /* cards */
+  --surface-2: #1c1c1e;   /* elevado: sheets, inputs */
+  --surface-3: #2c2c2e;   /* presionado / controles */
+  --separator: rgba(255, 255, 255, 0.08);
+  --hairline:  rgba(255, 255, 255, 0.06);
+
+  --label:   #ffffff;
+  --label-2: rgba(235, 235, 245, 0.62);  /* secundario */
+  --label-3: rgba(235, 235, 245, 0.42);  /* terciario / placeholders */
+  --label-4: rgba(235, 235, 245, 0.22);  /* decorativo */
+
+  --green:  #4ade80;
+  --green-dark: #16a34a;
+  --blue:   #60a5fa;
+  --orange: #fb923c;
+  --cyan:   #22d3ee;
+  --purple: #a78bfa;
+  --yellow: #fbbf24;
+  --red:    #f87171;
+
+  /* Forma */
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-xl: 24px;
+
+  /* Safe areas */
+  --safe-top:    env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --tabbar-h: 64px;
+  --tabbar-gap: max(12px, var(--safe-bottom));
+
+  /* Motion */
+  --ease-out:    cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --dur-press: 160ms;
+  --dur-fast:  200ms;
+  --dur-med:   300ms;
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────── */
+
+*, *::before, *::after {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-:root {
-  --green: #4ade80;
-  --green-dark: #16a34a;
-  --blue: #60a5fa;
-  --orange: #fb923c;
-  --cyan: #22d3ee;
-  --bg: #0a0a0a;
-  --card: #131313;
-  --border: rgba(255,255,255,0.06);
 }
 
 html {
-  /* Evita scroll rebote en iOS */
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
   overscroll-behavior: none;
+  background: var(--bg);
+  color-scheme: dark;
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, 'Segoe UI', Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 1.45;
   background: var(--bg);
-  color: #fff;
-  min-height: 100vh;
+  color: var(--label);
+  min-height: 100dvh;
   max-width: 430px;
   margin: 0 auto;
   overflow-x: hidden;
   overscroll-behavior: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-optical-sizing: auto;
 }
 
-/* Inputs — reset global */
-input, button, textarea {
-  font-family: inherit;
-}
+img { display: block; max-width: 100%; }
 
-input[type=number]::-webkit-inner-spin-button,
-input[type=number]::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-}
+/* Números que cambian no deben bailar */
+.nf-num { font-variant-numeric: tabular-nums; }
 
-/* Scrollbar invisible */
+/* Scrollbar invisible (la app se usa en móvil) */
 ::-webkit-scrollbar { display: none; }
 * { scrollbar-width: none; }
+
+/* ── Controles: reset + feedback táctil ──────────────────────────────── */
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  transition:
+    transform var(--dur-press) var(--ease-out),
+    background-color var(--dur-press) ease,
+    border-color var(--dur-press) ease,
+    color var(--dur-press) ease,
+    opacity var(--dur-press) ease;
+}
+
+button:disabled { cursor: default; }
+
+/* El feedback vive en el toque (pointer-down), no al soltar */
+button:not(:disabled):active,
+.nf-press:active {
+  transform: scale(0.97);
+  transition-duration: 80ms;
+}
+
+/* Superficies grandes: menos escala para que no "salten" */
+.nf-press-soft:not(:disabled):active { transform: scale(0.985); }
+.no-press:active { transform: none !important; }
+
+.nf-press {
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform var(--dur-press) var(--ease-out), background-color var(--dur-press) ease;
+}
+
+/* Hover solo con puntero real — en táctil se queda "pegado" */
+@media (hover: hover) and (pointer: fine) {
+  button:not(:disabled):hover,
+  .nf-press:hover { filter: brightness(1.12); }
+}
+
+:focus { outline: none; }
+:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+/* ── Inputs ───────────────────────────────────────────────────────────── */
+
+input, textarea, select {
+  font: inherit;
+  font-size: 16px;   /* < 16px hace que iOS haga zoom al enfocar */
+  color: var(--label);
+}
+
+input::placeholder, textarea::placeholder { color: var(--label-3); }
+
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+
+.nf-input {
+  width: 100%;
+  min-height: 46px;
+  background: var(--surface-2);
+  border: 0.5px solid var(--separator);
+  border-radius: 12px;
+  padding: 12px 14px;
+  outline: none;
+  transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+}
+.nf-input:focus {
+  border-color: color-mix(in srgb, var(--tint, var(--green)) 60%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--tint, var(--green)) 18%, transparent);
+}
+
+/* ── Botones ──────────────────────────────────────────────────────────── */
+
+.nf-btn {
+  --tint: var(--green);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: var(--r-md);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.nf-btn--block { width: 100%; }
+.nf-btn--lg { min-height: 52px; font-size: 16px; border-radius: 16px; }
+.nf-btn--sm { min-height: 34px; padding: 0 12px; font-size: 13px; border-radius: var(--r-sm); gap: 5px; }
+
+.nf-btn--primary { background: var(--tint); color: #000; }
+.nf-btn--tinted  {
+  background: color-mix(in srgb, var(--tint) 15%, transparent);
+  color: var(--tint);
+}
+.nf-btn--gray    { background: rgba(255, 255, 255, 0.08); color: var(--label-2); }
+.nf-btn--plain   { background: transparent; color: var(--tint); padding: 0 8px; }
+.nf-btn--destructive { background: rgba(248, 113, 113, 0.12); color: var(--red); }
+
+.nf-btn:disabled { opacity: 0.4; }
+.nf-btn--primary:disabled { background: rgba(255, 255, 255, 0.08); color: var(--label-3); opacity: 1; }
+
+/* Botón de icono — 44px de área táctil aunque el glyph sea pequeño */
+.nf-icon-btn {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  color: var(--label-2);
+}
+.nf-icon-btn--filled { background: rgba(255, 255, 255, 0.07); }
+.nf-icon-btn--sm { width: 36px; height: 36px; border-radius: 11px; }
+
+/* ── Superficies ──────────────────────────────────────────────────────── */
+
+.nf-card {
+  background: var(--surface-1);
+  border-radius: var(--r-lg);
+  box-shadow: inset 0 0 0 0.5px var(--hairline);
+}
+
+.nf-section-label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--label-3);
+  margin: 28px 4px 10px;
+}
+
+/* Material translúcido — el contenido pasa por debajo */
+.nf-glass {
+  background: rgba(30, 30, 32, 0.72);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  backdrop-filter: saturate(180%) blur(24px);
+  box-shadow:
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.14),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.07),
+    0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+/* ── Tipografía ───────────────────────────────────────────────────────── */
+
+.nf-large-title {
+  font-size: 34px;
+  line-height: 1.08;
+  font-weight: 700;
+  letter-spacing: -0.022em;
+}
+.nf-title-2 { font-size: 22px; line-height: 1.2; font-weight: 700; letter-spacing: -0.016em; }
+.nf-title-3 { font-size: 19px; line-height: 1.25; font-weight: 600; letter-spacing: -0.012em; }
+.nf-headline { font-size: 16px; line-height: 1.3; font-weight: 600; letter-spacing: -0.008em; }
+.nf-subhead  { font-size: 15px; line-height: 1.4; color: var(--label-2); }
+.nf-footnote { font-size: 13px; line-height: 1.4; color: var(--label-2); }
+.nf-caption  { font-size: 12px; line-height: 1.35; color: var(--label-3); }
+
+/* ── Chips / pills ────────────────────────────────────────────────────── */
+
+.nf-chip {
+  --tint: var(--green);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--label-2);
+  white-space: nowrap;
+}
+.nf-chip[aria-pressed="true"],
+.nf-chip[aria-checked="true"] {
+  background: var(--tint);
+  color: #000;
+  font-weight: 600;
+}
+.nf-chip--soft[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--tint) 18%, transparent);
+  color: var(--tint);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tint) 45%, transparent);
+}
+
+/* Etiqueta pequeña de estado */
+.nf-badge {
+  --tint: var(--green);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  background: color-mix(in srgb, var(--tint) 14%, transparent);
+  color: var(--tint);
+  white-space: nowrap;
+}
+
+/* ── Filas de lista (estilo grouped list de iOS) ─────────────────────── */
+
+.nf-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 10px 16px;
+  position: relative;
+  width: 100%;
+  text-align: left;
+}
+.nf-row + .nf-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: var(--row-inset, 16px);
+  right: 0;
+  height: 0.5px;
+  background: var(--separator);
+}
+.nf-row-icon {
+  --tint: var(--green);
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--tint) 16%, transparent);
+  color: var(--tint);
+}
+
+/* ── Segmented control ────────────────────────────────────────────────── */
+
+.nf-seg {
+  position: relative;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  padding: 3px;
+  border-radius: 12px;
+  background: rgba(118, 118, 128, 0.24);
+}
+.nf-seg-thumb {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  border-radius: 9px;
+  background: #636366;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), 0 3px 1px rgba(0, 0, 0, 0.04);
+  transition: transform var(--dur-med) var(--ease-out);
+  will-change: transform;
+}
+.nf-seg button {
+  position: relative;
+  z-index: 1;
+  min-height: 32px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--label-2);
+  border-radius: 9px;
+}
+.nf-seg button[aria-selected="true"] { color: var(--label); font-weight: 600; }
+.nf-seg button:active { transform: none; opacity: 0.7; }
+
+/* ── Switch (iOS) ─────────────────────────────────────────────────────── */
+
+.nf-switch {
+  position: relative;
+  width: 51px;
+  height: 31px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: rgba(120, 120, 128, 0.32);
+  transition: background-color 250ms ease;
+}
+.nf-switch[aria-checked="true"] { background: var(--green); }
+.nf-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15), 0 3px 1px rgba(0, 0, 0, 0.06);
+  transition: transform 300ms var(--ease-out), width 160ms var(--ease-out);
+}
+.nf-switch[aria-checked="true"]::after { transform: translateX(20px); }
+.nf-switch:not(:disabled):active { transform: none; }
+.nf-switch:not(:disabled):active::after { width: 31px; }
+.nf-switch[aria-checked="true"]:not(:disabled):active::after { transform: translateX(16px); }
+
+/* ── Bottom sheet ─────────────────────────────────────────────────────── */
+
+.nf-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(0, 0, 0, 0.55);
+  opacity: 0;
+}
+.nf-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 901;
+  width: 100%;
+  max-width: 430px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - var(--safe-top) - 10px);
+  background: var(--surface-2);
+  border-radius: 14px 14px 0 0;
+  box-shadow: 0 -0.5px 0 rgba(255, 255, 255, 0.1), 0 -12px 40px rgba(0, 0, 0, 0.4);
+  transform: translateY(100%);
+  will-change: transform;
+}
+.nf-sheet--large { height: calc(100dvh - var(--safe-top) - 10px); }
+.nf-sheet-handle {
+  flex-shrink: 0;
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.nf-sheet-handle:active { cursor: grabbing; }
+.nf-sheet-grabber {
+  width: 36px;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.22);
+  margin: 6px auto 0;
+}
+.nf-sheet-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+#app-shell {
+  transform-origin: 50% 0;
+  will-change: auto;
+}
+
+/* ── Toast ────────────────────────────────────────────────────────────── */
+
+.nf-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--tabbar-gap) + var(--tabbar-h) + 12px);
+  z-index: 1200;
+  width: calc(100% - 32px);
+  max-width: 398px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 50px;
+  padding: 8px 8px 8px 16px;
+  border-radius: 16px;
+  font-size: 14px;
+  font-weight: 500;
+  transform: translate(-50%, 0);
+  opacity: 1;
+  transition: transform 400ms var(--ease-drawer), opacity 300ms ease;
+}
+.nf-toast[data-state="enter"],
+.nf-toast[data-state="exit"] {
+  transform: translate(-50%, calc(100% + 24px));
+  opacity: 0;
+}
+.nf-toast[data-state="exit"] { transition-duration: 200ms, 200ms; }
+.nf-toast[data-low="true"] { bottom: calc(var(--safe-bottom) + 12px); }
+
+/* ── Animaciones compartidas ─────────────────────────────────────────── */
+
+@keyframes nf-float {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50%      { transform: translateY(-6px) rotate(1deg); }
+}
+@keyframes nf-dot {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.35; }
+  40%           { transform: scale(1);   opacity: 1; }
+}
+@keyframes nf-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+@keyframes nf-spin { to { transform: rotate(360deg); } }
+@keyframes nf-fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes nf-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes nf-pop {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(0.92) rotate(-4deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+@keyframes nf-push-in {
+  from { opacity: 0; transform: translateX(28px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes nf-pop-back {
+  from { opacity: 0; transform: translateX(-28px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes nf-pop-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes nf-confetti {
+  0%   { transform: translateY(-10px) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(120px) rotate(540deg); opacity: 0; }
+}
+@keyframes nf-shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+
+.nf-float  { animation: nf-float 4s ease-in-out infinite; }
+.nf-enter  { animation: nf-fade-up 360ms var(--ease-out) both; }
+.nf-reveal { animation: nf-fade-up 220ms var(--ease-out) both; }
+.nf-fade   { animation: nf-fade-in 200ms ease both; }
+.nf-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: nf-dot 1.2s ease-in-out infinite;
+}
+.nf-spinner { animation: nf-spin 0.7s linear infinite; }
+
+/* Skeleton para cargas: comunica estructura en vez de "Cargando…" */
+.nf-skeleton {
+  border-radius: 10px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%);
+  background-size: 200% 100%;
+  animation: nf-shimmer 1.4s linear infinite;
+}
+
+/* Revela contenido al expandir sin animar height */
+.nf-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--dur-med) var(--ease-out);
+}
+.nf-collapse[data-open="true"] { grid-template-rows: 1fr; }
+.nf-collapse > * { min-height: 0; overflow: hidden; }
+
+/* ── Accesibilidad ───────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .nf-float, .nf-confetti { animation: none !important; }
+  .nf-enter, .nf-reveal { animation-name: nf-fade-in; }
+  .nf-dot { animation-name: nf-pulse; transform: none; }
+  .nf-skeleton { animation: none; }
+  .nf-seg-thumb, .nf-collapse, .nf-switch::after { transition-duration: 0ms; }
+  .nf-toast { transition: opacity 200ms ease; }
+  .nf-toast[data-state="enter"], .nf-toast[data-state="exit"] { transform: translate(-50%, 0); }
+  button:not(:disabled):active, .nf-press:active { transform: none; opacity: 0.7; }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .nf-glass {
+    background: var(--surface-2);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --separator: rgba(255, 255, 255, 0.28);
+    --hairline:  rgba(255, 255, 255, 0.22);
+    --label-2:   rgba(255, 255, 255, 0.85);
+    --label-3:   rgba(255, 255, 255, 0.68);
+  }
+  .nf-glass { background: var(--surface-2); }
+}

@@ -1,22 +1,24 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   IconBell, IconBellOff, IconFlame, IconDroplet, IconMeat,
-  IconWheat, IconUserCircle, IconMessageCircle,
+  IconWheat, IconMessageCircle, IconRefresh,
 } from '@tabler/icons-react'
-import MacroBar    from '../components/MacroBar'
+import MacroBar from '../components/MacroBar'
+import { toast } from '../lib/toast'
 import { getResumenHoy, getBruceFrase, sesionDeHoy } from '../api'
+import { prefersReducedMotion, useEntrada } from '../lib/motion'
 import {
   soportaNotificaciones, permisoActual, estasSuscrito,
   suscribir, desuscribir,
 } from '../utils/notificaciones'
 
-import bruceTuxedo       from '../assets/bruce-tuxedo.png'
-import bruceTuxedoTriste from '../assets/bruce-tuxedo-triste.png'
-import bruceTuxedoPensando   from '../assets/bruce-tuxedo-pensando.png'
-import bruceTuxedoMuyfeliz   from '../assets/bruce-tuxedo-muyfeliz.png'
-import bruceTuxedoSonrisa    from '../assets/bruce-tuxedo-sonrisa.png'
-import bruceTuxedoDeterminado from '../assets/bruce-tuxedo-determinado.png'
-import bruceBatman       from '../assets/bruce-batman.png'
+import bruceTuxedo            from '../assets/bruce-tuxedo.webp'
+import bruceTuxedoTriste      from '../assets/bruce-tuxedo-triste.webp'
+import bruceTuxedoPensando    from '../assets/bruce-tuxedo-pensando.webp'
+import bruceTuxedoMuyfeliz    from '../assets/bruce-tuxedo-muyfeliz.webp'
+import bruceTuxedoSonrisa     from '../assets/bruce-tuxedo-sonrisa.webp'
+import bruceTuxedoDeterminado from '../assets/bruce-tuxedo-determinado.webp'
+import bruceBatman            from '../assets/bruce-batman.webp'
 
 const METAS = { calorias: 1900, proteina: 140, carbos: 200, grasas: 55 }
 
@@ -30,31 +32,39 @@ const POSES = {
   batman:      bruceBatman,
 }
 
+const FRASE_RESPALDO = 'La consistencia gana siempre. Siempre.'
+
 // Sábado = 6, Domingo = 0
 const esDiaDescanso = () => {
   const dia = new Date().getDay()
   return dia === 0 || dia === 6
 }
+const esDeNoche = () => {
+  const h = new Date().getHours()
+  return h >= 20 || h < 6
+}
 
 const getSaludo = (lang) => {
   const h = new Date().getHours()
   if (lang === 'es') {
-    if (h < 12) return 'Buenos días,'
-    if (h < 18) return 'Buenas tardes,'
-    return 'Buenas noches,'
+    if (h < 12) return 'Buenos días'
+    if (h < 18) return 'Buenas tardes'
+    return 'Buenas noches'
   }
-  if (h < 12) return 'Good morning,'
-  if (h < 18) return 'Good afternoon,'
-  return 'Good evening,'
+  if (h < 12) return 'Good morning'
+  if (h < 18) return 'Good afternoon'
+  return 'Good evening'
 }
 
 // ── Typewriter ────────────────────────────────────────────────────────────
-function useTypewriter(text, speed = 20) {
+// Con "reducir movimiento" el texto aparece completo de una vez.
+function useTypewriter(text, speed = 18) {
   const [displayed, setDisplayed] = useState('')
   const [done,      setDone]      = useState(false)
 
   useEffect(() => {
     if (!text) return
+    if (prefersReducedMotion()) { setDisplayed(text); setDone(true); return }
     setDisplayed('')
     setDone(false)
     let i = 0
@@ -64,33 +74,30 @@ function useTypewriter(text, speed = 20) {
       if (i >= text.length) { clearInterval(iv); setDone(true) }
     }, speed)
     return () => clearInterval(iv)
-  }, [text])
+  }, [text, speed])
 
   return { displayed, done }
 }
 
 // ── Bruce Card ────────────────────────────────────────────────────────────
-function BruceCard({ resumen, animado, onOpenChat, usuario }) {
+function BruceCard({ resumen, entrar, onOpenChat, usuario }) {
   const [frase,         setFrase]         = useState('')
   const [pose,          setPose]          = useState('normal')
   const [cargandoFrase, setCargandoFrase] = useState(true)
-  const [clicked,       setClicked]       = useState(false)
-  const { displayed, done } = useTypewriter(frase, 20)
+  const [pop,           setPop]           = useState(false)
+  const ultimoContexto = useRef(null)
+  const vivo = useRef(true)
+  const { displayed, done } = useTypewriter(frase)
 
-  // Batman de noche
-  const hora = new Date().getHours()
-  const esNoche = hora >= 20 || hora < 6
+  useEffect(() => () => { vivo.current = false }, [])
+
+  const esNoche  = esDeNoche()
   const descanso = esDiaDescanso()
-  const useBatman = esNoche
   const imagenBruce = esNoche ? POSES.batman : POSES[pose] ?? POSES.normal
 
   useEffect(() => {
     if (!resumen) return
 
-    const h        = new Date().getHours()
-    const descanso = esDiaDescanso()
-
-    // Consultar si fue al gym hoy
     const contextoBase = {
       calorias_hoy:   resumen.totales?.calorias  ?? 0,
       meta_calorias:  resumen.metas?.calorias    ?? 1900,
@@ -98,215 +105,153 @@ function BruceCard({ resumen, animado, onOpenChat, usuario }) {
       meta_proteina:  resumen.metas?.proteina    ?? 140,
       carbos_hoy:     resumen.totales?.carbos    ?? 0,
       meta_carbos:    resumen.metas?.carbos      ?? 200,
-      es_dia_gym:     !descanso,
-      hora:           h,
+      es_dia_gym:     !esDiaDescanso(),
+      hora:           new Date().getHours(),
       racha_gym:      resumen.racha_gym          ?? 0,
       racha_comida:   resumen.racha_comida       ?? 0,
       nombre_usuario: usuario?.first_name?.split(' ')[0] || usuario?.email?.split('@')[0] || '',
       objetivo:       resumen.objetivo           ?? usuario?.objetivo ?? 'mantener',
     }
 
-    sesionDeHoy()
-      .then(sesion => {
-        setCargandoFrase(true)
-        getBruceFrase({ ...contextoBase, fue_al_gym: sesion?.completada === true })
-          .then(data => {
-            setFrase(data.frase)
-            setPose(esNoche ? 'batman' : (data.pose ?? 'normal'))
-          })
-          .catch(() => { setFrase('La consistencia gana siempre. Siempre.'); setPose('normal') })
-          .finally(() => setCargandoFrase(false))
-      })
-      .catch(() => {
-        setCargandoFrase(true)
-        getBruceFrase({ ...contextoBase, fue_al_gym: false })
-          .then(data => { setFrase(data.frase); setPose(data.pose ?? 'normal') })
-          .catch(() => setFrase('La consistencia gana siempre. Siempre.'))
-          .finally(() => setCargandoFrase(false))
-      })
-  }, [resumen])
+    // Volver a la pestaña no debe pedirle otra frase a la IA si nada cambió
+    const clave = `${contextoBase.calorias_hoy}|${contextoBase.proteina_hoy}|${contextoBase.hora}`
+    if (ultimoContexto.current === clave) return
+    ultimoContexto.current = clave
 
-  const handleClick = () => {
-    setClicked(true)
-    setTimeout(() => setClicked(false), 600)
+    const pedir = (fueAlGym) => {
+      setCargandoFrase(true)
+      getBruceFrase({ ...contextoBase, fue_al_gym: fueAlGym })
+        .then(data => {
+          if (!vivo.current || ultimoContexto.current !== clave) return
+          setFrase(data.frase)
+          setPose(esDeNoche() ? 'batman' : (data.pose ?? 'normal'))
+        })
+        .catch(() => {
+          if (!vivo.current || ultimoContexto.current !== clave) return
+          setFrase(FRASE_RESPALDO); setPose('normal')
+        })
+        .finally(() => { if (vivo.current && ultimoContexto.current === clave) setCargandoFrase(false) })
+    }
+
+    sesionDeHoy()
+      .then(sesion => pedir(sesion?.completada === true))
+      .catch(() => pedir(false))
+  }, [resumen, usuario])
+
+  const tocarBruce = () => {
+    setPop(false)
+    requestAnimationFrame(() => setPop(true))
     onOpenChat()
   }
 
   return (
-    <div style={{
-      position: 'relative',
-      marginTop: '8px',
-      marginBottom: '8px',
-      opacity: animado ? 1 : 0,
-      transform: animado ? 'translateY(0)' : 'translateY(24px)',
-      transition: 'all 0.55s ease 0.5s',
-    }}>
-
-      {/* ── Card ── */}
-    <div style={{
-      background: 'linear-gradient(135deg, #091810, #0d2418)',
-      border: '0.5px solid rgba(74,222,128,0.15)',
-      borderRadius: '24px',
-      padding: '16px',
-      display: 'flex',
-      alignItems: 'flex-end',
-      gap: '12px',
-    }}>
-
-      {/* Bruce — tamaño fijo, no interfiere con el texto */}
-      <div
-        onClick={handleClick}
+    <section
+      className={entrar ? 'nf-enter' : undefined}
+      style={{
+        animationDelay: '240ms',
+        background: 'linear-gradient(135deg, #0b1c12 0%, #0f2a1b 100%)',
+        borderRadius: 'var(--r-xl)',
+        boxShadow: 'inset 0 0 0 0.5px rgba(74,222,128,0.16)',
+        padding: '16px',
+        display: 'flex', alignItems: 'flex-end', gap: '12px',
+        marginTop: '12px',
+      }}
+    >
+      <button
+        onClick={tocarBruce}
+        aria-label='Hablar con Bruce'
         style={{
-          width: useBatman ? '130px' : '90px',
-          minWidth: useBatman ? '130px' : '90px',
-          height: useBatman ? '130px' : '90px',
-          cursor: 'pointer',
-          animation: clicked
-            ? 'bruceClick 0.5s ease'
-            : 'bruceFloat 3s ease-in-out infinite',
-          flexShrink: 0,
+          width: esNoche ? '124px' : '92px', height: esNoche ? '124px' : '92px',
+          flexShrink: 0, borderRadius: '16px',
+          animation: pop ? 'nf-pop 360ms var(--ease-out)' : undefined,
         }}
+        onAnimationEnd={() => setPop(false)}
       >
         <img
           src={imagenBruce}
-          alt='Bruce'
+          alt=''
+          className='nf-float'
           style={{
-            width: '100%',
-            height: '100%',
-            objectFit: useBatman ? 'cover' : 'contain',
+            width: '100%', height: '100%',
+            objectFit: esNoche ? 'cover' : 'contain',
             objectPosition: 'bottom center',
-            filter: useBatman
-              ? 'drop-shadow(0 6px 20px rgba(74,222,128,0.35))'
-              : 'drop-shadow(0 6px 16px rgba(74,222,128,0.2))',
+            filter: 'drop-shadow(0 6px 16px rgba(74,222,128,0.22))',
           }}
         />
-      </div>
+      </button>
 
-      {/* Contenido derecha */}
       <div style={{ flex: 1, minWidth: 0 }}>
-
-        {/* Header */}
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '10px',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
-            <span style={{ fontSize: '14px', fontWeight: '800', color: '#4ade80' }}>Bruce</span>
-            <span style={{
-              fontSize: '9px', fontWeight: '700', letterSpacing: '0.07em',
-              color: 'rgba(74,222,128,0.7)',
-              background: 'rgba(74,222,128,0.08)',
-              padding: '2px 8px', borderRadius: '6px',
-            }}>
-              {esNoche ? 'MODO NOCHE' : descanso ? 'DESCANSO' : 'TU COACH'}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+            <span style={{ fontSize: '16px', fontWeight: 700, color: 'var(--green)' }}>Bruce</span>
+            <span className='nf-badge'>
+              {esNoche ? 'Modo noche' : descanso ? 'Descanso' : 'Tu coach'}
             </span>
           </div>
-
-          <button
-            onClick={onOpenChat}
-            style={{
-              background: 'rgba(74,222,128,0.1)',
-              border: '0.5px solid rgba(74,222,128,0.2)',
-              borderRadius: '12px', padding: '7px 12px',
-              display: 'flex', alignItems: 'center', gap: '5px',
-              cursor: 'pointer',
-            }}
-          >
-            <IconMessageCircle size={13} color='#4ade80' strokeWidth={2} />
-            <span style={{ fontSize: '11px', color: '#4ade80', fontWeight: '700' }}>Chat</span>
+          <button onClick={onOpenChat} className='nf-btn nf-btn--sm nf-btn--tinted' aria-label='Abrir chat con Bruce'>
+            <IconMessageCircle size={15} strokeWidth={2} /> Chat
           </button>
         </div>
 
-        {/* Frase */}
         <div style={{
-          background: 'rgba(0,0,0,0.25)',
+          background: 'rgba(0,0,0,0.28)',
           borderRadius: '14px',
           padding: '12px 14px',
-          minHeight: '56px',
-          display: 'flex',
-          alignItems: 'center',
+          minHeight: '60px',
+          display: 'flex', alignItems: 'center',
         }}>
           {cargandoFrase ? (
-            <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }} aria-label='Bruce está pensando'>
               {[0, 1, 2].map(i => (
-                <div key={i} style={{
-                  width: '6px', height: '6px', borderRadius: '50%',
-                  background: '#4ade80', opacity: 0.5,
-                  animation: `bruceDot 1.2s ease-in-out ${i * 0.2}s infinite`,
-                }} />
+                <span key={i} className='nf-dot' style={{ animationDelay: `${i * 0.18}s` }} />
               ))}
             </div>
           ) : (
-            <p style={{
-              fontSize: '12px',
-              color: 'rgba(255,255,255,0.72)',
-              lineHeight: '1.65',
-              fontStyle: 'italic',
-              margin: 0,
-            }}>
-              "{displayed}{!done && <span style={{ opacity: 0.35 }}>|</span>}"
+            <p style={{ fontSize: '14px', color: 'rgba(255,255,255,0.86)', lineHeight: 1.5 }} aria-live='polite'>
+              “{displayed}{!done && <span style={{ opacity: 0.35 }}>|</span>}”
             </p>
           )}
         </div>
       </div>
-    </div>
-
-          {/* Keyframes */}
-          <style>{`
-            @keyframes bruceFloat {
-              0%, 100% { transform: translateY(0px) rotate(0deg); }
-              50%       { transform: translateY(-7px) rotate(1.5deg); }
-            }
-            @keyframes bruceClick {
-              0%   { transform: scale(1)    rotate(0deg); }
-              25%  { transform: scale(1.2)  rotate(-7deg); }
-              55%  { transform: scale(1.1)  rotate(5deg); }
-              80%  { transform: scale(1.03) rotate(-2deg); }
-              100% { transform: scale(1)    rotate(0deg); }
-            }
-            @keyframes bruceDot {
-              0%, 80%, 100% { transform: scale(0.6); opacity: 0.3; }
-              40%           { transform: scale(1.1); opacity: 1; }
-            }
-          `}</style>
-        </div>
-      )
-    }
+    </section>
+  )
+}
 
 // ── HomeScreen ────────────────────────────────────────────────────────────
-const descanso = esDiaDescanso()
-
-export default function HomeScreen({ t, lang, setLang, screen, usuario, onGoToProfile, onOpenChat }) {
+export default function HomeScreen({ t, lang, screen, usuario, onGoToProfile, onOpenChat }) {
   const [resumen,      setResumen]      = useState(null)
   const [cargando,     setCargando]     = useState(true)
-  const [error,        setError]        = useState(null)
-  const [animado,      setAnimado]      = useState(false)
+  const [error,        setError]        = useState(false)
   const [suscrito,     setSuscrito]     = useState(false)
   const [cargandoBell, setCargandoBell] = useState(false)
+  // La entrada escalonada es para la primera vez. Volver a la pestaña
+  // decenas de veces al día no debe repetir la animación.
+  const entrar = useEntrada(screen === 'home')
 
   useEffect(() => {
     estasSuscrito().then(setSuscrito)
   }, [])
 
+  const cargar = () => {
+    setCargando(true)
+    getResumenHoy()
+      .then(data  => { setResumen(data); setError(false) })
+      .catch(()   => setError(true))
+      .finally(() => setCargando(false))
+  }
+
   useEffect(() => {
     if (screen !== 'home') return
-    setCargando(true)
-    setAnimado(false)
-    getResumenHoy()
-      .then(data  => { setResumen(data); setError(null) })
-      .catch(()   => setError(true))
-      .finally(() => { setCargando(false); setTimeout(() => setAnimado(true), 80) })
+    cargar()
   }, [screen])
 
   const toggleNotificaciones = async () => {
     if (!soportaNotificaciones()) {
-      alert('Tu navegador no soporta notificaciones push.')
+      toast.error('Tu navegador no soporta notificaciones push.')
       return
     }
     if (permisoActual() === 'denied') {
-      alert('Las notificaciones están bloqueadas. Habilítalas en la configuración de tu navegador.')
+      toast.error('Las notificaciones están bloqueadas. Actívalas en la configuración del navegador.')
       return
     }
     setCargandoBell(true)
@@ -314,12 +259,15 @@ export default function HomeScreen({ t, lang, setLang, screen, usuario, onGoToPr
       if (suscrito) {
         await desuscribir()
         setSuscrito(false)
+        toast('Notificaciones desactivadas')
       } else {
         await suscribir()
         setSuscrito(true)
+        toast.success('Bruce te escribirá cada día')
       }
     } catch (e) {
       console.error('Error notificaciones:', e)
+      toast.error('No se pudieron cambiar las notificaciones.')
     } finally {
       setCargandoBell(false)
     }
@@ -334,211 +282,177 @@ export default function HomeScreen({ t, lang, setLang, screen, usuario, onGoToPr
   }
   const calPct   = Math.min(Math.round((totales.calorias / metas.calorias) * 100), 100)
   const restante = Math.max(metas.calorias - totales.calorias, 0)
+  const pasado   = totales.calorias > metas.calorias
 
   const nombreUsuario = usuario?.first_name?.split(' ')[0] || usuario?.email?.split('@')[0] || ''
+  const sinDatosAun   = cargando && !resumen
 
   const macros = [
-    { label: t.protein, value: totales.proteina, unit: 'g', goal: metas.proteina, color: '#4ade80', icon: IconMeat,    pct: (totales.proteina / metas.proteina) * 100 },
-    { label: t.carbs,   value: totales.carbos,   unit: 'g', goal: metas.carbos,   color: '#60a5fa', icon: IconWheat,   pct: (totales.carbos   / metas.carbos)   * 100 },
-    { label: t.fats,    value: totales.grasas,   unit: 'g', goal: metas.grasas,   color: '#fb923c', icon: IconFlame,   pct: (totales.grasas   / metas.grasas)   * 100 },
-    { label: t.water,   value: +(( resumen?.agua_ml ?? 0) / 1000).toFixed(1), unit: 'L', goal: 2.5, color: '#22d3ee', icon: IconDroplet, pct: ((resumen?.agua_ml ?? 0) / 2500) * 100 },
+    { label: t.protein, value: totales.proteina, unit: 'g', goal: metas.proteina, color: 'var(--green)',  icon: IconMeat,    pct: (totales.proteina / metas.proteina) * 100 },
+    { label: t.carbs,   value: totales.carbos,   unit: 'g', goal: metas.carbos,   color: 'var(--blue)',   icon: IconWheat,   pct: (totales.carbos   / metas.carbos)   * 100 },
+    { label: t.fats,    value: totales.grasas,   unit: 'g', goal: metas.grasas,   color: 'var(--orange)', icon: IconFlame,   pct: (totales.grasas   / metas.grasas)   * 100 },
+    { label: t.water,   value: +((resumen?.agua_ml ?? 0) / 1000).toFixed(1), unit: 'L', goal: 2.5, color: 'var(--cyan)', icon: IconDroplet, pct: ((resumen?.agua_ml ?? 0) / 2500) * 100 },
   ]
 
-  return (
-    <div style={{ paddingBottom: '8px' }}>
+  const R = 28
+  const CIRC = 2 * Math.PI * R
 
+  return (
+    <div>
       {/* ── Hero ── */}
       <div style={{
         position: 'relative', overflow: 'hidden',
-        padding: '60px 20px 28px',
-        background: 'linear-gradient(180deg, #0c1a10 0%, #0a0a0a 100%)',
+        padding: 'calc(var(--safe-top) + 20px) 16px 8px',
+        background: 'radial-gradient(120% 70% at 85% 0%, rgba(74,222,128,0.12) 0%, transparent 60%)',
       }}>
-        <div style={{
-          position: 'absolute', top: '-80px', right: '-60px',
-          width: '260px', height: '260px', borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(74,222,128,0.10) 0%, transparent 70%)',
-          pointerEvents: 'none',
-        }} />
-
         {/* Header */}
-        <div style={{
-          display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
-          marginBottom: '28px',
-          opacity: animado ? 1 : 0,
-          transform: animado ? 'translateY(0)' : 'translateY(10px)',
-          transition: 'all 0.5s ease',
-        }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-              <div style={{
-                background: 'rgba(74,222,128,0.1)', border: '0.5px solid rgba(74,222,128,0.2)',
-                borderRadius: '20px', padding: '4px 12px',
-                display: 'flex', alignItems: 'center', gap: '6px',
-              }}>
-                <div style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#4ade80' }} />
-                <span style={{ fontSize: '11px', color: '#4ade80', fontWeight: '700', letterSpacing: '0.1em' }}>NUTRIFIT</span>
-              </div>
-              <button onClick={() => setLang(lang === 'es' ? 'en' : 'es')} style={{
-                background: 'rgba(255,255,255,0.05)', border: '0.5px solid rgba(255,255,255,0.1)',
-                borderRadius: '8px', color: 'rgba(255,255,255,0.4)', fontSize: '11px',
-                fontWeight: '600', padding: '4px 8px', cursor: 'pointer', letterSpacing: '0.05em',
-              }}>
-                {lang === 'es' ? 'EN' : 'ES'}
-              </button>
-            </div>
-            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '14px', marginBottom: '2px' }}>{getSaludo(lang)}</p>
-            <h1 style={{ fontSize: '36px', fontWeight: '700', letterSpacing: '-1.5px', lineHeight: 1 }}>
-              {nombreUsuario || 'ahí'} 👋
+        <header
+          className={entrar ? 'nf-enter' : undefined}
+          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '22px', padding: '0 4px' }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <p className='nf-subhead' style={{ marginBottom: '2px' }}>{getSaludo(lang)},</p>
+            <h1 className='nf-large-title' style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {nombreUsuario || 'hola'}
             </h1>
           </div>
 
-          <div style={{ display: 'flex', gap: '8px' }}>
+          <div style={{ display: 'flex', gap: '6px', marginRight: '-6px' }}>
             <button
               onClick={toggleNotificaciones}
               disabled={cargandoBell}
-              style={{
-                width: '40px', height: '40px', borderRadius: '12px',
-                background: suscrito ? 'rgba(74,222,128,0.12)' : 'rgba(255,255,255,0.05)',
-                border: suscrito ? '0.5px solid rgba(74,222,128,0.35)' : '0.5px solid rgba(255,255,255,0.08)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                cursor: cargandoBell ? 'default' : 'pointer',
-                opacity: cargandoBell ? 0.6 : 1,
-                transition: 'all 0.25s ease',
-              }}
+              className='nf-icon-btn'
+              aria-label={suscrito ? 'Desactivar notificaciones' : 'Activar notificaciones'}
+              aria-pressed={suscrito}
+              style={{ color: suscrito ? 'var(--green)' : 'var(--label-2)', opacity: cargandoBell ? 0.5 : 1 }}
             >
-              {suscrito
-                ? <IconBell     size={17} color='#4ade80' />
-                : <IconBellOff  size={17} color='rgba(255,255,255,0.45)' />
-              }
+              {suscrito ? <IconBell size={22} strokeWidth={1.8} /> : <IconBellOff size={22} strokeWidth={1.8} />}
             </button>
-            <button onClick={onGoToProfile} style={{
-              width: '40px', height: '40px', borderRadius: '12px',
-              background: 'rgba(255,255,255,0.05)', border: '0.5px solid rgba(255,255,255,0.08)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
-            }}>
-              <IconUserCircle size={22} color='rgba(255,255,255,0.55)' strokeWidth={1.6} />
+            <button onClick={onGoToProfile} className='nf-icon-btn' aria-label='Abrir ajustes' style={{ padding: 0 }}>
+              <span style={{
+                width: '34px', height: '34px', borderRadius: '50%', overflow: 'hidden',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: 'linear-gradient(135deg, #064e3b, #16a34a)',
+                fontSize: '13px', fontWeight: 700, color: '#fff',
+                boxShadow: '0 0 0 0.5px rgba(255,255,255,0.15)',
+              }}>
+                {usuario?.avatar_display
+                  ? <img src={usuario.avatar_display} alt='' style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  : (nombreUsuario[0] ?? '?').toUpperCase()}
+              </span>
             </button>
           </div>
-        </div>
+        </header>
 
-        {/* Hero calorías */}
-        <div style={{
-          background: 'rgba(255,255,255,0.025)', border: '0.5px solid rgba(255,255,255,0.07)',
-          borderRadius: '24px', padding: '22px',
-          opacity: animado ? 1 : 0,
-          transform: animado ? 'translateY(0)' : 'translateY(14px)',
-          transition: 'all 0.55s ease 0.1s',
-        }}>
+        {/* Calorías */}
+        <section
+          className={`nf-card${entrar ? ' nf-enter' : ''}`}
+          style={{ padding: '20px', animationDelay: '60ms', background: 'rgba(255,255,255,0.035)' }}
+          aria-label={`${t.calToday}: ${totales.calorias} de ${metas.calorias}`}
+        >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '18px' }}>
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '10px' }}>
-                <IconFlame size={12} color='#4ade80' />
-                <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: '600' }}>
-                  {t.calToday}
-                </span>
-                {cargando && <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.2)', marginLeft: '4px' }}>cargando…</span>}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
+                <IconFlame size={15} color='var(--green)' />
+                <span className='nf-footnote' style={{ fontWeight: 600 }}>{t.calToday}</span>
               </div>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
-                <span style={{ fontSize: '54px', fontWeight: '700', letterSpacing: '-3px', lineHeight: 1 }}>
-                  {totales.calorias.toLocaleString()}
-                </span>
-                <span style={{ color: 'rgba(255,255,255,0.2)', fontSize: '18px' }}>
-                  /{metas.calorias.toLocaleString()}
-                </span>
-              </div>
+              {sinDatosAun ? (
+                <div className='nf-skeleton' style={{ width: '150px', height: '52px' }} />
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+                  <span className='nf-num' style={{ fontSize: '52px', fontWeight: 700, letterSpacing: '-0.035em', lineHeight: 1 }}>
+                    {totales.calorias.toLocaleString('es-CO')}
+                  </span>
+                  <span className='nf-num' style={{ color: 'var(--label-3)', fontSize: '17px', fontWeight: 500 }}>
+                    / {metas.calorias.toLocaleString('es-CO')}
+                  </span>
+                </div>
+              )}
             </div>
-            <div style={{ position: 'relative', width: '68px', height: '68px', flexShrink: 0 }}>
-              <svg width="68" height="68" style={{ transform: 'rotate(-90deg)' }}>
-                <circle cx="34" cy="34" r="28" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="5" />
-                <circle cx="34" cy="34" r="28" fill="none" stroke="#4ade80" strokeWidth="5"
-                  strokeDasharray={String(2 * Math.PI * 28)}
-                  strokeDashoffset={String(2 * Math.PI * 28 * (1 - calPct / 100))}
-                  strokeLinecap="round"
-                  style={{ transition: 'stroke-dashoffset 1.2s cubic-bezier(0.4,0,0.2,1)' }}
+            <div style={{ position: 'relative', width: '68px', height: '68px', flexShrink: 0 }} aria-hidden='true'>
+              <svg width='68' height='68' style={{ transform: 'rotate(-90deg)' }}>
+                <circle cx='34' cy='34' r={R} fill='none' stroke='rgba(255,255,255,0.07)' strokeWidth='6' />
+                <circle
+                  cx='34' cy='34' r={R} fill='none'
+                  stroke={pasado ? 'var(--orange)' : 'var(--green)'} strokeWidth='6'
+                  strokeDasharray={CIRC}
+                  strokeDashoffset={CIRC * (1 - calPct / 100)}
+                  strokeLinecap='round'
+                  style={{ transition: 'stroke-dashoffset 900ms var(--ease-out)' }}
                 />
               </svg>
-              <div style={{
+              <span className='nf-num' style={{
                 position: 'absolute', inset: 0,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
-                <span style={{ fontSize: '14px', fontWeight: '700', color: '#4ade80' }}>{calPct}%</span>
-              </div>
+                fontSize: '14px', fontWeight: 700, color: pasado ? 'var(--orange)' : 'var(--green)',
+              }}>{calPct}%</span>
             </div>
           </div>
 
-          <div style={{ height: '4px', background: 'rgba(255,255,255,0.06)', borderRadius: '2px', overflow: 'hidden', marginBottom: '10px' }}>
+          <div style={{ height: '6px', background: 'rgba(255,255,255,0.07)', borderRadius: '3px', overflow: 'hidden', marginBottom: '10px' }}>
             <div style={{
-              height: '100%', borderRadius: '2px', width: `${calPct}%`,
-              background: calPct >= 95 ? '#fb923c' : 'linear-gradient(90deg, #16a34a 0%, #4ade80 100%)',
-              transition: 'width 1.2s cubic-bezier(0.4,0,0.2,1)',
+              height: '100%', borderRadius: '3px', width: '100%',
+              transform: `scaleX(${calPct / 100})`, transformOrigin: 'left',
+              background: pasado ? 'var(--orange)' : 'linear-gradient(90deg, var(--green-dark) 0%, var(--green) 100%)',
+              transition: 'transform 900ms var(--ease-out)',
             }} />
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)' }}>{restante.toLocaleString()} kcal restantes</span>
-            <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)' }}>{t.goal} {metas.calorias.toLocaleString()}</span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+            <span className='nf-footnote nf-num'>
+              {pasado
+                ? `${(totales.calorias - metas.calorias).toLocaleString('es-CO')} kcal por encima`
+                : `${restante.toLocaleString('es-CO')} kcal restantes`}
+            </span>
+            <span className='nf-caption nf-num'>{t.goal} {metas.calorias.toLocaleString('es-CO')}</span>
           </div>
-        </div>
+        </section>
       </div>
 
-      {/* Grid macros */}
-      <div style={{ padding: '20px 16px 0' }}>
-        <p style={{
-          fontSize: '11px', color: 'rgba(255,255,255,0.25)', textTransform: 'uppercase',
-          letterSpacing: '0.09em', fontWeight: '600', marginBottom: '12px',
-        }}>Macros del día</p>
+      <div style={{ padding: '0 16px' }}>
+        {error && (
+          <div className='nf-card nf-reveal' role='alert' style={{
+            marginTop: '12px', padding: '12px 12px 12px 16px',
+            display: 'flex', alignItems: 'center', gap: '12px',
+            boxShadow: 'inset 0 0 0 0.5px rgba(248,113,113,0.3)',
+          }}>
+            <p className='nf-footnote' style={{ flex: 1, color: 'var(--red)' }}>
+              No pudimos traer tu resumen. Revisa tu conexión.
+            </p>
+            <button className='nf-btn nf-btn--sm nf-btn--destructive' onClick={cargar}>
+              <IconRefresh size={15} /> Reintentar
+            </button>
+          </div>
+        )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '16px' }}>
+        {/* Macros */}
+        <h2 className='nf-section-label' style={{ marginTop: '20px' }}>Macros del día</h2>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
           {macros.map((m, idx) => {
             const Icon = m.icon
             return (
-              <div key={m.label} style={{
-                background: '#131313', borderRadius: '20px',
-                border: '0.5px solid rgba(255,255,255,0.06)',
-                padding: '18px 16px',
-                opacity: animado ? 1 : 0,
-                transform: animado ? 'translateY(0)' : 'translateY(20px)',
-                transition: `all 0.5s ease ${0.18 + idx * 0.08}s`,
-              }}>
+              <div
+                key={m.label}
+                className={`nf-card${entrar ? ' nf-enter' : ''}`}
+                style={{ padding: '16px', animationDelay: `${120 + idx * 40}ms` }}
+              >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                  <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: '600' }}>
-                    {m.label}
-                  </span>
-                  <div style={{
-                    width: '26px', height: '26px', borderRadius: '8px',
-                    background: `${m.color}18`,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}>
-                    <Icon size={13} color={m.color} strokeWidth={2.2} />
-                  </div>
+                  <span className='nf-footnote' style={{ fontWeight: 600 }}>{m.label}</span>
+                  <Icon size={17} color={m.color} strokeWidth={2} />
                 </div>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: '2px', marginBottom: '3px' }}>
-                  <span style={{ fontSize: '30px', fontWeight: '700', color: m.color, letterSpacing: '-1px', lineHeight: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: '2px', marginBottom: '2px' }}>
+                  <span className='nf-num' style={{ fontSize: '30px', fontWeight: 700, color: m.color, letterSpacing: '-0.03em', lineHeight: 1 }}>
                     {m.unit === 'g' ? Math.round(m.value) : Number(m.value).toFixed(1)}
                   </span>
-                  <span style={{ fontSize: '13px', color: m.color, opacity: 0.45, marginLeft: '1px' }}>{m.unit}</span>
+                  <span style={{ fontSize: '14px', fontWeight: 600, color: m.color, opacity: 0.6 }}>{m.unit}</span>
                 </div>
-                <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.18)', marginBottom: '10px' }}>de {m.goal}{m.unit}</p>
+                <p className='nf-caption nf-num'>de {m.goal}{m.unit}</p>
                 <MacroBar pct={Math.min(m.pct, 100)} color={m.color} />
               </div>
             )
           })}
         </div>
 
-        {/* Bruce */}
-        <BruceCard resumen={resumen} animado={animado} onOpenChat={onOpenChat} usuario={usuario} />
-
-        {error && (
-          <div style={{
-            marginTop: '14px', background: 'rgba(239,68,68,0.07)',
-            border: '0.5px solid rgba(239,68,68,0.18)', borderRadius: '14px',
-            padding: '12px 16px', fontSize: '12px', color: '#f87171', lineHeight: '1.6',
-          }}>
-            ⚠ Backend desconectado —{' '}
-            <code style={{ background: 'rgba(255,255,255,0.07)', padding: '1px 5px', borderRadius: '4px', fontSize: '11px' }}>
-              python manage.py runserver
-            </code>
-          </div>
-        )}
+        <BruceCard resumen={resumen} entrar={entrar} onOpenChat={onOpenChat} usuario={usuario} />
       </div>
     </div>
   )

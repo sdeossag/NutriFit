@@ -2,169 +2,83 @@ import { useState, useEffect, useRef } from 'react'
 import {
   IconFlame, IconMeat, IconWheat, IconDroplet,
   IconTrophy, IconCalendar, IconScale, IconEdit,
-  IconCheck, IconX, IconLogout, IconCamera, IconArrowLeft,
-  IconTarget, IconRuler, IconWeight, IconChevronRight,
-  IconBell, IconBellOff,
+  IconCheck, IconLogout, IconCamera,
+  IconTarget, IconRuler, IconWeight, IconBell, IconLanguage,
 } from '@tabler/icons-react'
 import { getMiPerfil, actualizarPerfil, actualizarMetas, actualizarObjetivo, logout as apiLogout } from '../api'
 import { soportaNotificaciones, permisoActual, estasSuscrito, suscribir, desuscribir } from '../utils/notificaciones'
+import { toast } from '../lib/toast'
+import Segmented from '../components/Segmented'
 
 // ── helpers UI ────────────────────────────────────────────────────────────
 
-function SectionLabel({ children }) {
+function Section({ label, footer, children }) {
   return (
-    <p style={{
-      fontSize: '11px', color: 'rgba(255,255,255,0.25)',
-      textTransform: 'uppercase', letterSpacing: '0.09em',
-      fontWeight: '600', marginBottom: '10px', marginTop: '24px',
-    }}>
-      {children}
-    </p>
+    <section>
+      <h3 className='nf-section-label'>{label}</h3>
+      <div className='nf-card' style={{ overflow: 'hidden' }}>{children}</div>
+      {footer && <p className='nf-caption' style={{ margin: '8px 16px 0' }}>{footer}</p>}
+    </section>
   )
 }
 
-function Card({ children, style = {} }) {
+function Row({ icon, tint, label, children }) {
   return (
-    <div style={{
-      background: '#131313',
-      borderRadius: '22px',
-      border: '0.5px solid rgba(255,255,255,0.06)',
-      overflow: 'hidden',
-      ...style,
-    }}>
+    <div className='nf-row' style={{ '--row-inset': icon ? '60px' : '16px' }}>
+      {icon && <span className='nf-row-icon' style={{ '--tint': tint }}>{icon}</span>}
+      <span style={{ flex: 1, fontSize: '15px' }}>{label}</span>
       {children}
     </div>
   )
 }
 
-function CardRow({ icon, label, value, color = '#fff', last = false, onClick, children }) {
+function PillGroup({ options, value, onChange, color = 'var(--green)' }) {
   return (
-    <div
-      onClick={onClick}
-      style={{
-        display: 'flex', alignItems: 'center', gap: '12px',
-        padding: '14px 20px',
-        borderBottom: last ? 'none' : '0.5px solid rgba(255,255,255,0.03)',
-        cursor: onClick ? 'pointer' : 'default',
-      }}
-    >
-      {icon && (
-        <div style={{
-          width: '32px', height: '32px', borderRadius: '10px',
-          background: `${color}15`,
-          display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-        }}>
-          {icon}
-        </div>
-      )}
-      <span style={{ flex: 1, fontSize: '13px', fontWeight: '500' }}>{label}</span>
-      {children ?? (
-        <span style={{ fontSize: '14px', fontWeight: '700', color }}>
-          {value}
-        </span>
-      )}
+    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+      {options.map(({ key, label }) => (
+        <button
+          key={key}
+          className='nf-chip nf-chip--soft'
+          aria-pressed={value === key}
+          style={{ '--tint': color }}
+          onClick={() => onChange(key)}
+        >
+          {label}
+        </button>
+      ))}
     </div>
   )
 }
 
-function PillGroup({ options, value, onChange, color = '#4ade80' }) {
+function NumInput({ value, onChange, min, max, unit, color = 'var(--label)', label }) {
   return (
-    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-      {options.map(({ key, label }) => {
-        const active = value === key
-        return (
-          <button
-            key={key}
-            onClick={() => onChange(key)}
-            style={{
-              padding: '7px 14px', borderRadius: '10px', fontSize: '12px',
-              fontWeight: '600', cursor: 'pointer', fontFamily: 'inherit',
-              background: active ? `${color}20` : 'rgba(255,255,255,0.04)',
-              border: active ? `0.5px solid ${color}60` : '0.5px solid rgba(255,255,255,0.08)',
-              color: active ? color : 'rgba(255,255,255,0.45)',
-              transition: 'all 0.18s ease',
-            }}
-          >
-            {label}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
-function NumInput({ value, onChange, min, max, unit, color = '#fff' }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+    <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
       <input
-        type="number" value={value ?? ''} min={min} max={max}
+        type='number' inputMode='decimal' value={value ?? ''} min={min} max={max}
+        aria-label={label}
         onChange={e => onChange(e.target.value === '' ? '' : Number(e.target.value))}
+        className='nf-input nf-num'
         style={{
-          width: '80px', background: 'rgba(255,255,255,0.06)',
-          border: `0.5px solid ${color}40`, borderRadius: '8px',
-          color, fontSize: '14px', fontWeight: '700',
-          padding: '6px 8px', textAlign: 'right',
-          outline: 'none', fontFamily: 'inherit',
+          '--tint': color,
+          width: '84px', minHeight: '38px', padding: '6px 10px',
+          color, fontWeight: 600, textAlign: 'right',
+          background: 'rgba(255,255,255,0.06)',
         }}
       />
-      <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)' }}>{unit}</span>
-    </div>
-  )
-}
-
-function InputField({ placeholder, value, onChange }) {
-  return (
-    <input
-      placeholder={placeholder} value={value}
-      onChange={e => onChange(e.target.value)}
-      style={{
-        flex: 1, background: 'rgba(255,255,255,0.05)',
-        border: '0.5px solid rgba(255,255,255,0.1)',
-        borderRadius: '10px', color: '#fff', fontSize: '13px',
-        padding: '10px 12px', outline: 'none', fontFamily: 'inherit',
-      }}
-    />
-  )
-}
-
-function ActionBtn({ color, onClick, disabled, children, full = false }) {
-  return (
-    <button
-      onClick={onClick} disabled={disabled}
-      style={{
-        flex: full ? '1 1 100%' : 1,
-        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-        background: `${color}15`, border: `0.5px solid ${color}40`,
-        borderRadius: '10px', color, fontSize: '13px', fontWeight: '600',
-        padding: '10px', cursor: disabled ? 'default' : 'pointer',
-        opacity: disabled ? 0.6 : 1, fontFamily: 'inherit',
-      }}
-    >
-      {children}
-    </button>
+      <span className='nf-caption' style={{ width: '28px' }}>{unit}</span>
+    </label>
   )
 }
 
 function StatCard({ icon, label, value, unit, color }) {
   return (
-    <div style={{
-      background: '#131313', borderRadius: '18px',
-      border: '0.5px solid rgba(255,255,255,0.06)',
-      padding: '16px 14px', display: 'flex', flexDirection: 'column',
-      alignItems: 'center', gap: '8px',
-    }}>
-      <div style={{
-        width: '34px', height: '34px', borderRadius: '10px',
-        background: `${color}12`,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        {icon}
-      </div>
-      <div style={{ textAlign: 'center' }}>
-        <p style={{ fontSize: '22px', fontWeight: '700', color, letterSpacing: '-0.5px', lineHeight: 1 }}>{value}</p>
-        {unit && <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)', marginTop: '2px' }}>{unit}</p>}
-      </div>
-      <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: '600' }}>{label}</p>
+    <div className='nf-card' style={{ padding: '16px 12px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+      <span style={{ color }}>{icon}</span>
+      <p className='nf-num' style={{ fontSize: '24px', fontWeight: 700, color, letterSpacing: '-0.02em', lineHeight: 1.1 }}>
+        {value}
+        {unit && <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--label-3)', marginLeft: '3px' }}>{unit}</span>}
+      </p>
+      <p className='nf-caption' style={{ fontWeight: 600 }}>{label}</p>
     </div>
   )
 }
@@ -172,9 +86,9 @@ function StatCard({ icon, label, value, unit, color }) {
 // ── ProfileScreen ─────────────────────────────────────────────────────────
 
 const OBJETIVO_OPTS = [
-  { key: 'perder',   label: 'Perder grasa'   },
-  { key: 'mantener', label: 'Mantener'        },
-  { key: 'ganar',    label: 'Ganar músculo'   },
+  { key: 'perder',   label: 'Perder grasa'  },
+  { key: 'mantener', label: 'Mantener'      },
+  { key: 'ganar',    label: 'Ganar músculo' },
 ]
 const VELOCIDAD_OPTS = [
   { key: 'suave',    label: 'Suave'    },
@@ -188,20 +102,18 @@ const ACTIVIDAD_OPTS = [
   { key: 'activo',     label: 'Activo'     },
   { key: 'muy_activo', label: 'Muy activo' },
 ]
+const OBJETIVO_COLOR = { perder: 'var(--blue)', mantener: 'var(--green)', ganar: 'var(--orange)' }
 
-export default function ProfileScreen({ usuario: usuarioProp, setUsuario, onLogout, onClose, t }) {
+export default function ProfileScreen({ setUsuario, onLogout, lang, setLang }) {
   const [perfil,       setPerfil]       = useState(null)
   const [stats,        setStats]        = useState(null)
   const [cargando,     setCargando]     = useState(true)
   const [guardando,    setGuardando]    = useState(false)
-  const [error,        setError]        = useState(null)
 
-  // secciones de edición
   const [editPerfil,   setEditPerfil]   = useState(false)
   const [editMetas,    setEditMetas]    = useState(false)
   const [editObjetivo, setEditObjetivo] = useState(false)
 
-  // forms
   const [form,     setForm]     = useState({ first_name: '', last_name: '', bio: '' })
   const [metas,    setMetas]    = useState({ meta_calorias: 1900, meta_proteina: 140, meta_carbos: 200, meta_grasas: 55 })
   const [objetivo, setObjetivo] = useState({
@@ -209,7 +121,6 @@ export default function ProfileScreen({ usuario: usuarioProp, setUsuario, onLogo
     estatura_cm: null, peso_inicial_kg: null, peso_objetivo_kg: null,
   })
 
-  // notificaciones
   const [suscrito,     setSuscrito]     = useState(false)
   const [cargandoBell, setCargandoBell] = useState(false)
 
@@ -230,14 +141,14 @@ export default function ProfileScreen({ usuario: usuarioProp, setUsuario, onLogo
       setForm({ first_name: u.first_name || '', last_name: u.last_name || '', bio: u.bio || '' })
       setMetas({ meta_calorias: u.meta_calorias, meta_proteina: u.meta_proteina, meta_carbos: u.meta_carbos, meta_grasas: u.meta_grasas })
       setObjetivo({
-        objetivo:          u.objetivo          || 'mantener',
+        objetivo:           u.objetivo           || 'mantener',
         velocidad_objetivo: u.velocidad_objetivo || 'moderado',
-        nivel_actividad:   u.nivel_actividad   || 'moderado',
-        estatura_cm:       u.estatura_cm       || '',
-        peso_inicial_kg:   u.peso_inicial_kg   || '',
-        peso_objetivo_kg:  u.peso_objetivo_kg  || '',
+        nivel_actividad:    u.nivel_actividad    || 'moderado',
+        estatura_cm:        u.estatura_cm        || '',
+        peso_inicial_kg:    u.peso_inicial_kg    || '',
+        peso_objetivo_kg:   u.peso_objetivo_kg   || '',
       })
-    } catch { setError('No se pudo cargar el perfil') }
+    } catch { toast.error('No se pudo cargar el perfil') }
     finally { setCargando(false) }
   }
 
@@ -246,7 +157,8 @@ export default function ProfileScreen({ usuario: usuarioProp, setUsuario, onLogo
     try {
       const updated = await actualizarPerfil(form)
       setPerfil(updated); setUsuario?.(prev => ({ ...prev, ...updated })); setEditPerfil(false)
-    } catch { setError('Error al guardar') }
+      toast.success('Perfil actualizado')
+    } catch { toast.error('Error al guardar el perfil') }
     finally { setGuardando(false) }
   }
 
@@ -257,7 +169,8 @@ export default function ProfileScreen({ usuario: usuarioProp, setUsuario, onLogo
       setPerfil(prev => ({ ...prev, ...updated }))
       setUsuario?.(prev => ({ ...prev, ...updated }))
       setEditMetas(false)
-    } catch { setError('Error al guardar metas') }
+      toast.success('Metas guardadas')
+    } catch { toast.error('Error al guardar las metas') }
     finally { setGuardando(false) }
   }
 
@@ -273,7 +186,6 @@ export default function ProfileScreen({ usuario: usuarioProp, setUsuario, onLogo
       const updated = await actualizarObjetivo(payload)
       setPerfil(updated)
       setUsuario?.(prev => ({ ...prev, ...updated }))
-      // actualizar metas locales con las recalculadas
       setMetas({
         meta_calorias: updated.meta_calorias,
         meta_proteina: updated.meta_proteina,
@@ -281,7 +193,8 @@ export default function ProfileScreen({ usuario: usuarioProp, setUsuario, onLogo
         meta_grasas:   updated.meta_grasas,
       })
       setEditObjetivo(false)
-    } catch { setError('Error al guardar objetivo') }
+      toast.success('Metas recalculadas')
+    } catch { toast.error('Error al guardar el objetivo') }
     finally { setGuardando(false) }
   }
 
@@ -292,383 +205,257 @@ export default function ProfileScreen({ usuario: usuarioProp, setUsuario, onLogo
     try {
       const updated = await actualizarPerfil({ avatar: file })
       setPerfil(updated); setUsuario?.(prev => ({ ...prev, ...updated }))
-    } catch { setError('Error al subir imagen') }
+    } catch { toast.error('Error al subir la imagen') }
     finally { setGuardando(false) }
   }
 
   const toggleNotificaciones = async () => {
-    if (!soportaNotificaciones()) { alert('Tu navegador no soporta notificaciones push.'); return }
-    if (permisoActual() === 'denied') { alert('Las notificaciones están bloqueadas en la configuración de tu navegador.'); return }
+    if (!soportaNotificaciones()) { toast.error('Tu navegador no soporta notificaciones push.'); return }
+    if (permisoActual() === 'denied') { toast.error('Las notificaciones están bloqueadas en la configuración del navegador.'); return }
     setCargandoBell(true)
     try {
       if (suscrito) { await desuscribir(); setSuscrito(false) }
       else          { await suscribir();   setSuscrito(true)  }
-    } catch (e) { console.error(e) }
+    } catch (e) { console.error(e); toast.error('No se pudieron cambiar las notificaciones.') }
     finally { setCargandoBell(false) }
   }
 
   const handleLogout = async () => { await apiLogout(); onLogout?.() }
 
-  // ── Loading ──────────────────────────────────────────────────────────────
   if (cargando) return (
-    <div style={{ padding: '100px 16px', textAlign: 'center', color: 'rgba(255,255,255,0.3)' }}>
-      <div style={{ fontSize: '14px' }}>Cargando perfil…</div>
+    <div style={{ padding: '8px 16px' }} aria-busy='true'>
+      <div className='nf-skeleton' style={{ height: '96px', borderRadius: 'var(--r-lg)', marginTop: '28px' }} />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginTop: '16px' }}>
+        {[0, 1, 2].map(i => <div key={i} className='nf-skeleton' style={{ height: '100px', borderRadius: 'var(--r-lg)' }} />)}
+      </div>
+      <div className='nf-skeleton' style={{ height: '160px', borderRadius: 'var(--r-lg)', marginTop: '16px' }} />
     </div>
   )
 
   const nombre    = perfil ? `${perfil.first_name} ${perfil.last_name}`.trim() || perfil.email : ''
   const iniciales = nombre.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase() || '?'
-
-  const OBJETIVO_COLOR = { perder: '#60a5fa', mantener: '#4ade80', ganar: '#fb923c' }
-  const objColor = OBJETIVO_COLOR[objetivo.objetivo] ?? '#4ade80'
+  const objColor  = OBJETIVO_COLOR[objetivo.objetivo] ?? 'var(--green)'
 
   return (
-    <div style={{ padding: '0 16px 100px', color: '#fff', fontFamily: 'inherit' }}>
+    <div style={{ padding: '0 16px calc(var(--safe-bottom) + 32px)' }}>
 
-      {/* ── Top bar ── */}
-      <div style={{
-        position: 'sticky', top: 0, zIndex: 10,
-        background: '#0a0a0a',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '54px 0 16px',
-      }}>
-        <button onClick={onClose} style={{
-          display: 'flex', alignItems: 'center', gap: '6px',
-          background: 'none', border: 'none', cursor: 'pointer',
-          color: 'rgba(255,255,255,0.6)', fontSize: '15px',
-          fontFamily: 'inherit', padding: 0,
-        }}>
-          <IconArrowLeft size={20} /> Volver
-        </button>
-        <button onClick={handleLogout} style={{
-          display: 'flex', alignItems: 'center', gap: '6px',
-          background: 'rgba(239,68,68,0.08)', border: '0.5px solid rgba(239,68,68,0.2)',
-          borderRadius: '10px', padding: '8px 12px', cursor: 'pointer',
-          color: '#f87171', fontSize: '12px', fontWeight: '600', fontFamily: 'inherit',
-        }}>
-          <IconLogout size={14} /> Salir
-        </button>
-      </div>
-
-      {/* ── Título ── */}
-      <div style={{ marginBottom: '20px' }}>
-        <h2 style={{ fontSize: '32px', fontWeight: '700', letterSpacing: '-1px', marginBottom: '4px' }}>Ajustes</h2>
-        <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: '13px' }}>Perfil, metas y preferencias</p>
-      </div>
-
-      {/* ── Avatar + nombre ── */}
-      <SectionLabel>Cuenta</SectionLabel>
-      <Card>
-        <div style={{ padding: '20px', display: 'flex', gap: '16px', alignItems: 'center' }}>
+      {/* ── Cuenta ── */}
+      <Section label='Cuenta'>
+        <div style={{ padding: '16px', display: 'flex', gap: '14px', alignItems: 'center' }}>
           <div style={{ position: 'relative', flexShrink: 0 }}>
             {perfil?.avatar_display ? (
-              <img src={perfil.avatar_display} alt="avatar"
-                style={{ width: '68px', height: '68px', borderRadius: '20px', objectFit: 'cover' }} />
+              <img src={perfil.avatar_display} alt=''
+                style={{ width: '64px', height: '64px', borderRadius: '50%', objectFit: 'cover' }} />
             ) : (
               <div style={{
-                width: '68px', height: '68px', borderRadius: '20px',
+                width: '64px', height: '64px', borderRadius: '50%',
                 background: 'linear-gradient(135deg, #064e3b, #16a34a)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: '22px', fontWeight: '700', color: '#fff',
+                fontSize: '22px', fontWeight: 700,
               }}>
                 {iniciales}
               </div>
             )}
-            <button onClick={() => fileRef.current?.click()} style={{
-              position: 'absolute', bottom: '-4px', right: '-4px',
-              width: '24px', height: '24px', borderRadius: '8px',
-              background: '#1a1a1a', border: '0.5px solid rgba(255,255,255,0.15)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
-            }}>
-              <IconCamera size={12} color='rgba(255,255,255,0.6)' />
+            <button
+              onClick={() => fileRef.current?.click()}
+              aria-label='Cambiar foto de perfil'
+              style={{
+                position: 'absolute', bottom: '-6px', right: '-6px',
+                width: '32px', height: '32px', borderRadius: '50%',
+                background: 'var(--surface-3)', boxShadow: '0 0 0 3px var(--surface-1)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              <IconCamera size={15} color='var(--label-2)' />
             </button>
-            <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={cambiarAvatar} />
+            <input ref={fileRef} type='file' accept='image/*' hidden onChange={cambiarAvatar} />
           </div>
 
           <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={{ fontSize: '18px', fontWeight: '700', letterSpacing: '-0.5px', marginBottom: '3px' }}>{nombre || 'Sin nombre'}</p>
-            <p style={{ fontSize: '13px', color: 'rgba(255,255,255,0.4)' }}>{perfil?.email}</p>
-            {perfil?.bio && <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', fontStyle: 'italic', marginTop: '3px' }}>{perfil.bio}</p>}
+            <p className='nf-title-3' style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nombre || 'Sin nombre'}</p>
+            <p className='nf-footnote' style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{perfil?.email}</p>
+            {perfil?.bio && <p className='nf-caption' style={{ marginTop: '2px' }}>{perfil.bio}</p>}
           </div>
 
           {!editPerfil && (
-            <button onClick={() => setEditPerfil(true)} style={{
-              width: '32px', height: '32px', borderRadius: '10px', flexShrink: 0,
-              background: 'rgba(255,255,255,0.05)', border: '0.5px solid rgba(255,255,255,0.1)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
-            }}>
-              <IconEdit size={14} color='rgba(255,255,255,0.5)' />
+            <button onClick={() => setEditPerfil(true)} className='nf-icon-btn nf-icon-btn--sm nf-icon-btn--filled' aria-label='Editar perfil'>
+              <IconEdit size={17} />
             </button>
           )}
         </div>
 
         {editPerfil && (
-          <div style={{ padding: '0 20px 20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div className='nf-reveal' style={{ padding: '0 16px 16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ display: 'flex', gap: '8px' }}>
-              <InputField placeholder="Nombre"   value={form.first_name} onChange={v => setForm(f => ({ ...f, first_name: v }))} />
-              <InputField placeholder="Apellido" value={form.last_name}  onChange={v => setForm(f => ({ ...f, last_name: v }))}  />
+              <input className='nf-input' placeholder='Nombre' autoComplete='given-name'
+                value={form.first_name} onChange={e => setForm(f => ({ ...f, first_name: e.target.value }))} />
+              <input className='nf-input' placeholder='Apellido' autoComplete='family-name'
+                value={form.last_name} onChange={e => setForm(f => ({ ...f, last_name: e.target.value }))} />
             </div>
-            <InputField placeholder="Bio (opcional)" value={form.bio} onChange={v => setForm(f => ({ ...f, bio: v }))} />
-            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
-              <ActionBtn color='#4ade80' onClick={guardarPerfil} disabled={guardando}>
-                <IconCheck size={14} /> {guardando ? 'Guardando…' : 'Guardar'}
-              </ActionBtn>
-              <ActionBtn color='rgba(255,255,255,0.3)' onClick={() => setEditPerfil(false)}>
-                <IconX size={14} /> Cancelar
-              </ActionBtn>
+            <input className='nf-input' placeholder='Bio (opcional)' maxLength={160}
+              value={form.bio} onChange={e => setForm(f => ({ ...f, bio: e.target.value }))} />
+            <div style={{ display: 'flex', gap: '8px', marginTop: '2px' }}>
+              <button className='nf-btn nf-btn--gray' style={{ flex: 1 }} onClick={() => setEditPerfil(false)}>Cancelar</button>
+              <button className='nf-btn nf-btn--primary' style={{ flex: 1 }} onClick={guardarPerfil} disabled={guardando}>
+                {guardando ? 'Guardando…' : 'Guardar'}
+              </button>
             </div>
           </div>
         )}
-      </Card>
+      </Section>
 
       {/* ── Estadísticas ── */}
-      <SectionLabel>Estadísticas</SectionLabel>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginBottom: '4px' }}>
-        <StatCard icon={<IconTrophy size={16} color='#fb923c' />}  label="Racha"    value={stats?.racha_gym ?? 0}       unit="días"  color='#fb923c' />
-        <StatCard icon={<IconCalendar size={16} color='#60a5fa' />} label="Sesiones" value={stats?.sesiones_totales ?? 0} unit="total" color='#60a5fa' />
-        <StatCard icon={<IconScale size={16} color='#4ade80' />}    label="Peso"     value={stats?.peso_actual ?? '—'}    unit={stats?.peso_actual ? 'kg' : ''} color='#4ade80' />
+      <h3 className='nf-section-label'>Estadísticas</h3>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+        <StatCard icon={<IconTrophy size={20} />}   label='Racha'    value={stats?.racha_gym ?? 0}        unit='días' color='var(--orange)' />
+        <StatCard icon={<IconCalendar size={20} />} label='Sesiones' value={stats?.sesiones_totales ?? 0}               color='var(--blue)' />
+        <StatCard icon={<IconScale size={20} />}    label='Peso'     value={stats?.peso_actual ?? '—'}    unit={stats?.peso_actual ? 'kg' : ''} color='var(--green)' />
       </div>
 
       {/* ── Objetivo ── */}
-      <SectionLabel>Objetivo y ritmo</SectionLabel>
-      <Card>
-        <div style={{
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          padding: '16px 20px',
-          borderBottom: editObjetivo ? '0.5px solid rgba(255,255,255,0.04)' : 'none',
-        }}>
-          <div>
-            <p style={{ fontSize: '14px', fontWeight: '700', marginBottom: '2px' }}>
+      <Section
+        label='Objetivo y ritmo'
+        footer={editObjetivo ? 'Al guardar, las metas de calorías y macros se recalculan con estos datos.' : null}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 16px', gap: '12px' }}>
+          <div style={{ minWidth: 0 }}>
+            <p className='nf-headline' style={{ color: objColor }}>
               {OBJETIVO_OPTS.find(o => o.key === objetivo.objetivo)?.label ?? '—'}
             </p>
-            <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>
+            <p className='nf-footnote'>
               {VELOCIDAD_OPTS.find(o => o.key === objetivo.velocidad_objetivo)?.label ?? '—'} ·{' '}
               {ACTIVIDAD_OPTS.find(o => o.key === objetivo.nivel_actividad)?.label ?? '—'}
             </p>
           </div>
           {!editObjetivo ? (
-            <button onClick={() => setEditObjetivo(true)} style={{
-              display: 'flex', alignItems: 'center', gap: '5px',
-              background: `${objColor}12`, border: `0.5px solid ${objColor}30`,
-              borderRadius: '10px', padding: '7px 12px', cursor: 'pointer',
-              color: objColor, fontSize: '12px', fontWeight: '600', fontFamily: 'inherit',
-            }}>
-              <IconEdit size={12} /> Editar
+            <button onClick={() => setEditObjetivo(true)} className='nf-btn nf-btn--sm nf-btn--tinted' style={{ '--tint': objColor }}>
+              <IconEdit size={15} /> Editar
             </button>
           ) : (
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button onClick={guardarObjetivo} disabled={guardando} style={{
-                display: 'flex', alignItems: 'center', gap: '4px',
-                background: 'rgba(74,222,128,0.15)', border: '0.5px solid rgba(74,222,128,0.3)',
-                borderRadius: '10px', padding: '7px 12px', cursor: 'pointer',
-                color: '#4ade80', fontSize: '12px', fontWeight: '600', fontFamily: 'inherit',
-              }}>
-                <IconCheck size={12} /> {guardando ? '…' : 'Guardar'}
-              </button>
-              <button onClick={() => setEditObjetivo(false)} style={{
-                width: '32px', height: '32px', borderRadius: '10px',
-                background: 'rgba(255,255,255,0.05)', border: '0.5px solid rgba(255,255,255,0.1)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
-              }}>
-                <IconX size={14} color='rgba(255,255,255,0.4)' />
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <button onClick={() => setEditObjetivo(false)} className='nf-btn nf-btn--sm nf-btn--gray'>Cancelar</button>
+              <button onClick={guardarObjetivo} disabled={guardando} className='nf-btn nf-btn--sm nf-btn--primary'>
+                {guardando ? 'Guardando…' : 'Guardar'}
               </button>
             </div>
           )}
         </div>
 
         {editObjetivo && (
-          <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
-
+          <div className='nf-reveal' style={{ padding: '4px 16px 16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div>
-              <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', marginBottom: '8px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Objetivo</p>
+              <p className='nf-caption' style={{ marginBottom: '8px', fontWeight: 600 }}>Objetivo</p>
               <PillGroup options={OBJETIVO_OPTS} value={objetivo.objetivo} color={objColor}
                 onChange={v => setObjetivo(o => ({ ...o, objetivo: v }))} />
             </div>
-
             <div>
-              <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', marginBottom: '8px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Velocidad</p>
-              <PillGroup options={VELOCIDAD_OPTS} value={objetivo.velocidad_objetivo} color='#a78bfa'
+              <p className='nf-caption' style={{ marginBottom: '8px', fontWeight: 600 }}>Velocidad</p>
+              <PillGroup options={VELOCIDAD_OPTS} value={objetivo.velocidad_objetivo} color='var(--purple)'
                 onChange={v => setObjetivo(o => ({ ...o, velocidad_objetivo: v }))} />
             </div>
-
             <div>
-              <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', marginBottom: '8px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Nivel de actividad</p>
-              <PillGroup options={ACTIVIDAD_OPTS} value={objetivo.nivel_actividad} color='#22d3ee'
+              <p className='nf-caption' style={{ marginBottom: '8px', fontWeight: 600 }}>Nivel de actividad</p>
+              <PillGroup options={ACTIVIDAD_OPTS} value={objetivo.nivel_actividad} color='var(--cyan)'
                 onChange={v => setObjetivo(o => ({ ...o, nivel_actividad: v }))} />
             </div>
-
-            <div style={{
-              background: 'rgba(74,222,128,0.05)', border: '0.5px solid rgba(74,222,128,0.15)',
-              borderRadius: '12px', padding: '10px 14px',
-            }}>
-              <p style={{ fontSize: '11px', color: 'rgba(74,222,128,0.7)', fontWeight: '600' }}>
-                Al guardar, las metas de calorías y macros se recalculan automáticamente según estos datos.
-              </p>
-            </div>
-
           </div>
         )}
-      </Card>
+      </Section>
 
       {/* ── Datos físicos ── */}
-      <SectionLabel>Datos físicos</SectionLabel>
-      <Card>
+      <Section label='Datos físicos'>
         {[
-          { key: 'estatura_cm',      label: 'Estatura',      unit: 'cm',  color: '#60a5fa', icon: <IconRuler  size={15} color='#60a5fa' strokeWidth={2} />, min: 100, max: 250 },
-          { key: 'peso_inicial_kg',  label: 'Peso actual',   unit: 'kg',  color: '#4ade80', icon: <IconWeight size={15} color='#4ade80' strokeWidth={2} />, min: 30,  max: 300 },
-          { key: 'peso_objetivo_kg', label: 'Peso objetivo', unit: 'kg',  color: '#fb923c', icon: <IconTarget size={15} color='#fb923c' strokeWidth={2} />, min: 30,  max: 300 },
-        ].map(({ key, label, unit, color, icon, min, max }, i, arr) => (
-          <div key={key} style={{
-            display: 'flex', alignItems: 'center', gap: '12px',
-            padding: '14px 20px',
-            borderBottom: i < arr.length - 1 ? '0.5px solid rgba(255,255,255,0.03)' : 'none',
-          }}>
-            <div style={{ width: '32px', height: '32px', borderRadius: '10px', background: `${color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              {icon}
-            </div>
-            <span style={{ flex: 1, fontSize: '13px', fontWeight: '500' }}>{label}</span>
+          { key: 'estatura_cm',      label: 'Estatura',      unit: 'cm', color: 'var(--blue)',   icon: <IconRuler  size={18} />, min: 100, max: 250 },
+          { key: 'peso_inicial_kg',  label: 'Peso actual',   unit: 'kg', color: 'var(--green)',  icon: <IconWeight size={18} />, min: 30,  max: 300 },
+          { key: 'peso_objetivo_kg', label: 'Peso objetivo', unit: 'kg', color: 'var(--orange)', icon: <IconTarget size={18} />, min: 30,  max: 300 },
+        ].map(({ key, label, unit, color, icon, min, max }) => (
+          <Row key={key} icon={icon} tint={color} label={label}>
             <NumInput
-              value={objetivo[key]} color={color} unit={unit} min={min} max={max}
+              value={objetivo[key]} color={color} unit={unit} min={min} max={max} label={label}
               onChange={v => setObjetivo(o => ({ ...o, [key]: v }))}
             />
-          </div>
+          </Row>
         ))}
-        <div style={{ padding: '12px 20px', borderTop: '0.5px solid rgba(255,255,255,0.03)' }}>
-          <ActionBtn color='#4ade80' onClick={guardarObjetivo} disabled={guardando} full>
-            <IconCheck size={14} /> {guardando ? 'Guardando…' : 'Guardar datos y recalcular metas'}
-          </ActionBtn>
+        <div style={{ padding: '10px 16px 14px' }}>
+          <button className='nf-btn nf-btn--tinted nf-btn--block' onClick={guardarObjetivo} disabled={guardando}>
+            <IconCheck size={17} /> {guardando ? 'Guardando…' : 'Guardar y recalcular metas'}
+          </button>
         </div>
-      </Card>
+      </Section>
 
       {/* ── Metas diarias ── */}
-      <SectionLabel>Metas diarias</SectionLabel>
-      <Card>
-        <div style={{
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          padding: '16px 20px',
-          borderBottom: '0.5px solid rgba(255,255,255,0.04)',
-        }}>
-          <div>
-            <p style={{ fontSize: '14px', fontWeight: '700', marginBottom: '2px' }}>Calorías y macros</p>
-            <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>Ajuste manual</p>
-          </div>
-          {!editMetas ? (
-            <button onClick={() => setEditMetas(true)} style={{
-              display: 'flex', alignItems: 'center', gap: '5px',
-              background: 'rgba(74,222,128,0.1)', border: '0.5px solid rgba(74,222,128,0.2)',
-              borderRadius: '10px', padding: '7px 12px', cursor: 'pointer',
-              color: '#4ade80', fontSize: '12px', fontWeight: '600', fontFamily: 'inherit',
-            }}>
-              <IconEdit size={12} /> Editar
+      <h3 className='nf-section-label' style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        Metas diarias
+        {!editMetas ? (
+          <button onClick={() => setEditMetas(true)} className='nf-btn nf-btn--plain' style={{ minHeight: '32px', textTransform: 'none', letterSpacing: 0, fontSize: '15px' }}>
+            Editar
+          </button>
+        ) : (
+          <span style={{ display: 'flex', gap: '4px', textTransform: 'none', letterSpacing: 0 }}>
+            <button onClick={() => setEditMetas(false)} className='nf-btn nf-btn--plain' style={{ minHeight: '32px', fontSize: '15px', color: 'var(--label-2)' }}>
+              Cancelar
             </button>
-          ) : (
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button onClick={guardarMetas} disabled={guardando} style={{
-                display: 'flex', alignItems: 'center', gap: '4px',
-                background: 'rgba(74,222,128,0.15)', border: '0.5px solid rgba(74,222,128,0.3)',
-                borderRadius: '10px', padding: '7px 12px', cursor: 'pointer',
-                color: '#4ade80', fontSize: '12px', fontWeight: '600', fontFamily: 'inherit',
-              }}>
-                <IconCheck size={12} /> {guardando ? '…' : 'OK'}
-              </button>
-              <button onClick={() => setEditMetas(false)} style={{
-                width: '32px', height: '32px', borderRadius: '10px',
-                background: 'rgba(255,255,255,0.05)', border: '0.5px solid rgba(255,255,255,0.1)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
-              }}>
-                <IconX size={14} color='rgba(255,255,255,0.4)' />
-              </button>
-            </div>
-          )}
-        </div>
-
+            <button onClick={guardarMetas} disabled={guardando} className='nf-btn nf-btn--plain' style={{ minHeight: '32px', fontSize: '15px' }}>
+              {guardando ? '…' : 'Guardar'}
+            </button>
+          </span>
+        )}
+      </h3>
+      <div className='nf-card' style={{ overflow: 'hidden' }}>
         {[
-          { key: 'meta_calorias', label: 'Calorías', unit: 'kcal', color: '#fb923c', icon: <IconFlame   size={15} color='#fb923c' strokeWidth={2} />, min: 1200, max: 4000 },
-          { key: 'meta_proteina', label: 'Proteína',  unit: 'g',    color: '#4ade80', icon: <IconMeat    size={15} color='#4ade80' strokeWidth={2} />, min: 50,   max: 300  },
-          { key: 'meta_carbos',   label: 'Carbos',    unit: 'g',    color: '#60a5fa', icon: <IconWheat   size={15} color='#60a5fa' strokeWidth={2} />, min: 50,   max: 500  },
-          { key: 'meta_grasas',   label: 'Grasas',    unit: 'g',    color: '#a78bfa', icon: <IconDroplet size={15} color='#a78bfa' strokeWidth={2} />, min: 20,   max: 200  },
-        ].map(({ key, label, unit, color, icon, min, max }, i, arr) => (
-          <div key={key} style={{
-            display: 'flex', alignItems: 'center', gap: '12px',
-            padding: '14px 20px',
-            borderBottom: i < arr.length - 1 ? '0.5px solid rgba(255,255,255,0.03)' : 'none',
-          }}>
-            <div style={{ width: '32px', height: '32px', borderRadius: '10px', background: `${color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              {icon}
-            </div>
-            <span style={{ flex: 1, fontSize: '13px', fontWeight: '500' }}>{label}</span>
+          { key: 'meta_calorias', label: 'Calorías', unit: 'kcal', color: 'var(--orange)', icon: <IconFlame   size={18} />, min: 1200, max: 4000 },
+          { key: 'meta_proteina', label: 'Proteína', unit: 'g',    color: 'var(--green)',  icon: <IconMeat    size={18} />, min: 50,   max: 300  },
+          { key: 'meta_carbos',   label: 'Carbos',   unit: 'g',    color: 'var(--blue)',   icon: <IconWheat   size={18} />, min: 50,   max: 500  },
+          { key: 'meta_grasas',   label: 'Grasas',   unit: 'g',    color: 'var(--purple)', icon: <IconDroplet size={18} />, min: 20,   max: 200  },
+        ].map(({ key, label, unit, color, icon, min, max }) => (
+          <Row key={key} icon={icon} tint={color} label={label}>
             {editMetas ? (
               <NumInput
-                value={metas[key]} color={color} unit={unit} min={min} max={max}
+                value={metas[key]} color={color} unit={unit} min={min} max={max} label={label}
                 onChange={v => setMetas(m => ({ ...m, [key]: v }))}
               />
             ) : (
-              <span style={{ fontSize: '16px', fontWeight: '700', color }}>
-                {metas[key]} <span style={{ fontSize: '11px', fontWeight: '400', color: 'rgba(255,255,255,0.3)' }}>{unit}</span>
+              <span className='nf-num' style={{ fontSize: '16px', fontWeight: 600, color }}>
+                {metas[key]} <span className='nf-caption' style={{ fontWeight: 400 }}>{unit}</span>
               </span>
             )}
-          </div>
+          </Row>
         ))}
-      </Card>
+      </div>
 
-      {/* ── Notificaciones ── */}
-      <SectionLabel>Notificaciones</SectionLabel>
-      <Card>
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: '14px', padding: '18px 20px',
-        }}>
-          <div style={{
-            width: '40px', height: '40px', borderRadius: '12px',
-            background: suscrito ? 'rgba(74,222,128,0.12)' : 'rgba(255,255,255,0.05)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-          }}>
-            {suscrito
-              ? <IconBell    size={18} color='#4ade80' />
-              : <IconBellOff size={18} color='rgba(255,255,255,0.35)' />
-            }
-          </div>
-          <div style={{ flex: 1 }}>
-            <p style={{ fontSize: '14px', fontWeight: '600', marginBottom: '2px' }}>Mensajes de Bruce</p>
-            <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.35)' }}>
-              {suscrito ? 'Recibirás una frase motivacional al abrir la app cada día.' : 'Activa para que Bruce te hable cada día.'}
-            </p>
-          </div>
+      {/* ── Preferencias ── */}
+      <Section
+        label='Preferencias'
+        footer={suscrito ? 'Bruce te enviará un mensaje motivacional cada día.' : 'Activa para que Bruce te escriba cada día.'}
+      >
+        <Row icon={<IconBell size={18} />} tint='var(--green)' label='Mensajes de Bruce'>
           <button
+            role='switch'
+            aria-checked={suscrito}
+            aria-label='Mensajes de Bruce'
+            className='nf-switch'
             onClick={toggleNotificaciones}
             disabled={cargandoBell}
-            style={{
-              width: '44px', height: '26px', borderRadius: '13px',
-              background: suscrito ? '#4ade80' : 'rgba(255,255,255,0.12)',
-              border: 'none', cursor: cargandoBell ? 'default' : 'pointer',
-              position: 'relative', transition: 'background 0.25s ease',
-              opacity: cargandoBell ? 0.6 : 1, flexShrink: 0,
-            }}
-          >
-            <div style={{
-              position: 'absolute', top: '3px',
-              left: suscrito ? '21px' : '3px',
-              width: '20px', height: '20px', borderRadius: '50%',
-              background: '#fff',
-              transition: 'left 0.25s ease',
-              boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
-            }} />
-          </button>
-        </div>
-      </Card>
+            style={{ opacity: cargandoBell ? 0.6 : 1 }}
+          />
+        </Row>
+        <Row icon={<IconLanguage size={18} />} tint='var(--blue)' label='Idioma'>
+          <Segmented
+            label='Idioma'
+            value={lang}
+            onChange={setLang}
+            options={[{ id: 'es', label: 'ES' }, { id: 'en', label: 'EN' }]}
+            style={{ width: '112px' }}
+          />
+        </Row>
+      </Section>
 
-      {/* ── Error ── */}
-      {error && (
-        <div style={{
-          background: 'rgba(239,68,68,0.08)', border: '0.5px solid rgba(239,68,68,0.2)',
-          borderRadius: '12px', padding: '12px 16px', fontSize: '13px', color: '#f87171',
-          marginTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        }}>
-          {error}
-          <button onClick={() => setError(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#f87171' }}>
-            <IconX size={14} />
-          </button>
-        </div>
-      )}
+      {/* ── Sesión ── */}
+      <div className='nf-card' style={{ marginTop: '28px', overflow: 'hidden' }}>
+        <button className='nf-row nf-press-soft' onClick={handleLogout} style={{ justifyContent: 'center', color: 'var(--red)', fontWeight: 600, fontSize: '16px' }}>
+          <IconLogout size={18} /> Cerrar sesión
+        </button>
+      </div>
     </div>
   )
 }

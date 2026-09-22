@@ -1,19 +1,21 @@
 import { useState, useEffect, useRef } from 'react'
-import { IconArrowUp, IconPlus, IconChevronLeft, IconTrash } from '@tabler/icons-react'
+import { IconArrowUp, IconChevronLeft, IconTrash, IconEdit, IconChevronRight } from '@tabler/icons-react'
 import {
   getSesionesChatBruce, crearSesionChat, getSesionChat,
   eliminarSesionChat, enviarMensajeBruce,
 } from '../api'
-import bruceFace       from '../assets/bruce-face.png'
-import bruceTuxedo     from '../assets/bruce-tuxedo.png'
-import bruceMuyfeliz   from '../assets/bruce-tuxedo-muyfeliz.png'
-import brucePensando   from '../assets/bruce-tuxedo-pensando.png'
-import bruceDeterminado from '../assets/bruce-tuxedo-determinado.png'
-import bruceBatman     from '../assets/bruce-batman.png'
+import { toast } from '../lib/toast'
+import bruceFace        from '../assets/bruce-face.webp'
+import bruceTuxedo      from '../assets/bruce-tuxedo.webp'
+import bruceMuyfeliz    from '../assets/bruce-tuxedo-muyfeliz.webp'
+import brucePensando    from '../assets/bruce-tuxedo-pensando.webp'
+import bruceDeterminado from '../assets/bruce-tuxedo-determinado.webp'
+import bruceBatman      from '../assets/bruce-batman.webp'
 
 const esDiaDescanso = () => { const d = new Date().getDay(); return d === 0 || d === 6 }
+const esDeNoche = () => { const h = new Date().getHours(); return h >= 20 || h < 6 }
 
-// Pose según última respuesta de Bruce
+// Pose según la última respuesta de Bruce
 const getPose = (texto) => {
   if (!texto) return 'normal'
   const t = texto.toLowerCase()
@@ -31,55 +33,54 @@ const POSES = {
   batman:      bruceBatman,
 }
 
-// ── Avatar pequeño ────────────────────────────────────────────────────────
-function BruceAvatarSmall() {
+const BURBUJA_BRUCE = '#26262a'
+
+function Avatar({ size = 28 }) {
   return (
-    <div style={{
-      width: '28px', height: '28px', borderRadius: '50%', flexShrink: 0,
-      background: 'linear-gradient(135deg, #064e3b, #16a34a)',
-      overflow: 'hidden',
-      boxShadow: '0 2px 8px rgba(74,222,128,0.3)',
-    }}>
-      <img src={bruceFace} alt='Bruce' style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-    </div>
+    <img
+      src={bruceFace} alt='' width={size} height={size}
+      style={{
+        width: size, height: size, borderRadius: '50%', flexShrink: 0, objectFit: 'cover',
+        background: 'linear-gradient(135deg, #064e3b, #16a34a)',
+      }}
+    />
   )
 }
 
-// ── Bubble mensaje ────────────────────────────────────────────────────────
-function Mensaje({ msg }) {
+// ── Burbuja ───────────────────────────────────────────────────────────────
+function Mensaje({ msg, agrupado, animar }) {
   const esBruce = msg.rol === 'bruce'
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: esBruce ? 'row' : 'row-reverse',
-      alignItems: 'flex-end',
-      gap: '8px',
-      marginBottom: '12px',
-      paddingLeft: esBruce ? '0' : '48px',
-      paddingRight: esBruce ? '48px' : '0',
-    }}>
-      {esBruce && <BruceAvatarSmall />}
+    <div
+      className={animar ? 'nf-reveal' : undefined}
+      onAnimationEnd={e => e.currentTarget.classList.remove('nf-reveal')}
+      style={{
+        display: 'flex',
+        flexDirection: esBruce ? 'row' : 'row-reverse',
+        alignItems: 'flex-end',
+        gap: '8px',
+        marginTop: agrupado ? '3px' : '12px',
+        paddingLeft: esBruce ? 0 : '52px',
+        paddingRight: esBruce ? '52px' : 0,
+      }}
+    >
+      {esBruce && (agrupado ? <span style={{ width: 28, flexShrink: 0 }} /> : <Avatar />)}
       <div style={{
-        background: esBruce ? 'linear-gradient(135deg, #0d2418, #112d1e)' : '#fff',
-        border: esBruce ? '0.5px solid rgba(74,222,128,0.2)' : 'none',
-        borderRadius: esBruce ? '4px 16px 16px 16px' : '16px 4px 16px 16px',
-        padding: '10px 14px',
+        background: esBruce ? BURBUJA_BRUCE : 'var(--green)',
+        color: esBruce ? 'var(--label)' : '#04210f',
+        borderRadius: '20px',
+        borderBottomLeftRadius: esBruce ? '6px' : '20px',
+        borderBottomRightRadius: esBruce ? '20px' : '6px',
+        padding: '9px 14px',
         maxWidth: '100%',
+        userSelect: 'text',
       }}>
-        <p style={{
-          fontSize: '14px',
-          color: esBruce ? 'rgba(255,255,255,0.85)' : '#000',
-          lineHeight: '1.55',
-          margin: 0,
-          fontStyle: esBruce ? 'italic' : 'normal',
-        }}>
+        <p style={{ fontSize: '16px', lineHeight: 1.4, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
           {msg.contenido}
         </p>
-        <p style={{
-          fontSize: '10px',
-          color: esBruce ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.3)',
-          marginTop: '4px',
-          marginBottom: 0,
+        <p className='nf-num' style={{
+          fontSize: '11px', marginTop: '3px',
+          color: esBruce ? 'var(--label-3)' : 'rgba(4,33,15,0.55)',
           textAlign: esBruce ? 'left' : 'right',
         }}>
           {new Date(msg.creado_en).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
@@ -89,387 +90,356 @@ function Mensaje({ msg }) {
   )
 }
 
-// ── Typing indicator ──────────────────────────────────────────────────────
-function BruceTyping() {
+function Escribiendo() {
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', marginBottom: '12px', paddingRight: '48px' }}>
-      <BruceAvatarSmall />
+    <div className='nf-reveal' onAnimationEnd={e => e.currentTarget.classList.remove('nf-reveal')} style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', marginTop: '12px' }} aria-label='Bruce está escribiendo'>
+      <Avatar />
       <div style={{
-        background: 'linear-gradient(135deg, #0d2418, #112d1e)',
-        border: '0.5px solid rgba(74,222,128,0.2)',
-        borderRadius: '4px 16px 16px 16px',
-        padding: '12px 16px',
-        display: 'flex', gap: '5px', alignItems: 'center',
+        background: BURBUJA_BRUCE, borderRadius: '20px', borderBottomLeftRadius: '6px',
+        padding: '14px 16px', display: 'flex', gap: '5px', alignItems: 'center',
       }}>
-        {[0, 1, 2].map(i => (
-          <div key={i} style={{
-            width: '6px', height: '6px', borderRadius: '50%',
-            background: '#4ade80', opacity: 0.6,
-            animation: `bruceDot 1.2s ease-in-out ${i * 0.2}s infinite`,
-          }} />
-        ))}
+        {[0, 1, 2].map(i => <span key={i} className='nf-dot' style={{ background: 'var(--label-2)', animationDelay: `${i * 0.18}s` }} />)}
       </div>
     </div>
   )
 }
 
-// ── Lista de sesiones ─────────────────────────────────────────────────────
-function ListaSesiones({ sesiones, onSeleccionar, onNueva, onEliminar, cargando }) {
-  const hora = new Date().getHours()
-  const esNoche = hora >= 20 || hora < 6
+// ── Lista de conversaciones ───────────────────────────────────────────────
+function ListaSesiones({ sesiones, onSeleccionar, onNueva, onEliminar, cargando, creando }) {
+  const esNoche = esDeNoche()
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-
-      {/* Header */}
-      <div style={{
-        padding: '60px 20px 20px',
-        background: 'linear-gradient(180deg, #0c1a10 0%, #0a0a0a 100%)',
-        display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end',
+    <div style={{ height: '100%', overflowY: 'auto', overscrollBehavior: 'contain' }}>
+      <header style={{
+        padding: 'calc(var(--safe-top) + 20px) 20px 8px',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '12px',
       }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
-            <div style={{
-              width: '42px', height: '42px', borderRadius: '14px',
-              background: 'linear-gradient(135deg, #064e3b, #16a34a)',
-              overflow: 'hidden',
-              boxShadow: '0 4px 16px rgba(74,222,128,0.3)',
-            }}>
-              <img src={bruceFace} alt='Bruce' style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            </div>
-            <div>
-              <h2 style={{ fontSize: '22px', fontWeight: '800', letterSpacing: '-0.5px', margin: 0 }}>Chat con Bruce</h2>
-              <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.35)', margin: 0 }}>
-                {esNoche ? 'Modo noche activado 🦇' : 'Tu coach personal'}
-              </p>
-            </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+          <Avatar size={44} />
+          <div style={{ minWidth: 0 }}>
+            <h1 className='nf-large-title'>Bruce</h1>
+            <p className='nf-footnote'>{esNoche ? 'Modo noche activado 🦇' : 'Tu coach personal'}</p>
           </div>
         </div>
-        <button
-          onClick={onNueva}
-          style={{
-            background: '#4ade80', border: 'none', borderRadius: '12px',
-            padding: '10px 16px', cursor: 'pointer',
-            display: 'flex', alignItems: 'center', gap: '6px',
-          }}
-        >
-          <IconPlus size={16} color='#000' strokeWidth={2.5} />
-          <span style={{ fontSize: '13px', fontWeight: '700', color: '#000' }}>Nueva</span>
+        <button onClick={onNueva} disabled={creando} className='nf-btn nf-btn--primary' aria-label='Nueva conversación'>
+          <IconEdit size={18} strokeWidth={2} /> Nueva
         </button>
-      </div>
+      </header>
 
-      {/* Lista */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+      <div style={{ padding: '16px 16px calc(var(--tabbar-h) + var(--tabbar-gap) + 24px)' }}>
         {cargando && (
-          <div style={{ textAlign: 'center', padding: '40px 0' }}>
-            <div style={{ fontSize: '28px', marginBottom: '8px', animation: 'brucePulse 1.5s ease-in-out infinite' }}>🐾</div>
+          <div className='nf-card' style={{ overflow: 'hidden' }} aria-busy='true'>
+            {[0, 1, 2].map(i => (
+              <div key={i} className='nf-row' style={{ '--row-inset': '64px' }}>
+                <div className='nf-skeleton' style={{ width: 36, height: 36, borderRadius: '50%' }} />
+                <div style={{ flex: 1 }}>
+                  <div className='nf-skeleton' style={{ width: '60%', height: 14, marginBottom: 6 }} />
+                  <div className='nf-skeleton' style={{ width: '30%', height: 11 }} />
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
         {!cargando && sesiones.length === 0 && (
-          <div style={{ textAlign: 'center', padding: '60px 20px' }}>
-            <img src={esNoche ? bruceBatman : bruceTuxedo} alt='Bruce' style={{ width: '120px', marginBottom: '16px', filter: 'drop-shadow(0 4px 16px rgba(74,222,128,0.2))' }} />
-            <p style={{ fontWeight: '700', fontSize: '16px', marginBottom: '6px' }}>Sin conversaciones aún</p>
-            <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: '13px', lineHeight: 1.6 }}>
-              Toca "Nueva" para hablar con Bruce
+          <div className='nf-enter' style={{ textAlign: 'center', padding: '40px 20px' }}>
+            <img
+              src={esNoche ? bruceBatman : bruceTuxedo} alt='' className='nf-float'
+              style={{ width: '150px', margin: '0 auto 16px', filter: 'drop-shadow(0 8px 20px rgba(74,222,128,0.2))' }}
+            />
+            <p className='nf-title-3' style={{ marginBottom: '6px' }}>Sin conversaciones aún</p>
+            <p className='nf-subhead' style={{ marginBottom: '20px' }}>
+              Pregúntale a Bruce por calorías, comidas o tu rutina.
             </p>
+            <button onClick={onNueva} disabled={creando} className='nf-btn nf-btn--tinted'>Empezar a hablar</button>
           </div>
         )}
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {sesiones.map(s => (
-            <div key={s.id} style={{
-              background: '#131313', borderRadius: '16px',
-              border: '0.5px solid rgba(255,255,255,0.06)',
-              padding: '14px 16px',
-              display: 'flex', alignItems: 'center', gap: '12px',
-              cursor: 'pointer',
-            }}
-              onClick={() => onSeleccionar(s)}
-            >
-              <BruceAvatarSmall />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ fontWeight: '600', fontSize: '14px', marginBottom: '3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {s.titulo || 'Nueva conversación'}
-                </p>
-                <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', margin: 0 }}>
-                  {new Date(s.creado_en).toLocaleDateString('es-CO', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                </p>
+        {!cargando && sesiones.length > 0 && (
+          <div className='nf-card' style={{ overflow: 'hidden' }}>
+            {sesiones.map(s => (
+              <div key={s.id} className='nf-row' style={{ '--row-inset': '64px', padding: 0 }}>
+                <button
+                  onClick={() => onSeleccionar(s)}
+                  className='nf-press-soft'
+                  style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 0 10px 16px', textAlign: 'left', minHeight: '64px' }}
+                >
+                  <Avatar size={36} />
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: 'block', fontSize: '16px', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {s.titulo || 'Nueva conversación'}
+                    </span>
+                    <span className='nf-caption' style={{ display: 'block' }}>
+                      {new Date(s.creado_en).toLocaleDateString('es-CO', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </span>
+                  <IconChevronRight size={18} color='var(--label-4)' />
+                </button>
+                <button
+                  onClick={() => onEliminar(s)}
+                  className='nf-icon-btn'
+                  aria-label={`Eliminar conversación ${s.titulo || ''}`}
+                  style={{ color: 'var(--label-3)' }}
+                >
+                  <IconTrash size={18} />
+                </button>
               </div>
-              <button
-                onClick={e => { e.stopPropagation(); onEliminar(s.id) }}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.2)', padding: '4px' }}
-              >
-                <IconTrash size={14} />
-              </button>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
 }
 
 // ── Conversación ──────────────────────────────────────────────────────────
-function Conversacion({ sesionId, onVolver }) {
+function Conversacion({ sesionId, onVolver, tecladoAbierto }) {
   const [mensajes,  setMensajes]  = useState([])
   const [input,     setInput]     = useState('')
   const [enviando,  setEnviando]  = useState(false)
   const [cargando,  setCargando]  = useState(true)
   const [pose,      setPose]      = useState('normal')
-  const [clicked,   setClicked]   = useState(false)
-  const bottomRef = useRef(null)
-  const inputRef  = useRef(null)
+  const listaRef   = useRef(null)
+  const inputRef   = useRef(null)
+  const primerScroll = useRef(true)
 
-  const hora     = new Date().getHours()
-  const esNoche  = hora >= 20 || hora < 6
+  const esNoche = esDeNoche()
   const imagenBruce = esNoche ? POSES.batman : POSES[pose]
 
   useEffect(() => {
     setCargando(true)
+    primerScroll.current = true
     getSesionChat(sesionId)
       .then(data => setMensajes(data.mensajes ?? []))
-      .catch(() => {})
+      .catch(() => toast.error('No se pudo abrir la conversación'))
       .finally(() => setCargando(false))
   }, [sesionId])
 
+  // Al abrir: saltar al final sin animación. Mensajes nuevos: desplazamiento suave.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [mensajes, enviando])
+    const el = listaRef.current
+    if (!el) return
+    el.scrollTo({ top: el.scrollHeight, behavior: primerScroll.current ? 'auto' : 'smooth' })
+    if (!cargando) primerScroll.current = false
+  }, [mensajes, enviando, cargando])
+
+  const ajustarAltura = (el) => {
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 132) + 'px'
+  }
 
   const enviar = async () => {
     if (!input.trim() || enviando) return
     const texto = input.trim()
     setInput('')
+    if (inputRef.current) inputRef.current.style.height = 'auto'
     setEnviando(true)
 
     // Mensaje optimista
-    const msgTemp = { id: Date.now(), rol: 'user', contenido: texto, creado_en: new Date().toISOString() }
+    // _nuevo: solo los mensajes de esta sesión entran con animación
+    const msgTemp = { id: `tmp-${Date.now()}`, rol: 'user', contenido: texto, creado_en: new Date().toISOString(), _nuevo: true }
     setMensajes(prev => [...prev, msgTemp])
 
     try {
       const data = await enviarMensajeBruce(sesionId, texto)
       setMensajes(prev => [
         ...prev.filter(m => m.id !== msgTemp.id),
-        data.mensaje_usuario,
-        data.mensaje_bruce,
+        { ...data.mensaje_usuario, _key: msgTemp.id, _nuevo: true },   // misma key: la burbuja no se vuelve a animar
+        { ...data.mensaje_bruce, _nuevo: true },
       ])
       setPose(getPose(data.mensaje_bruce.contenido))
     } catch {
       setMensajes(prev => prev.filter(m => m.id !== msgTemp.id))
+      setInput(texto)   // no perder lo que el usuario escribió
+      toast.error('No se pudo enviar. Intenta de nuevo.')
     } finally {
       setEnviando(false)
       inputRef.current?.focus()
     }
   }
 
-  const handleBruceClick = () => {
-    setClicked(true)
-    setTimeout(() => setClicked(false), 600)
-  }
+  const puedeEnviar = input.trim() && !enviando
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
 
-      {/* Header */}
-      <div style={{
-        padding: '56px 16px 12px',
-        background: 'linear-gradient(180deg, #0c1a10 0%, #0a0a0a 100%)',
-        display: 'flex', alignItems: 'center', gap: '12px',
-        borderBottom: '0.5px solid rgba(255,255,255,0.06)',
-        flexShrink: 0,
+      {/* Barra superior translúcida: los mensajes pasan por debajo */}
+      <header className='nf-glass' style={{
+        position: 'absolute', top: 0, left: 0, right: 0, zIndex: 5,
+        padding: 'calc(var(--safe-top) + 6px) 8px 8px',
+        display: 'flex', alignItems: 'center', gap: '6px',
+        borderRadius: 0, boxShadow: 'inset 0 -0.5px 0 var(--separator)',
       }}>
-        <button onClick={onVolver} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.5)', padding: '4px' }}>
-          <IconChevronLeft size={22} />
+        <button onClick={onVolver} className='nf-btn nf-btn--plain' style={{ padding: '0 6px 0 0', gap: '2px' }} aria-label='Volver a las conversaciones'>
+          <IconChevronLeft size={26} strokeWidth={2.2} /> Chats
         </button>
-        <div style={{
-          width: '36px', height: '36px', borderRadius: '12px',
-          background: 'linear-gradient(135deg, #064e3b, #16a34a)',
-          overflow: 'hidden', flexShrink: 0,
-        }}>
-          <img src={bruceFace} alt='Bruce' style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-        </div>
-        <div>
-          <p style={{ fontWeight: '700', fontSize: '15px', margin: 0, color: '#4ade80' }}>Bruce</p>
-          <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.3)', margin: 0 }}>
-            {esNoche ? 'Modo noche' : esDiaDescanso() ? 'Día de descanso' : 'Tu coach'}
-          </p>
-        </div>
-      </div>
-
-      {/* Bruce flotando */}
-      <div style={{
-        position: 'relative', flexShrink: 0,
-        height: '140px',
-        background: 'linear-gradient(180deg, #0a0a0a 0%, transparent 100%)',
-        display: 'flex', justifyContent: 'center', alignItems: 'flex-end',
-        overflow: 'visible',
-      }}>
-        <div
-          onClick={handleBruceClick}
-          style={{
-            width: esNoche ? '160px' : '110px',
-            height: '130px',
-            cursor: 'pointer',
-            animation: clicked
-              ? 'bruceClick 0.5s ease'
-              : 'bruceFloat 3s ease-in-out infinite',
-            filter: 'drop-shadow(0 8px 24px rgba(74,222,128,0.25))',
-            transition: 'width 0.3s ease',
-          }}
-        >
-          <img
-            src={imagenBruce}
-            alt='Bruce'
-            style={{
-              width: '100%', height: '100%',
-              objectFit: esNoche ? 'cover' : 'contain',
-              objectPosition: 'center',
-            }}
-          />
-        </div>
-      </div>
-
-      {/* Mensajes */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 0' }}>
-        {cargando && (
-          <div style={{ display: 'flex', justifyContent: 'center', padding: '20px' }}>
-            <BruceTyping />
-          </div>
-        )}
-
-        {!cargando && mensajes.length === 0 && (
-          <div style={{
-            background: 'linear-gradient(135deg, #091810, #0d2418)',
-            border: '0.5px solid rgba(74,222,128,0.15)',
-            borderRadius: '4px 16px 16px 16px',
-            padding: '14px 16px', marginBottom: '16px',
-            display: 'flex', gap: '10px', alignItems: 'flex-start',
-          }}>
-            <BruceAvatarSmall />
-            <p style={{ fontSize: '14px', color: 'rgba(255,255,255,0.8)', lineHeight: 1.6, fontStyle: 'italic', margin: 0 }}>
-              Qué más parcero, soy Bruce. Pregúntame lo que quieras — nutrición, gym, calorías de algún alimento, o cómo vas hoy. Aquí estoy.
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginRight: '64px' }}>
+          <Avatar size={30} />
+          <div>
+            <p className='nf-headline' style={{ lineHeight: 1.1 }}>Bruce</p>
+            <p className='nf-caption'>
+              {enviando ? 'escribiendo…' : esNoche ? 'Modo noche' : esDiaDescanso() ? 'Día de descanso' : 'Tu coach'}
             </p>
           </div>
+        </div>
+      </header>
+
+      {/* Mensajes */}
+      <div
+        ref={listaRef}
+        style={{
+          flex: 1, overflowY: 'auto', overscrollBehavior: 'contain',
+          padding: 'calc(var(--safe-top) + 72px) 12px 12px',
+        }}
+      >
+        {cargando && <Escribiendo />}
+
+        {!cargando && mensajes.length === 0 && (
+          <div className='nf-enter' style={{ textAlign: 'center', padding: '24px 12px 8px' }}>
+            <img
+              src={imagenBruce} alt='' className='nf-float'
+              style={{ width: esNoche ? '180px' : '130px', margin: '0 auto 12px', filter: 'drop-shadow(0 8px 24px rgba(74,222,128,0.22))' }}
+            />
+            <div style={{
+              display: 'inline-block', textAlign: 'left',
+              background: BURBUJA_BRUCE, borderRadius: '20px', padding: '12px 16px', maxWidth: '300px',
+            }}>
+              <p style={{ fontSize: '16px', lineHeight: 1.45 }}>
+                Qué más parcero, soy Bruce. Pregúntame lo que quieras: nutrición, gym, calorías de algún alimento, o cómo vas hoy.
+              </p>
+            </div>
+          </div>
         )}
 
-        {mensajes.map(m => <Mensaje key={m.id} msg={m} />)}
-        {enviando && <BruceTyping />}
-        <div ref={bottomRef} style={{ height: '8px' }} />
+        {mensajes.map((m, i) => (
+          <Mensaje key={m._key ?? m.id} msg={m} agrupado={i > 0 && mensajes[i - 1].rol === m.rol} animar={!!m._nuevo} />
+        ))}
+        {enviando && <Escribiendo />}
       </div>
 
-      {/* Input */}
+      {/* Entrada */}
       <div style={{
-        padding: '12px 16px 24px',
-        background: '#0a0a0a',
-        borderTop: '0.5px solid rgba(255,255,255,0.06)',
+        padding: `8px 12px ${tecladoAbierto ? '8px' : 'calc(var(--tabbar-h) + var(--tabbar-gap) + 10px)'}`,
+        boxShadow: 'inset 0 0.5px 0 var(--separator)',
+        background: 'var(--bg)',
         flexShrink: 0,
+        transition: 'padding-bottom 280ms var(--ease-out)',
       }}>
-        <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end' }}>
-          <div style={{ flex: 1, position: 'relative' }}>
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviar() }
-              }}
-              placeholder='Pregúntale algo a Bruce…'
-              rows={1}
-              style={{
-                width: '100%', background: 'rgba(255,255,255,0.06)',
-                border: '0.5px solid rgba(255,255,255,0.12)',
-                borderRadius: '20px', color: '#fff', fontSize: '14px',
-                padding: '12px 16px', outline: 'none', fontFamily: 'inherit',
-                resize: 'none', lineHeight: '1.5', boxSizing: 'border-box',
-                maxHeight: '120px', overflowY: 'auto',
-              }}
-              onInput={e => {
-                e.target.style.height = 'auto'
-                e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px'
-              }}
-            />
-          </div>
+        <div style={{
+          display: 'flex', gap: '8px', alignItems: 'flex-end',
+          background: 'var(--surface-2)', borderRadius: '22px',
+          boxShadow: 'inset 0 0 0 0.5px var(--separator)',
+          padding: '4px 4px 4px 16px',
+        }}>
+          <textarea
+            ref={inputRef}
+            value={input}
+            onChange={e => { setInput(e.target.value); ajustarAltura(e.target) }}
+            onKeyDown={e => {
+              // En teclado físico Enter envía; Shift+Enter hace salto de línea
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); enviar() }
+            }}
+            placeholder='Pregúntale algo a Bruce…'
+            aria-label='Mensaje para Bruce'
+            enterKeyHint='send'
+            rows={1}
+            style={{
+              flex: 1, background: 'transparent', border: 'none', outline: 'none',
+              resize: 'none', lineHeight: 1.4, padding: '8px 0',
+              maxHeight: '132px', overflowY: 'auto',
+            }}
+          />
           <button
             onClick={enviar}
-            disabled={!input.trim() || enviando}
+            disabled={!puedeEnviar}
+            aria-label='Enviar mensaje'
             style={{
-              width: '44px', height: '44px', borderRadius: '50%', flexShrink: 0,
-              background: input.trim() && !enviando ? '#4ade80' : 'rgba(255,255,255,0.08)',
-              border: 'none', cursor: input.trim() && !enviando ? 'pointer' : 'not-allowed',
+              width: '36px', height: '36px', borderRadius: '50%', flexShrink: 0,
+              background: puedeEnviar ? 'var(--green)' : 'rgba(255,255,255,0.1)',
+              color: puedeEnviar ? '#000' : 'var(--label-3)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              transition: 'all 0.2s',
             }}
           >
-            <IconArrowUp size={18} color={input.trim() && !enviando ? '#000' : 'rgba(255,255,255,0.3)'} strokeWidth={2.5} />
+            <IconArrowUp size={20} strokeWidth={2.5} />
           </button>
         </div>
       </div>
-
-      <style>{`
-        @keyframes bruceFloat {
-          0%,100% { transform: translateY(0px) rotate(0deg); }
-          50%      { transform: translateY(-8px) rotate(1.5deg); }
-        }
-        @keyframes bruceClick {
-          0%   { transform: scale(1) rotate(0deg); }
-          25%  { transform: scale(1.2) rotate(-7deg); }
-          55%  { transform: scale(1.1) rotate(5deg); }
-          80%  { transform: scale(1.03) rotate(-2deg); }
-          100% { transform: scale(1) rotate(0deg); }
-        }
-        @keyframes bruceDot {
-          0%,80%,100% { transform: scale(0.6); opacity: 0.3; }
-          40%         { transform: scale(1.1); opacity: 1; }
-        }
-        @keyframes brucePulse {
-          0%,100% { opacity: 1; transform: scale(1); }
-          50%     { opacity: 0.5; transform: scale(0.92); }
-        }
-      `}</style>
     </div>
   )
 }
 
 // ── BruceChatScreen ───────────────────────────────────────────────────────
-export default function BruceChatScreen({ screen }) {
-  const [sesiones,       setSesiones]       = useState([])
-  const [sesionActiva,   setSesionActiva]   = useState(null)
-  const [cargando,       setCargando]       = useState(true)
+export default function BruceChatScreen({ screen, tecladoAbierto }) {
+  const [sesiones,     setSesiones]     = useState([])
+  const [sesionActiva, setSesionActiva] = useState(null)
+  const [cargando,     setCargando]     = useState(true)
+  const [creando,      setCreando]      = useState(false)
+  const pendientes = useRef(new Map())
 
   useEffect(() => {
     if (screen !== 'chat') return
-    setCargando(true)
     getSesionesChatBruce()
-      .then(data => setSesiones(data))
-      .catch(() => {})
+      .then(data => setSesiones(data.filter(s => !pendientes.current.has(s.id))))
+      .catch(() => toast.error('No se pudieron cargar las conversaciones'))
       .finally(() => setCargando(false))
   }, [screen])
 
+  // Si la app se cierra con un borrado pendiente, ejecútalo
+  useEffect(() => () => {
+    pendientes.current.forEach((timer, id) => { clearTimeout(timer); eliminarSesionChat(id).catch(() => {}) })
+  }, [])
+
   const handleNueva = async () => {
+    setCreando(true)
     try {
       const nueva = await crearSesionChat()
       setSesiones(prev => [nueva, ...prev])
       setSesionActiva(nueva.id)
-    } catch {}
+    } catch {
+      toast.error('No se pudo crear la conversación')
+    } finally {
+      setCreando(false)
+    }
   }
 
-  const handleEliminar = async (id) => {
-    try {
-      await eliminarSesionChat(id)
-      setSesiones(prev => prev.filter(s => s.id !== id))
-      if (sesionActiva === id) setSesionActiva(null)
-    } catch {}
+  // Borrado con "Deshacer": se quita de la lista ya, y se borra en el servidor
+  // solo si no se deshace en unos segundos.
+  const handleEliminar = (sesion) => {
+    const indice = sesiones.findIndex(s => s.id === sesion.id)
+    setSesiones(prev => prev.filter(s => s.id !== sesion.id))
+    if (sesionActiva === sesion.id) setSesionActiva(null)
+    const timer = setTimeout(() => {
+      pendientes.current.delete(sesion.id)
+      eliminarSesionChat(sesion.id).catch(() => {
+        toast.error('No se pudo eliminar la conversación')
+        setSesiones(prev => [sesion, ...prev])
+      })
+    }, 6000)
+    pendientes.current.set(sesion.id, timer)
+    toast('Conversación eliminada', {
+      action: {
+        label: 'Deshacer',
+        onClick: () => {
+          clearTimeout(pendientes.current.get(sesion.id))
+          pendientes.current.delete(sesion.id)
+          setSesiones(prev => {
+            const copia = [...prev]
+            copia.splice(Math.min(indice, copia.length), 0, sesion)
+            return copia
+          })
+        },
+      },
+    })
   }
 
   if (sesionActiva) {
     return (
-      <div style={{ height: '100%' }}>
-        <Conversacion
-          sesionId={sesionActiva}
-          onVolver={() => setSesionActiva(null)}
-        />
-      </div>
+      <Conversacion
+        key={sesionActiva}
+        sesionId={sesionActiva}
+        onVolver={() => setSesionActiva(null)}
+        tecladoAbierto={tecladoAbierto}
+      />
     )
   }
 
@@ -477,6 +447,7 @@ export default function BruceChatScreen({ screen }) {
     <ListaSesiones
       sesiones={sesiones}
       cargando={cargando}
+      creando={creando}
       onSeleccionar={s => setSesionActiva(s.id)}
       onNueva={handleNueva}
       onEliminar={handleEliminar}

@@ -1,231 +1,224 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { IconChevronLeft, IconCheck } from '@tabler/icons-react'
 import { completarOnboarding, generarPlanGroq, agregarAAlacena } from '../api'
+import { haptic, prefersReducedMotion } from '../lib/motion'
+import bruceTuxedo from '../assets/bruce-tuxedo.webp'
+import bruceMuyfeliz from '../assets/bruce-tuxedo-muyfeliz.webp'
 
-// ── Configuración de pasos ────────────────────────────────────────────────────
+// ── Opciones ──────────────────────────────────────────────────────────────────
 
 const ALIMENTOS_OPCIONES = [
-  'Pollo','Res','Cerdo','Pescado','Atún','Huevos','Tofu',
-  'Arroz','Papa','Pasta','Plátano','Yuca','Quinoa','Avena',
-  'Brócoli','Espinaca','Zanahoria','Aguacate','Tomate',
-  'Frijoles','Lentejas','Garbanzo',
-  'Leche','Queso','Yogur','Whey protein',
-  'Mango','Banano','Fresas','Naranja',
+  'Pollo', 'Res', 'Cerdo', 'Pescado', 'Atún', 'Huevos', 'Tofu',
+  'Arroz', 'Papa', 'Pasta', 'Plátano', 'Yuca', 'Quinoa', 'Avena',
+  'Brócoli', 'Espinaca', 'Zanahoria', 'Aguacate', 'Tomate',
+  'Frijoles', 'Lentejas', 'Garbanzo',
+  'Leche', 'Queso', 'Yogur', 'Whey protein',
+  'Mango', 'Banano', 'Fresas', 'Naranja',
 ]
 
 const NO_GUSTADOS_OPCIONES = [
-  'Hígado','Sardinas','Coliflor','Remolacha','Cebolla cruda',
-  'Ají picante','Cilantro','Tofu','Brócoli','Espinaca',
-  'Pepino','Rábano','Berenjenas','Champiñones','Acelga',
+  'Hígado', 'Sardinas', 'Coliflor', 'Remolacha', 'Cebolla cruda',
+  'Ají picante', 'Cilantro', 'Tofu', 'Brócoli', 'Espinaca',
+  'Pepino', 'Rábano', 'Berenjenas', 'Champiñones', 'Acelga',
 ]
 
 const RESTRICCIONES_OPCIONES = [
-  { id: 'ninguna',        label: 'Ninguna',           emoji: '✅' },
-  { id: 'vegetariano',    label: 'Vegetariano',        emoji: '🥦' },
-  { id: 'vegano',         label: 'Vegano',             emoji: '🌱' },
-  { id: 'sin_gluten',     label: 'Sin gluten',         emoji: '🌾' },
-  { id: 'sin_lacteos',    label: 'Sin lácteos',        emoji: '🥛' },
-  { id: 'sin_cerdo',      label: 'Sin cerdo',          emoji: '🐷' },
-  { id: 'halal',          label: 'Halal',              emoji: '☪️'  },
+  { id: 'ninguna',     label: 'Ninguna',     emoji: '✅' },
+  { id: 'vegetariano', label: 'Vegetariano', emoji: '🥦' },
+  { id: 'vegano',      label: 'Vegano',      emoji: '🌱' },
+  { id: 'sin_gluten',  label: 'Sin gluten',  emoji: '🌾' },
+  { id: 'sin_lacteos', label: 'Sin lácteos', emoji: '🥛' },
+  { id: 'sin_cerdo',   label: 'Sin cerdo',   emoji: '🐷' },
+  { id: 'halal',       label: 'Halal',       emoji: '☪️' },
 ]
 
-// ── Componentes base ──────────────────────────────────────────────────────────
+const TOTAL_PASOS = 10
+const PASO_VELOCIDAD = 6
 
-const S = {
-  wrap: {
-    minHeight: '100vh', background: '#0a0a0a', color: '#fff',
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif",
-    display: 'flex', flexDirection: 'column',
-    padding: '0 24px', boxSizing: 'border-box',
-  },
-  title: {
-    fontSize: '28px', fontWeight: '700', letterSpacing: '-0.8px',
-    lineHeight: 1.15, marginBottom: '10px',
-  },
-  subtitle: {
-    fontSize: '15px', color: 'rgba(255,255,255,0.4)',
-    marginBottom: '36px', lineHeight: 1.5,
-  },
-  card: (active) => ({
-    background: active ? 'rgba(74,222,128,0.08)' : '#131313',
-    border: `1.5px solid ${active ? '#4ade80' : 'rgba(255,255,255,0.07)'}`,
-    borderRadius: '18px', padding: '18px 20px',
-    cursor: 'pointer', transition: 'all 0.2s',
-    display: 'flex', alignItems: 'center', gap: '14px',
-    marginBottom: '10px',
-  }),
-  chip: (active) => ({
-    background: active ? '#4ade80' : 'rgba(255,255,255,0.06)',
-    color: active ? '#000' : 'rgba(255,255,255,0.7)',
-    border: `1px solid ${active ? '#4ade80' : 'rgba(255,255,255,0.1)'}`,
-    borderRadius: '20px', padding: '8px 14px',
-    fontSize: '13px', fontWeight: active ? '600' : '400',
-    cursor: 'pointer', transition: 'all 0.18s',
-    display: 'inline-block', margin: '4px',
-  }),
-  btn: (disabled) => ({
-    width: '100%', padding: '17px',
-    background: disabled ? 'rgba(255,255,255,0.06)' : '#4ade80',
-    color: disabled ? 'rgba(255,255,255,0.2)' : '#000',
-    border: 'none', borderRadius: '16px',
-    fontSize: '16px', fontWeight: '700',
-    cursor: disabled ? 'default' : 'pointer',
-    transition: 'all 0.2s', letterSpacing: '-0.2px',
-  }),
-  input: {
-    width: '100%', background: '#131313',
-    border: '1.5px solid rgba(255,255,255,0.1)',
-    borderRadius: '16px', color: '#fff',
-    fontSize: '32px', fontWeight: '700',
-    padding: '20px', outline: 'none',
-    textAlign: 'center', boxSizing: 'border-box',
-    fontFamily: 'inherit', letterSpacing: '-1px',
-  },
-}
+// ── Piezas ────────────────────────────────────────────────────────────────────
 
-// Barra de progreso
 function ProgressBar({ paso, total }) {
   return (
-    <div style={{ display: 'flex', gap: '5px', marginBottom: '40px' }}>
-      {Array.from({ length: total }).map((_, i) => (
-        <div key={i} style={{
-          flex: 1, height: '3px', borderRadius: '2px',
-          background: i <= paso ? '#4ade80' : 'rgba(255,255,255,0.1)',
-          transition: 'background 0.3s',
-        }} />
-      ))}
+    <div
+      role='progressbar' aria-valuemin={1} aria-valuemax={total} aria-valuenow={paso + 1}
+      aria-label={`Paso ${paso + 1} de ${total}`}
+      style={{ height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.1)', overflow: 'hidden', flex: 1 }}
+    >
+      <div style={{
+        height: '100%', width: '100%', background: 'var(--green)', borderRadius: '2px',
+        transform: `scaleX(${(paso + 1) / total})`, transformOrigin: 'left',
+        transition: 'transform 400ms var(--ease-out)',
+      }} />
     </div>
   )
 }
 
-// Botón atrás
-function BtnBack({ onClick }) {
+function Titulo({ children, sub }) {
   return (
-    <button onClick={onClick} style={{
-      background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)',
-      fontSize: '15px', cursor: 'pointer', padding: '0',
-      marginBottom: '28px', display: 'flex', alignItems: 'center', gap: '6px',
-    }}>
-      ← Atrás
+    <div style={{ marginBottom: '28px' }}>
+      <h2 style={{ fontSize: '30px', fontWeight: 700, letterSpacing: '-0.022em', lineHeight: 1.12, marginBottom: '8px' }}>{children}</h2>
+      {sub && <p className='nf-subhead'>{sub}</p>}
+    </div>
+  )
+}
+
+// Tarjeta de opción: tocar selecciona (y en preguntas de una sola respuesta, avanza)
+function Opcion({ activa, emoji, label, desc, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={activa}
+      className='nf-card nf-press-soft'
+      style={{
+        width: '100%', display: 'flex', alignItems: 'center', gap: '14px',
+        padding: '16px 18px', marginBottom: '10px', textAlign: 'left', minHeight: '64px',
+        background: activa ? 'rgba(74,222,128,0.1)' : 'var(--surface-1)',
+        boxShadow: activa ? 'inset 0 0 0 1.5px var(--green)' : 'inset 0 0 0 0.5px var(--hairline)',
+        transition: 'background-color 160ms ease, box-shadow 160ms ease, transform 160ms var(--ease-out)',
+      }}
+    >
+      <span style={{ fontSize: '26px', width: '32px', textAlign: 'center', flexShrink: 0 }} aria-hidden='true'>{emoji}</span>
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ display: 'block', fontSize: '17px', fontWeight: 600 }}>{label}</span>
+        {desc && <span className='nf-footnote' style={{ display: 'block' }}>{desc}</span>}
+      </span>
+      <span style={{
+        width: '24px', height: '24px', borderRadius: '50%', flexShrink: 0,
+        background: activa ? 'var(--green)' : 'transparent',
+        boxShadow: activa ? 'none' : 'inset 0 0 0 1.5px var(--label-4)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        transition: 'background-color 160ms ease',
+      }}>
+        {activa && <IconCheck size={15} color='#000' strokeWidth={3} />}
+      </span>
     </button>
   )
 }
 
-// ── Pantalla de generando plan ────────────────────────────────────────────────
-
-function PantallaGenerando({ nombre }) {
-  const [msg, setMsg] = useState(0)
-  const msgs = [
-    '⚡ Calculando tu TDEE…',
-    '🧠 Analizando tus preferencias…',
-    '🥗 Diseñando tu plan de comidas…',
-    '🎯 Ajustando macros a tu objetivo…',
-    '✨ Casi listo…',
-  ]
-
-  useEffect(() => {
-    const id = setInterval(() => setMsg(m => (m + 1) % msgs.length), 1800)
-    return () => clearInterval(id)
-  }, [])
-
+function Chip({ activo, onClick, children, tint = 'var(--green)' }) {
   return (
-    <div style={{
-      ...S.wrap, alignItems: 'center', justifyContent: 'center', textAlign: 'center',
-    }}>
-      <div style={{ fontSize: '64px', marginBottom: '28px', filter: 'drop-shadow(0 0 30px rgba(74,222,128,0.4))' }}>🦇</div>
-      <p style={{ fontSize: '22px', fontWeight: '700', marginBottom: '12px' }}>
-        Hola, {nombre?.split(' ')[0]} 👋
-      </p>
-      <p style={{
-        fontSize: '15px', color: '#4ade80', fontWeight: '600',
-        minHeight: '24px', transition: 'opacity 0.4s',
-      }}>
-        {msgs[msg]}
-      </p>
-      <p style={{ fontSize: '13px', color: 'rgba(255,255,255,0.3)', marginTop: '8px' }}>
-        Groq IA está construyendo tu plan personalizado
-      </p>
-      {/* Animación de puntos */}
-      <div style={{ marginTop: '40px', display: 'flex', gap: '8px' }}>
-        {[0,1,2].map(i => (
-          <div key={i} style={{
-            width: '8px', height: '8px', borderRadius: '50%',
-            background: '#4ade80',
-            animation: `pulse 1.2s ease-in-out ${i * 0.2}s infinite`,
-          }} />
-        ))}
-      </div>
-      <style>{`@keyframes pulse { 0%,80%,100%{opacity:0.2;transform:scale(0.8)} 40%{opacity:1;transform:scale(1)} }`}</style>
+    <button onClick={onClick} aria-pressed={activo} className='nf-chip' style={{ '--tint': tint, minHeight: '40px', fontSize: '15px' }}>
+      {activo && <IconCheck size={15} strokeWidth={2.6} />}
+      {children}
+    </button>
+  )
+}
+
+function CampoNumero({ value, onChange, placeholder, unidad, inputMode, min, max, step, label }) {
+  return (
+    <label style={{ position: 'relative', display: 'block' }}>
+      <input
+        type='number' inputMode={inputMode} enterKeyHint='next'
+        value={value} onChange={onChange} placeholder={placeholder}
+        min={min} max={max} step={step} aria-label={label}
+        autoFocus
+        className='nf-input nf-num'
+        style={{ fontSize: '40px', fontWeight: 700, letterSpacing: '-0.02em', textAlign: 'center', minHeight: '88px', borderRadius: '20px', paddingRight: '56px', paddingLeft: '56px' }}
+      />
+      <span className='nf-headline' style={{ position: 'absolute', right: '22px', top: '50%', transform: 'translateY(-50%)', color: 'var(--label-3)' }}>
+        {unidad}
+      </span>
+    </label>
+  )
+}
+
+// Botón principal abajo, en la zona del pulgar
+function Continuar({ disabled, onClick, children = 'Continuar' }) {
+  return (
+    <div style={{ marginTop: 'auto', paddingTop: '24px' }}>
+      <button onClick={onClick} disabled={disabled} className='nf-btn nf-btn--primary nf-btn--lg nf-btn--block'>{children}</button>
     </div>
   )
 }
 
-// ── Pantalla de bienvenida al plan ────────────────────────────────────────────
+// ── Pantalla de "generando plan" ─────────────────────────────────────────────
+
+function PantallaGenerando({ nombre }) {
+  const [msg, setMsg] = useState(0)
+  const msgs = [
+    'Calculando tu gasto calórico…',
+    'Analizando tus preferencias…',
+    'Diseñando tu plan de comidas…',
+    'Ajustando macros a tu objetivo…',
+    'Casi listo…',
+  ]
+
+  useEffect(() => {
+    const id = setInterval(() => setMsg(m => Math.min(m + 1, msgs.length - 1)), 1800)
+    return () => clearInterval(id)
+  }, [msgs.length])
+
+  return (
+    <div style={{
+      minHeight: '100dvh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      textAlign: 'center', padding: '24px',
+    }} aria-busy='true'>
+      <img src={bruceTuxedo} alt='' className='nf-float' style={{ width: '170px', marginBottom: '20px', filter: 'drop-shadow(0 10px 30px rgba(74,222,128,0.25))' }} />
+      <p className='nf-title-2' style={{ marginBottom: '10px' }}>Hola, {nombre?.split(' ')[0]}</p>
+      <p key={msg} className='nf-fade nf-headline' aria-live='polite' style={{ color: 'var(--green)', minHeight: '24px' }}>
+        {msgs[msg]}
+      </p>
+      <p className='nf-footnote' style={{ marginTop: '6px' }}>Bruce está armando tu plan personalizado</p>
+      <div style={{ marginTop: '32px', display: 'flex', gap: '8px' }}>
+        {[0, 1, 2].map(i => <span key={i} className='nf-dot' style={{ width: '8px', height: '8px', animationDelay: `${i * 0.18}s` }} />)}
+      </div>
+    </div>
+  )
+}
+
+// ── Pantalla del plan listo ──────────────────────────────────────────────────
 
 function PantallaPlan({ plan, calorias, proteina, carbos, grasas, onEntrar }) {
   return (
-    <div style={{ ...S.wrap, paddingTop: '60px', paddingBottom: '40px', overflowY: 'auto' }}>
-      <div style={{ textAlign: 'center', marginBottom: '32px' }}>
-        <div style={{ fontSize: '52px', marginBottom: '16px' }}>🎉</div>
-        <h2 style={{ ...S.title, textAlign: 'center' }}>Tu plan está listo</h2>
-        <p style={{ fontSize: '14px', color: 'rgba(255,255,255,0.4)', lineHeight: 1.5 }}>
-          {plan?.plan_descripcion}
-        </p>
+    <div style={{ minHeight: '100dvh', padding: 'calc(var(--safe-top) + 32px) 20px calc(var(--safe-bottom) + 24px)', display: 'flex', flexDirection: 'column' }}>
+      <div className='nf-enter' style={{ textAlign: 'center', marginBottom: '24px' }}>
+        <img src={bruceMuyfeliz} alt='' style={{ width: '120px', margin: '0 auto 12px', filter: 'drop-shadow(0 8px 24px rgba(74,222,128,0.25))' }} />
+        <h2 className='nf-large-title' style={{ marginBottom: '8px' }}>Tu plan está listo</h2>
+        {plan?.plan_descripcion && <p className='nf-subhead'>{plan.plan_descripcion}</p>}
       </div>
 
-      {/* Macros resumen */}
-      <div style={{
-        background: '#131313', borderRadius: '20px',
-        border: '0.5px solid rgba(255,255,255,0.07)',
-        padding: '20px', marginBottom: '20px',
-        display: 'grid', gridTemplateColumns: '1fr 1fr',
-        gap: '16px',
+      <div className='nf-card nf-enter' style={{
+        padding: '18px', marginBottom: '8px', animationDelay: '60ms',
+        display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '4px', textAlign: 'center',
       }}>
         {[
-          { label: 'Calorías', val: calorias, unit: 'kcal', color: '#4ade80' },
-          { label: 'Proteína', val: proteina, unit: 'g',    color: '#60a5fa' },
-          { label: 'Carbos',   val: carbos,   unit: 'g',    color: '#f97316' },
-          { label: 'Grasas',   val: grasas,   unit: 'g',    color: '#a78bfa' },
+          { label: 'Calorías', val: calorias, unit: 'kcal', color: 'var(--label)' },
+          { label: 'Proteína', val: proteina, unit: 'g',    color: 'var(--green)' },
+          { label: 'Carbos',   val: carbos,   unit: 'g',    color: 'var(--blue)' },
+          { label: 'Grasas',   val: grasas,   unit: 'g',    color: 'var(--orange)' },
         ].map(({ label, val, unit, color }) => (
-          <div key={label} style={{ textAlign: 'center' }}>
-            <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{label}</p>
-            <p style={{ fontSize: '26px', fontWeight: '700', color, letterSpacing: '-1px' }}>{val}<span style={{ fontSize: '12px', fontWeight: '400', color: 'rgba(255,255,255,0.3)', marginLeft: '2px' }}>{unit}</span></p>
+          <div key={label}>
+            <p className='nf-num' style={{ fontSize: '22px', fontWeight: 700, color, letterSpacing: '-0.02em', lineHeight: 1.1 }}>{val}</p>
+            <p className='nf-caption'>{unit === 'kcal' ? 'kcal' : `${unit} ${label.toLowerCase()}`}</p>
           </div>
         ))}
       </div>
+      <p className='nf-caption' style={{ textAlign: 'center', marginBottom: '8px' }}>Tu meta diaria</p>
 
-      {/* Lista de alimentos del plan */}
-      <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-        {plan?.alimentos?.length} alimentos guardados en tu alacena
-      </p>
-      <div style={{ marginBottom: '28px' }}>
-        {plan?.alimentos?.slice(0, 6).map((a, i) => (
-          <div key={i} style={{
-            background: '#131313', borderRadius: '14px',
-            border: '0.5px solid rgba(255,255,255,0.06)',
-            padding: '12px 16px', marginBottom: '8px',
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          }}>
-            <div>
-              <p style={{ fontSize: '14px', fontWeight: '600', marginBottom: '2px' }}>{a.nombre}</p>
-              <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)' }}>{a.descripcion}</p>
-            </div>
-            <p style={{ fontSize: '13px', fontWeight: '700', color: '#4ade80' }}>{a.calorias} kcal</p>
+      {plan?.alimentos?.length > 0 && (
+        <>
+          <h3 className='nf-section-label'>{plan.alimentos.length} alimentos guardados en tu alacena</h3>
+          <div className='nf-card' style={{ overflow: 'hidden' }}>
+            {plan.alimentos.slice(0, 6).map((a, i) => (
+              <div key={i} className='nf-row'>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: '15px', fontWeight: 500 }}>{a.nombre}</p>
+                  {a.descripcion && <p className='nf-caption'>{a.descripcion}</p>}
+                </div>
+                <p className='nf-num' style={{ fontSize: '14px', fontWeight: 700, color: 'var(--green)' }}>{a.calorias} kcal</p>
+              </div>
+            ))}
           </div>
-        ))}
-        {plan?.alimentos?.length > 6 && (
-          <p style={{ fontSize: '13px', color: 'rgba(255,255,255,0.3)', textAlign: 'center', padding: '8px' }}>
-            +{plan.alimentos.length - 6} más en tu alacena
-          </p>
-        )}
-      </div>
+          {plan.alimentos.length > 6 && (
+            <p className='nf-caption' style={{ textAlign: 'center', padding: '8px' }}>+{plan.alimentos.length - 6} más en tu alacena</p>
+          )}
+        </>
+      )}
 
-      {/* Día de ejemplo */}
       {plan?.dia_ejemplo && (
         <>
-          <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            Ejemplo de un día completo
-          </p>
-          <div style={{ marginBottom: '28px' }}>
+          <h3 className='nf-section-label'>Ejemplo de un día</h3>
+          <div className='nf-card' style={{ overflow: 'hidden', marginBottom: '24px' }}>
             {[
               { key: 'desayuno', label: 'Desayuno' },
               { key: 'almuerzo', label: 'Almuerzo' },
@@ -235,20 +228,15 @@ function PantallaPlan({ plan, calorias, proteina, carbos, grasas, onEntrar }) {
               const comida = plan.dia_ejemplo[key]
               if (!comida) return null
               return (
-                <div key={key} style={{
-                  background: '#131313', borderRadius: '14px',
-                  border: '0.5px solid rgba(255,255,255,0.06)',
-                  padding: '12px 16px', marginBottom: '8px',
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                }}>
-                  <div>
-                    <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '2px' }}>{label}</p>
-                    <p style={{ fontSize: '14px', fontWeight: '600', marginBottom: '2px' }}>{comida.nombre}</p>
-                    <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>{comida.descripcion}</p>
+                <div key={key} className='nf-row' style={{ alignItems: 'flex-start' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p className='nf-caption' style={{ fontWeight: 600 }}>{label}</p>
+                    <p style={{ fontSize: '15px', fontWeight: 500 }}>{comida.nombre}</p>
+                    {comida.descripcion && <p className='nf-caption'>{comida.descripcion}</p>}
                   </div>
                   <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                    <p style={{ fontSize: '14px', fontWeight: '700', color: '#4ade80' }}>{comida.calorias} kcal</p>
-                    <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>{comida.proteina}g prot</p>
+                    <p className='nf-num' style={{ fontSize: '14px', fontWeight: 700, color: 'var(--green)' }}>{comida.calorias} kcal</p>
+                    <p className='nf-caption nf-num'>{comida.proteina}g prot</p>
                   </div>
                 </div>
               )
@@ -257,9 +245,9 @@ function PantallaPlan({ plan, calorias, proteina, carbos, grasas, onEntrar }) {
         </>
       )}
 
-      <button onClick={onEntrar} style={S.btn(false)}>
-        Entrar a NutriFit 🚀
-      </button>
+      <div style={{ marginTop: 'auto', paddingTop: '16px' }}>
+        <button onClick={onEntrar} className='nf-btn nf-btn--primary nf-btn--lg nf-btn--block'>Entrar a NutriFit</button>
+      </div>
     </div>
   )
 }
@@ -267,9 +255,9 @@ function PantallaPlan({ plan, calorias, proteina, carbos, grasas, onEntrar }) {
 // ── MAIN ─────────────────────────────────────────────────────────────────────
 
 export default function OnboardingScreen({ usuario, onComplete }) {
-  const [paso,    setPaso]    = useState(0)
-  const [visible, setVisible] = useState(true)
-  const [datos,   setDatos]   = useState({
+  const [paso,      setPaso]      = useState(0)
+  const [direccion, setDireccion] = useState(1)    // 1 = adelante, -1 = atrás
+  const [datos,     setDatos]     = useState({
     sexo: '',
     fecha_nacimiento: '',
     estatura_cm: '',
@@ -282,22 +270,46 @@ export default function OnboardingScreen({ usuario, onComplete }) {
     alimentos_no_gustados: [],
     restricciones_dieta: [],
   })
-  const [fase,    setFase]    = useState('pasos')   // 'pasos' | 'generando' | 'plan'
-  const [plan,    setPlan]    = useState(null)
-  const [error,   setError]   = useState(null)
+  const [fase,  setFase]  = useState('pasos')   // 'pasos' | 'generando' | 'plan'
+  const [plan,  setPlan]  = useState(null)
+  const [usuarioActualizado, setUsuarioActualizado] = useState(null)
+  const [error, setError] = useState(null)
 
-  const TOTAL_PASOS = 10
+  // "Mantener peso" no necesita velocidad: el paso se salta en ambos sentidos
+  const saltarVelocidad = datos.objetivo === 'mantener'
 
-  // Animación de transición entre pasos
-  const irAPaso = (n) => {
-    setVisible(false)
-    setTimeout(() => { setPaso(n); setVisible(true) }, 220)
+  const irAPaso = (n, dir) => {
+    setDireccion(dir)
+    setPaso(n)
+    window.scrollTo({ top: 0 })
   }
 
-  const siguiente = () => irAPaso(paso + 1)
-  const anterior  = () => irAPaso(paso - 1)
+  const siguiente = (desde = paso, objetivo = datos.objetivo) => {
+    let n = desde + 1
+    if (n === PASO_VELOCIDAD && objetivo === 'mantener') n++
+    irAPaso(n, 1)
+  }
+  const anterior = () => {
+    let n = paso - 1
+    if (n === PASO_VELOCIDAD && saltarVelocidad) n--
+    irAPaso(n, -1)
+  }
 
   const set = (campo, valor) => setDatos(d => ({ ...d, [campo]: valor }))
+
+  // Selección única: marca, da feedback, y avanza tras un instante para que se vea la elección
+  const avanzando = useRef(false)
+  const elegir = (campo, valor) => {
+    if (avanzando.current) return   // un doble toque no debe saltar dos pasos
+    avanzando.current = true
+    haptic(6)
+    setDatos(d => ({ ...d, [campo]: valor }))
+    const desde = paso
+    setTimeout(() => {
+      avanzando.current = false
+      siguiente(desde, campo === 'objetivo' ? valor : datos.objetivo)
+    }, 220)
+  }
 
   const toggleChip = (campo, valor) => {
     setDatos(d => {
@@ -306,359 +318,229 @@ export default function OnboardingScreen({ usuario, onComplete }) {
     })
   }
 
-  // Enviar onboarding + generar plan
   const finalizar = async () => {
     setFase('generando')
+    setError(null)
     try {
       const payload = {
         ...datos,
-        estatura_cm:     parseInt(datos.estatura_cm),
-        peso_inicial_kg: parseFloat(datos.peso_inicial_kg),
+        velocidad_objetivo: datos.objetivo === 'mantener' ? 'moderado' : datos.velocidad_objetivo,
+        estatura_cm:      parseInt(datos.estatura_cm),
+        peso_inicial_kg:  parseFloat(datos.peso_inicial_kg),
         peso_objetivo_kg: datos.peso_objetivo_kg ? parseFloat(datos.peso_objetivo_kg) : null,
         restricciones_dieta: datos.restricciones_dieta.filter(r => r !== 'ninguna'),
       }
-      const usuarioActualizado = await completarOnboarding(payload)
-
-      // Generar plan con Groq
+      const actualizado = await completarOnboarding(payload)
       const planData = await generarPlanGroq()
 
-      // Guardar alimentos en la alacena
       if (planData?.alimentos?.length) {
-        await Promise.all(
-          planData.alimentos.map(a => agregarAAlacena(a).catch(() => {}))
-        )
+        await Promise.all(planData.alimentos.map(a => agregarAAlacena(a).catch(() => {})))
       }
 
+      setUsuarioActualizado(actualizado)
       setPlan(planData)
       setFase('plan')
-      // Guardar usuario actualizado para cuando entren a la app
-      window._usuarioOnboarding = usuarioActualizado
-
-    } catch (e) {
-      setError('Hubo un error. Intenta de nuevo.')
+    } catch {
+      setError('Hubo un error creando tu plan. Intenta de nuevo.')
       setFase('pasos')
     }
   }
 
-  const entrarApp = () => {
-    onComplete(window._usuarioOnboarding)
-  }
-
-  // ── Render de fases especiales ─────────────────────────────────────────────
-
-  if (fase === 'generando') {
-    return <PantallaGenerando nombre={usuario.first_name} />
-  }
+  if (fase === 'generando') return <PantallaGenerando nombre={usuario.first_name} />
 
   if (fase === 'plan' && plan) {
     return (
       <PantallaPlan
         plan={plan}
-        calorias={window._usuarioOnboarding?.meta_calorias}
-        proteina={window._usuarioOnboarding?.meta_proteina}
-        carbos={window._usuarioOnboarding?.meta_carbos}
-        grasas={window._usuarioOnboarding?.meta_grasas}
-        onEntrar={entrarApp}
+        calorias={usuarioActualizado?.meta_calorias}
+        proteina={usuarioActualizado?.meta_proteina}
+        carbos={usuarioActualizado?.meta_carbos}
+        grasas={usuarioActualizado?.meta_grasas}
+        onEntrar={() => onComplete(usuarioActualizado)}
       />
     )
   }
 
-  // ── Estilos de transición ──────────────────────────────────────────────────
+  // Navegación tipo "push": adelante entra desde la derecha, atrás desde la izquierda
+  const animacionPaso = prefersReducedMotion()
+    ? 'nf-fade-in 200ms ease both'
+    : `${direccion > 0 ? 'nf-push-in' : 'nf-pop-back'} 320ms var(--ease-out) both`
 
-  const transStyle = {
-    opacity: visible ? 1 : 0,
-    transform: visible ? 'translateY(0)' : 'translateY(16px)',
-    transition: 'opacity 0.22s ease, transform 0.22s ease',
-  }
-
-  // ── Pasos ──────────────────────────────────────────────────────────────────
+  const avanzar = () => siguiente()
 
   const renderPaso = () => {
     switch (paso) {
 
-      // 0 — Bienvenida
       case 0:
         return (
-          <div style={transStyle}>
-            <div style={{ textAlign: 'center', marginBottom: '40px' }}>
-              <div style={{ fontSize: '64px', marginBottom: '20px' }}>🦇</div>
-              <h1 style={{ ...S.title, textAlign: 'center', fontSize: '32px' }}>
-                Hola, {usuario.first_name?.split(' ')[0]} 👋
-              </h1>
-              <p style={{ ...S.subtitle, textAlign: 'center' }}>
-                Vamos a crear tu plan nutricional personalizado.<br />Son solo 2 minutos.
+          <>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+              <img src={bruceTuxedo} alt='' className='nf-float' style={{ width: '190px', marginBottom: '20px', filter: 'drop-shadow(0 10px 30px rgba(74,222,128,0.25))' }} />
+              <h1 className='nf-large-title' style={{ marginBottom: '10px' }}>Hola, {usuario.first_name?.split(' ')[0]}</h1>
+              <p className='nf-subhead' style={{ maxWidth: '280px' }}>
+                Soy Bruce. Vamos a crear tu plan de nutrición personalizado. Son solo 2 minutos.
               </p>
             </div>
-            <button onClick={siguiente} style={S.btn(false)}>Empezar →</button>
-          </div>
+            <Continuar onClick={avanzar}>Empezar</Continuar>
+          </>
         )
 
-      // 1 — Sexo biológico
       case 1:
         return (
-          <div style={transStyle}>
-            <BtnBack onClick={anterior} />
-            <h2 style={S.title}>¿Cuál es tu<br />sexo biológico?</h2>
-            <p style={S.subtitle}>Afecta el cálculo de tu metabolismo basal</p>
+          <>
+            <Titulo sub='Afecta el cálculo de tu metabolismo basal'>¿Cuál es tu sexo biológico?</Titulo>
             {[
               { val: 'M', label: 'Masculino', emoji: '♂️' },
               { val: 'F', label: 'Femenino',  emoji: '♀️' },
             ].map(({ val, label, emoji }) => (
-              <div key={val} onClick={() => { set('sexo', val); setTimeout(siguiente, 200) }}
-                style={S.card(datos.sexo === val)}>
-                <span style={{ fontSize: '28px' }}>{emoji}</span>
-                <span style={{ fontSize: '17px', fontWeight: '600' }}>{label}</span>
-                {datos.sexo === val && <span style={{ marginLeft: 'auto', color: '#4ade80', fontSize: '20px' }}>✓</span>}
-              </div>
+              <Opcion key={val} activa={datos.sexo === val} emoji={emoji} label={label} onClick={() => elegir('sexo', val)} />
             ))}
-          </div>
+          </>
         )
 
-      // 2 — Fecha de nacimiento
       case 2:
         return (
-          <div style={transStyle}>
-            <BtnBack onClick={anterior} />
-            <h2 style={S.title}>¿Cuándo<br />naciste?</h2>
-            <p style={S.subtitle}>Para calcular tu edad y ajustar las calorías</p>
+          <>
+            <Titulo sub='Para calcular tu edad y ajustar las calorías'>¿Cuándo naciste?</Titulo>
             <input
               type='date'
+              className='nf-input'
+              aria-label='Fecha de nacimiento'
               value={datos.fecha_nacimiento}
               onChange={e => set('fecha_nacimiento', e.target.value)}
-              max={new Date(Date.now() - 13 * 365.25 * 86400000).toISOString().split('T')[0]}
-              style={{
-                ...S.input, fontSize: '18px', textAlign: 'left',
-                padding: '18px 20px', marginBottom: '24px',
-                colorScheme: 'dark',
-              }}
+              max={(() => { const d = new Date(); d.setFullYear(d.getFullYear() - 13); return d.toLocaleDateString('en-CA') })()}
+              style={{ fontSize: '19px', minHeight: '60px', borderRadius: '16px', colorScheme: 'dark' }}
             />
-            <button
-              onClick={siguiente}
-              disabled={!datos.fecha_nacimiento}
-              style={S.btn(!datos.fecha_nacimiento)}
-            >Continuar →</button>
-          </div>
+            <Continuar onClick={avanzar} disabled={!datos.fecha_nacimiento} />
+          </>
         )
 
-      // 3 — Estatura
       case 3:
         return (
-          <div style={transStyle}>
-            <BtnBack onClick={anterior} />
-            <h2 style={S.title}>¿Cuánto<br />mides?</h2>
-            <p style={S.subtitle}>En centímetros</p>
-            <div style={{ position: 'relative', marginBottom: '24px' }}>
-              <input
-                type='number' inputMode='numeric'
-                value={datos.estatura_cm}
-                onChange={e => set('estatura_cm', e.target.value)}
-                placeholder='175'
-                min={100} max={250}
-                style={S.input}
-              />
-              <span style={{
-                position: 'absolute', right: '24px', top: '50%', transform: 'translateY(-50%)',
-                fontSize: '18px', color: 'rgba(255,255,255,0.3)', fontWeight: '600',
-              }}>cm</span>
-            </div>
-            <button
-              onClick={siguiente}
-              disabled={!datos.estatura_cm || datos.estatura_cm < 100}
-              style={S.btn(!datos.estatura_cm || datos.estatura_cm < 100)}
-            >Continuar →</button>
-          </div>
+          <>
+            <Titulo sub='En centímetros'>¿Cuánto mides?</Titulo>
+            <CampoNumero
+              value={datos.estatura_cm} onChange={e => set('estatura_cm', e.target.value)}
+              placeholder='175' unidad='cm' inputMode='numeric' min={100} max={250} label='Estatura en centímetros'
+            />
+            <Continuar onClick={avanzar} disabled={!datos.estatura_cm || datos.estatura_cm < 100} />
+          </>
         )
 
-      // 4 — Peso actual
       case 4:
         return (
-          <div style={transStyle}>
-            <BtnBack onClick={anterior} />
-            <h2 style={S.title}>¿Cuánto<br />pesas ahora?</h2>
-            <p style={S.subtitle}>Tu peso actual en kilogramos</p>
-            <div style={{ position: 'relative', marginBottom: '24px' }}>
-              <input
-                type='number' inputMode='decimal'
-                value={datos.peso_inicial_kg}
-                onChange={e => set('peso_inicial_kg', e.target.value)}
-                placeholder='70.0'
-                min={30} max={250} step={0.1}
-                style={S.input}
-              />
-              <span style={{
-                position: 'absolute', right: '24px', top: '50%', transform: 'translateY(-50%)',
-                fontSize: '18px', color: 'rgba(255,255,255,0.3)', fontWeight: '600',
-              }}>kg</span>
-            </div>
-            <button
-              onClick={siguiente}
-              disabled={!datos.peso_inicial_kg || datos.peso_inicial_kg < 30}
-              style={S.btn(!datos.peso_inicial_kg || datos.peso_inicial_kg < 30)}
-            >Continuar →</button>
-          </div>
+          <>
+            <Titulo sub='Tu peso actual en kilogramos'>¿Cuánto pesas ahora?</Titulo>
+            <CampoNumero
+              value={datos.peso_inicial_kg} onChange={e => set('peso_inicial_kg', e.target.value)}
+              placeholder='70.0' unidad='kg' inputMode='decimal' min={30} max={250} step={0.1} label='Peso en kilogramos'
+            />
+            <Continuar onClick={avanzar} disabled={!datos.peso_inicial_kg || datos.peso_inicial_kg < 30} />
+          </>
         )
 
-      // 5 — Objetivo
       case 5:
         return (
-          <div style={transStyle}>
-            <BtnBack onClick={anterior} />
-            <h2 style={S.title}>¿Cuál es<br />tu objetivo?</h2>
-            <p style={S.subtitle}>Esto define tus calorías diarias</p>
+          <>
+            <Titulo sub='Esto define tus calorías diarias'>¿Cuál es tu objetivo?</Titulo>
             {[
-              { val: 'perder',   label: 'Perder grasa',   emoji: '🔥', desc: 'Déficit calórico controlado' },
-              { val: 'mantener', label: 'Mantener peso',  emoji: '⚖️', desc: 'Calorías de mantenimiento' },
-              { val: 'ganar',    label: 'Ganar músculo',  emoji: '💪', desc: 'Superávit para crecer' },
+              { val: 'perder',   label: 'Perder grasa',  emoji: '🔥', desc: 'Déficit calórico controlado' },
+              { val: 'mantener', label: 'Mantener peso', emoji: '⚖️', desc: 'Calorías de mantenimiento' },
+              { val: 'ganar',    label: 'Ganar músculo', emoji: '💪', desc: 'Superávit para crecer' },
             ].map(({ val, label, emoji, desc }) => (
-              <div key={val} onClick={() => { set('objetivo', val); setTimeout(siguiente, 200) }}
-                style={S.card(datos.objetivo === val)}>
-                <span style={{ fontSize: '28px' }}>{emoji}</span>
-                <div>
-                  <p style={{ fontSize: '16px', fontWeight: '600', marginBottom: '2px' }}>{label}</p>
-                  <p style={{ fontSize: '13px', color: 'rgba(255,255,255,0.35)' }}>{desc}</p>
-                </div>
-                {datos.objetivo === val && <span style={{ marginLeft: 'auto', color: '#4ade80', fontSize: '20px' }}>✓</span>}
-              </div>
+              <Opcion key={val} activa={datos.objetivo === val} emoji={emoji} label={label} desc={desc} onClick={() => elegir('objetivo', val)} />
             ))}
-          </div>
+          </>
         )
 
-      // 6 — Velocidad (solo si perder o ganar)
       case 6:
-        if (datos.objetivo === 'mantener') {
-          // Saltar este paso
-          if (datos.velocidad_objetivo !== 'moderado') set('velocidad_objetivo', 'moderado')
-          siguiente()
-          return null
-        }
         return (
-          <div style={transStyle}>
-            <BtnBack onClick={anterior} />
-            <h2 style={S.title}>¿A qué<br />velocidad?</h2>
-            <p style={S.subtitle}>El ritmo con el que quieres alcanzar tu meta</p>
+          <>
+            <Titulo sub='El ritmo con el que quieres llegar a tu meta'>¿A qué velocidad?</Titulo>
             {[
               { val: 'suave',    label: 'Suave',    emoji: '🐢', desc: datos.objetivo === 'perder' ? '~0.25 kg/sem' : '+0.25 kg/sem', extra: 'Más sostenible' },
               { val: 'moderado', label: 'Moderado', emoji: '🏃', desc: datos.objetivo === 'perder' ? '~0.5 kg/sem'  : '+0.4 kg/sem',  extra: 'Recomendado' },
               { val: 'agresivo', label: 'Agresivo', emoji: '🚀', desc: datos.objetivo === 'perder' ? '~1 kg/sem'    : '+0.5 kg/sem',  extra: 'Requiere disciplina' },
             ].map(({ val, label, emoji, desc, extra }) => (
-              <div key={val} onClick={() => { set('velocidad_objetivo', val); setTimeout(siguiente, 200) }}
-                style={S.card(datos.velocidad_objetivo === val)}>
-                <span style={{ fontSize: '28px' }}>{emoji}</span>
-                <div>
-                  <p style={{ fontSize: '16px', fontWeight: '600', marginBottom: '2px' }}>{label}</p>
-                  <p style={{ fontSize: '13px', color: 'rgba(255,255,255,0.35)' }}>{desc} · {extra}</p>
-                </div>
-                {datos.velocidad_objetivo === val && <span style={{ marginLeft: 'auto', color: '#4ade80', fontSize: '20px' }}>✓</span>}
-              </div>
+              <Opcion key={val} activa={datos.velocidad_objetivo === val} emoji={emoji} label={label} desc={`${desc} · ${extra}`} onClick={() => elegir('velocidad_objetivo', val)} />
             ))}
-          </div>
+          </>
         )
 
-      // 7 — Actividad física
       case 7:
         return (
-          <div style={transStyle}>
-            <BtnBack onClick={anterior} />
-            <h2 style={S.title}>¿Qué tan activo<br />eres?</h2>
-            <p style={S.subtitle}>Fuera del gym, en tu día a día</p>
+          <>
+            <Titulo sub='Fuera del gym, en tu día a día'>¿Qué tan activo eres?</Titulo>
             {[
-              { val: 'sedentario', label: 'Sedentario',    emoji: '🛋️', desc: 'Trabajo de escritorio, poco movimiento' },
-              { val: 'ligero',     label: 'Ligero',         emoji: '🚶', desc: '1-3 días de ejercicio por semana' },
-              { val: 'moderado',   label: 'Moderado',       emoji: '🚴', desc: '3-5 días de ejercicio por semana' },
-              { val: 'activo',     label: 'Activo',         emoji: '🏋️', desc: '6-7 días de ejercicio' },
-              { val: 'muy_activo', label: 'Muy activo',     emoji: '⚡', desc: 'Doble sesión o trabajo físico' },
+              { val: 'sedentario', label: 'Sedentario', emoji: '🛋️', desc: 'Trabajo de escritorio, poco movimiento' },
+              { val: 'ligero',     label: 'Ligero',     emoji: '🚶', desc: '1-3 días de ejercicio por semana' },
+              { val: 'moderado',   label: 'Moderado',   emoji: '🚴', desc: '3-5 días de ejercicio por semana' },
+              { val: 'activo',     label: 'Activo',     emoji: '🏋️', desc: '6-7 días de ejercicio' },
+              { val: 'muy_activo', label: 'Muy activo', emoji: '⚡', desc: 'Doble sesión o trabajo físico' },
             ].map(({ val, label, emoji, desc }) => (
-              <div key={val} onClick={() => { set('nivel_actividad', val); setTimeout(siguiente, 200) }}
-                style={{ ...S.card(datos.nivel_actividad === val), marginBottom: '8px' }}>
-                <span style={{ fontSize: '24px' }}>{emoji}</span>
-                <div>
-                  <p style={{ fontSize: '15px', fontWeight: '600', marginBottom: '2px' }}>{label}</p>
-                  <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)' }}>{desc}</p>
-                </div>
-                {datos.nivel_actividad === val && <span style={{ marginLeft: 'auto', color: '#4ade80', fontSize: '18px' }}>✓</span>}
-              </div>
+              <Opcion key={val} activa={datos.nivel_actividad === val} emoji={emoji} label={label} desc={desc} onClick={() => elegir('nivel_actividad', val)} />
             ))}
-          </div>
+          </>
         )
 
-      // 8 — Alimentos que le gustan
       case 8:
         return (
-          <div style={transStyle}>
-            <BtnBack onClick={anterior} />
-            <h2 style={S.title}>¿Qué alimentos<br />te gustan?</h2>
-            <p style={S.subtitle}>Selecciona todos los que quieras. Groq los usará para crear tu plan.</p>
-            <div style={{ marginBottom: '24px', maxHeight: '320px', overflowY: 'auto' }}>
+          <>
+            <Titulo sub='Elige todos los que quieras. Bruce los usará para armar tu plan.'>¿Qué alimentos te gustan?</Titulo>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
               {ALIMENTOS_OPCIONES.map(a => (
-                <span key={a} onClick={() => toggleChip('alimentos_gustados', a)}
-                  style={S.chip(datos.alimentos_gustados.includes(a))}>
-                  {a}
-                </span>
+                <Chip key={a} activo={datos.alimentos_gustados.includes(a)} onClick={() => toggleChip('alimentos_gustados', a)}>{a}</Chip>
               ))}
             </div>
-            <button
-              onClick={siguiente}
-              disabled={datos.alimentos_gustados.length === 0}
-              style={S.btn(datos.alimentos_gustados.length === 0)}
-            >
-              {datos.alimentos_gustados.length === 0 ? 'Selecciona al menos uno' : `Continuar con ${datos.alimentos_gustados.length} →`}
-            </button>
-          </div>
+            <Continuar onClick={avanzar} disabled={datos.alimentos_gustados.length === 0}>
+              {datos.alimentos_gustados.length === 0 ? 'Elige al menos uno' : `Continuar con ${datos.alimentos_gustados.length}`}
+            </Continuar>
+          </>
         )
 
-      // 9 — Alimentos que NO le gustan
       case 9:
         return (
-          <div style={transStyle}>
-            <BtnBack onClick={anterior} />
-            <h2 style={S.title}>¿Qué alimentos<br />no te gustan?</h2>
-            <p style={S.subtitle}>Bruce los excluirá de tu plan. Puedes saltarte esto si no aplica.</p>
-            <div style={{ marginBottom: '20px', maxHeight: '300px', overflowY: 'auto' }}>
+          <>
+            <Titulo sub='Bruce los dejará fuera de tu plan. Puedes saltar este paso.'>¿Qué alimentos no te gustan?</Titulo>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
               {NO_GUSTADOS_OPCIONES.map(a => (
-                <span key={a} onClick={() => toggleChip('alimentos_no_gustados', a)}
-                  style={{
-                    ...S.chip(datos.alimentos_no_gustados.includes(a)),
-                    ...(datos.alimentos_no_gustados.includes(a) ? { background: 'rgba(248,113,113,0.15)', color: '#f87171', border: '1px solid #f87171' } : {}),
-                  }}>
-                  {a}
-                </span>
+                <Chip key={a} tint='var(--red)' activo={datos.alimentos_no_gustados.includes(a)} onClick={() => toggleChip('alimentos_no_gustados', a)}>{a}</Chip>
               ))}
             </div>
-            <button onClick={siguiente} style={S.btn(false)}>
-              {datos.alimentos_no_gustados.length === 0
-                ? 'Saltarse →'
-                : `Continuar (${datos.alimentos_no_gustados.length} excluidos) →`}
-            </button>
-          </div>
+            <Continuar onClick={avanzar}>
+              {datos.alimentos_no_gustados.length === 0 ? 'Saltar' : `Continuar (${datos.alimentos_no_gustados.length} fuera)`}
+            </Continuar>
+          </>
         )
 
-      // 10 — Restricciones + finalizar
       case 10:
         return (
-          <div style={transStyle}>
-            <BtnBack onClick={anterior} />
-            <h2 style={S.title}>¿Tienes alguna<br />restricción?</h2>
-            <p style={S.subtitle}>Dietas especiales o alimentos que evitas por salud o creencias</p>
-            <div style={{ marginBottom: '20px' }}>
-              {RESTRICCIONES_OPCIONES.map(({ id, label, emoji }) => (
-                <div key={id} onClick={() => {
+          <>
+            <Titulo sub='Dietas especiales o alimentos que evitas por salud o creencias'>¿Tienes alguna restricción?</Titulo>
+            {RESTRICCIONES_OPCIONES.map(({ id, label, emoji }) => (
+              <Opcion
+                key={id}
+                activa={datos.restricciones_dieta.includes(id)}
+                emoji={emoji}
+                label={label}
+                onClick={() => {
                   if (id === 'ninguna') {
                     set('restricciones_dieta', datos.restricciones_dieta.includes('ninguna') ? [] : ['ninguna'])
                   } else {
-                    toggleChip('restricciones_dieta', id)
+                    setDatos(d => {
+                      const sinNinguna = d.restricciones_dieta.filter(r => r !== 'ninguna')
+                      return {
+                        ...d,
+                        restricciones_dieta: sinNinguna.includes(id) ? sinNinguna.filter(r => r !== id) : [...sinNinguna, id],
+                      }
+                    })
                   }
-                }} style={S.card(datos.restricciones_dieta.includes(id))}>
-                  <span style={{ fontSize: '22px' }}>{emoji}</span>
-                  <span style={{ fontSize: '15px', fontWeight: '600' }}>{label}</span>
-                  {datos.restricciones_dieta.includes(id) && <span style={{ marginLeft: 'auto', color: '#4ade80', fontSize: '18px' }}>✓</span>}
-                </div>
-              ))}
-            </div>
-            {error && <p style={{ color: '#f87171', fontSize: '13px', textAlign: 'center', marginBottom: '12px' }}>{error}</p>}
-            <button onClick={finalizar} style={S.btn(false)}>
-              Generar mi plan con IA 🚀
-            </button>
-          </div>
+                }}
+              />
+            ))}
+            {error && <p role='alert' className='nf-footnote' style={{ color: 'var(--red)', textAlign: 'center', marginTop: '8px' }}>{error}</p>}
+            <Continuar onClick={finalizar}>Generar mi plan</Continuar>
+          </>
         )
 
       default: return null
@@ -667,14 +549,22 @@ export default function OnboardingScreen({ usuario, onComplete }) {
 
   return (
     <div style={{
-      minHeight: '100vh', background: '#0a0a0a', color: '#fff',
-      fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif",
-      display: 'flex', flexDirection: 'column',
-      padding: '56px 24px 40px', boxSizing: 'border-box',
-      maxWidth: '430px', margin: '0 auto',
+      minHeight: '100dvh', display: 'flex', flexDirection: 'column',
+      padding: 'calc(var(--safe-top) + 12px) 20px calc(var(--safe-bottom) + 20px)',
+      overflowX: 'hidden',
     }}>
-      {paso > 0 && <ProgressBar paso={paso - 1} total={TOTAL_PASOS} />}
-      {renderPaso()}
+      {paso > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '24px', marginLeft: '-12px' }}>
+          <button onClick={anterior} className='nf-icon-btn' aria-label='Paso anterior'>
+            <IconChevronLeft size={26} strokeWidth={2.2} />
+          </button>
+          <ProgressBar paso={paso - 1} total={TOTAL_PASOS} />
+          <span className='nf-caption nf-num' style={{ width: '40px', textAlign: 'right' }}>{paso}/{TOTAL_PASOS}</span>
+        </div>
+      )}
+      <div key={paso} style={{ flex: 1, display: 'flex', flexDirection: 'column', animation: animacionPaso }}>
+        {renderPaso()}
+      </div>
     </div>
   )
 }
