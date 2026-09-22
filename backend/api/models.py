@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.utils import timezone
 
+import re
 import uuid
 
 
@@ -14,8 +15,11 @@ class Usuario(AbstractUser):
     Usuario personalizado.
     settings.py tiene AUTH_USER_MODEL = 'api.Usuario'
     """
-    avatar     = models.ImageField(upload_to='avatars/', null=True, blank=True)
+    avatar     = models.ImageField(upload_to='avatars/', null=True, blank=True)  # obsoleto: ver avatar_data
     avatar_url = models.URLField(blank=True)
+    # Foto subida por la persona, reducida a 256 px, como data URL (~20 KB).
+    # Vive en la base de datos porque el disco del servidor se reemplaza en cada despliegue.
+    avatar_data = models.TextField(blank=True)
     bio        = models.CharField(max_length=160, blank=True)
     idioma     = models.CharField(max_length=5, default='es')
 
@@ -71,10 +75,11 @@ class Usuario(AbstractUser):
         verbose_name_plural = 'Usuarios'
 
     def get_avatar(self):
-        if self.avatar:
-            return self.avatar.url
+        if self.avatar_data:
+            return self.avatar_data
         if self.avatar_url:
-            return self.avatar_url
+            # Google entrega la foto a 96 px; se pide a 256 para que se vea nítida
+            return re.sub(r'=s\d+-c$', '=s256-c', self.avatar_url)
         return None
 
     def get_edad(self):

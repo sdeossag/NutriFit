@@ -1,3 +1,7 @@
+import base64
+import io
+
+from PIL import Image, ImageOps
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from .models import Comida, SesionGym, EjercicioLog, PesoCorporal, AlimentoAlacena, MensajeChat, SesionChat
@@ -17,7 +21,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
         model  = User
         fields = [
             'id', 'email', 'first_name', 'last_name',
-            'avatar', 'avatar_url', 'avatar_display',
+            'avatar_url', 'avatar_display',
             'bio', 'idioma',
             # Metas
             'meta_calorias', 'meta_proteina', 'meta_carbos', 'meta_grasas',
@@ -47,10 +51,29 @@ class MetasSerializer(serializers.ModelSerializer):
         fields = ['meta_calorias', 'meta_proteina', 'meta_carbos', 'meta_grasas']
 
 
+def _avatar_a_data_url(archivo, lado=256):
+    """Endereza, recorta al centro en cuadrado y reduce la foto de perfil."""
+    archivo.seek(0)
+    img = ImageOps.exif_transpose(Image.open(archivo)).convert('RGB')
+    img = ImageOps.fit(img, (lado, lado), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, 'JPEG', quality=85, optimize=True)
+    return 'data:image/jpeg;base64,' + base64.b64encode(buf.getvalue()).decode()
+
+
 class PerfilUpdateSerializer(serializers.ModelSerializer):
+    # La foto llega como archivo pero se guarda en la base de datos (avatar_data)
+    avatar = serializers.ImageField(write_only=True, required=False)
+
     class Meta:
         model  = User
         fields = ['first_name', 'last_name', 'bio', 'idioma', 'avatar']
+
+    def update(self, instance, validated_data):
+        foto = validated_data.pop('avatar', None)
+        if foto is not None:
+            instance.avatar_data = _avatar_a_data_url(foto)
+        return super().update(instance, validated_data)
 
 
 class ObjetivoSerializer(serializers.ModelSerializer):

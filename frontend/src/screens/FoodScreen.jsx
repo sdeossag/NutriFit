@@ -12,6 +12,7 @@ import {
 import { toast } from '../lib/toast'
 import Sheet, { SheetHeader } from '../components/Sheet'
 import { haptic, useEntrada } from '../lib/motion'
+import { fotoABase64 } from '../lib/imagen'
 import bruceFace from '../assets/bruce-face.webp'
 
 const hoyISO = () => new Date().toLocaleDateString('en-CA')
@@ -29,29 +30,6 @@ const ALACENA_INICIAL = [
   { nombre: 'Banano + crema de maní',     descripcion: '1 banano + 1.5 cdas',   calorias: 250, proteina: 7,  carbos: 32, grasas: 11 },
   { nombre: 'Pasta pesto',                descripcion: '150g pasta + pesto',    calorias: 480, proteina: 16, carbos: 68, grasas: 18 },
 ]
-
-// Reduce la foto en el celular antes de subirla: de varios MB a unos cientos de KB.
-// createImageBitmap respeta la orientación EXIF, así la foto no llega de lado.
-async function fotoABase64(file, ladoMax) {
-  try {
-    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' })
-    const escala = Math.min(1, ladoMax / Math.max(bmp.width, bmp.height))
-    const canvas = document.createElement('canvas')
-    canvas.width  = Math.round(bmp.width * escala)
-    canvas.height = Math.round(bmp.height * escala)
-    canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height)
-    bmp.close?.()
-    return canvas.toDataURL('image/jpeg', 0.85).split(',')[1]
-  } catch {
-    // Formato que este navegador no sabe abrir (ej. HEIC en Chrome): se manda tal cual
-    return new Promise((resolve, reject) => {
-      const lector = new FileReader()
-      lector.onload  = () => resolve(String(lector.result).split(',')[1])
-      lector.onerror = reject
-      lector.readAsDataURL(file)
-    })
-  }
-}
 
 const soloMacros = (x) => ({
   nombre: x.nombre, descripcion: x.descripcion || '',

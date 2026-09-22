@@ -4,6 +4,7 @@ import {
   IconWheat, IconMessageCircle, IconRefresh,
 } from '@tabler/icons-react'
 import MacroBar from '../components/MacroBar'
+import UserAvatar from '../components/UserAvatar'
 import { toast } from '../lib/toast'
 import { getResumenHoy, getBruceFrase, sesionDeHoy } from '../api'
 import { prefersReducedMotion, useEntrada } from '../lib/motion'
@@ -329,17 +330,7 @@ export default function HomeScreen({ t, lang, screen, usuario, onGoToProfile, on
               {suscrito ? <IconBell size={22} strokeWidth={1.8} /> : <IconBellOff size={22} strokeWidth={1.8} />}
             </button>
             <button onClick={onGoToProfile} className='nf-icon-btn' aria-label='Abrir ajustes' style={{ padding: 0 }}>
-              <span style={{
-                width: '34px', height: '34px', borderRadius: '50%', overflow: 'hidden',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: 'linear-gradient(135deg, #064e3b, #16a34a)',
-                fontSize: '13px', fontWeight: 700, color: '#fff',
-                boxShadow: '0 0 0 0.5px rgba(255,255,255,0.15)',
-              }}>
-                {usuario?.avatar_display
-                  ? <img src={usuario.avatar_display} alt='' style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  : (nombreUsuario[0] ?? '?').toUpperCase()}
-              </span>
+              <UserAvatar src={usuario?.avatar_display} nombre={nombreUsuario} size={34} />
             </button>
           </div>
         </header>

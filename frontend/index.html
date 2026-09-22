@@ -8,7 +8,12 @@
     <!-- PWA iOS -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- "black" y no "black-translucent": con translúcida, iOS 26 deja el área
+         visible de la app instalada 62 pt más corta que la pantalla (unas veces sí y
+         otras no) y todo lo fijado abajo queda desalineado. Con "black" la app ocupa
+         exactamente el espacio bajo la barra de estado. iOS lee esta etiqueta solo al
+         instalar: hay que quitar la app de la pantalla de inicio y agregarla de nuevo. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="apple-mobile-web-app-title" content="NutriFit" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 

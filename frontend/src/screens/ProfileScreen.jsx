@@ -2,13 +2,16 @@ import { useState, useEffect, useRef } from 'react'
 import {
   IconFlame, IconMeat, IconWheat, IconDroplet,
   IconTrophy, IconCalendar, IconScale, IconEdit,
-  IconCheck, IconLogout, IconCamera,
+  IconCheck, IconLogout, IconCamera, IconLoader2,
   IconTarget, IconRuler, IconWeight, IconBell, IconLanguage,
 } from '@tabler/icons-react'
 import { getMiPerfil, actualizarPerfil, actualizarMetas, actualizarObjetivo, logout as apiLogout } from '../api'
 import { soportaNotificaciones, permisoActual, estasSuscrito, suscribir, desuscribir } from '../utils/notificaciones'
 import { toast } from '../lib/toast'
+import { haptic } from '../lib/motion'
 import Segmented from '../components/Segmented'
+import UserAvatar from '../components/UserAvatar'
+import { fotoAJpeg } from '../lib/imagen'
 
 // ── helpers UI ────────────────────────────────────────────────────────────
 
@@ -109,6 +112,7 @@ export default function ProfileScreen({ setUsuario, onLogout, lang, setLang }) {
   const [stats,        setStats]        = useState(null)
   const [cargando,     setCargando]     = useState(true)
   const [guardando,    setGuardando]    = useState(false)
+  const [subiendoFoto, setSubiendoFoto] = useState(false)
 
   const [editPerfil,   setEditPerfil]   = useState(false)
   const [editMetas,    setEditMetas]    = useState(false)
@@ -198,15 +202,27 @@ export default function ProfileScreen({ setUsuario, onLogout, lang, setLang }) {
     finally { setGuardando(false) }
   }
 
+  // La foto nueva se ve al instante; si el servidor la rechaza, vuelve la anterior
   const cambiarAvatar = async (e) => {
     const file = e.target.files?.[0]
+    e.target.value = ''
     if (!file) return
-    setGuardando(true)
+    const anterior = perfil?.avatar_display
+    const foto = await fotoAJpeg(file, 768)
+    const vistaPrevia = URL.createObjectURL(foto)
+    setPerfil(prev => ({ ...prev, avatar_display: vistaPrevia }))
+    setSubiendoFoto(true)
     try {
-      const updated = await actualizarPerfil({ avatar: file })
+      const updated = await actualizarPerfil({ avatar: foto })
       setPerfil(updated); setUsuario?.(prev => ({ ...prev, ...updated }))
-    } catch { toast.error('Error al subir la imagen') }
-    finally { setGuardando(false) }
+      haptic()
+    } catch (err) {
+      setPerfil(prev => ({ ...prev, avatar_display: anterior }))
+      toast.error(err.mensaje || 'No se pudo cambiar la foto. Intenta con otra.')
+    } finally {
+      setSubiendoFoto(false)
+      setTimeout(() => URL.revokeObjectURL(vistaPrevia), 1000)
+    }
   }
 
   const toggleNotificaciones = async () => {
@@ -233,7 +249,6 @@ export default function ProfileScreen({ setUsuario, onLogout, lang, setLang }) {
   )
 
   const nombre    = perfil ? `${perfil.first_name} ${perfil.last_name}`.trim() || perfil.email : ''
-  const iniciales = nombre.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase() || '?'
   const objColor  = OBJETIVO_COLOR[objetivo.objetivo] ?? 'var(--green)'
 
   return (
@@ -243,21 +258,11 @@ export default function ProfileScreen({ setUsuario, onLogout, lang, setLang }) {
       <Section label='Cuenta'>
         <div style={{ padding: '16px', display: 'flex', gap: '14px', alignItems: 'center' }}>
           <div style={{ position: 'relative', flexShrink: 0 }}>
-            {perfil?.avatar_display ? (
-              <img src={perfil.avatar_display} alt=''
-                style={{ width: '64px', height: '64px', borderRadius: '50%', objectFit: 'cover' }} />
-            ) : (
-              <div style={{
-                width: '64px', height: '64px', borderRadius: '50%',
-                background: 'linear-gradient(135deg, #064e3b, #16a34a)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: '22px', fontWeight: 700,
-              }}>
-                {iniciales}
-              </div>
-            )}
+            <UserAvatar src={perfil?.avatar_display} nombre={nombre} size={64}
+              style={{ opacity: subiendoFoto ? 0.55 : 1, transition: 'opacity 200ms ease' }} />
             <button
               onClick={() => fileRef.current?.click()}
+              disabled={subiendoFoto}
               aria-label='Cambiar foto de perfil'
               style={{
                 position: 'absolute', bottom: '-6px', right: '-6px',
@@ -266,7 +271,9 @@ export default function ProfileScreen({ setUsuario, onLogout, lang, setLang }) {
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}
             >
-              <IconCamera size={15} color='var(--label-2)' />
+              {subiendoFoto
+                ? <IconLoader2 size={15} color='var(--label-2)' className='nf-spinner' />
+                : <IconCamera size={15} color='var(--label-2)' />}
             </button>
             <input ref={fileRef} type='file' accept='image/*' hidden onChange={cambiarAvatar} />
           </div>

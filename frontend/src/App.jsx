@@ -117,9 +117,9 @@ export default function App() {
   return (
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
       <div id='app-shell' style={{
-        // Fijo: ocupa la pantalla completa (incluida la franja muerta de iOS) sin hacer scroll el documento
-        position: 'fixed', top: 0, left: 0, right: 0, margin: '0 auto', maxWidth: '430px',
-        height: 'var(--app-h)', display: 'flex', flexDirection: 'column', background: 'var(--bg)',
+        // Fijo a los cuatro bordes del área visible: el documento nunca hace scroll
+        position: 'fixed', inset: 0, margin: '0 auto', maxWidth: '430px',
+        display: 'flex', flexDirection: 'column', background: 'var(--bg)',
       }}>
         <main
           ref={mainRef}
