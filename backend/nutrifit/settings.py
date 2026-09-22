@@ -93,6 +93,8 @@ GOOGLE_CLIENT_IDS = [
 
 APPLE_BUNDLE_ID = os.getenv('APPLE_BUNDLE_ID', 'com.tuapp.nutrifit')
 GROQ_API_KEY    = os.getenv('GROQ_API_KEY', '')
+# Groq retira modelos seguido: se puede cambiar desde el entorno sin tocar código
+GROQ_MODEL      = os.getenv('GROQ_MODEL', 'qwen/qwen3.8-27b')
 
 # VAPID keys para Web Push (genera con: python manage.py generate_vapid_keys)
 VAPID_PUBLIC_KEY   = os.getenv('VAPID_PUBLIC_KEY', '')

@@ -1,0 +1,51 @@
+name: Deploy backend (Oracle)
+
+# Se despliega solo cuando cambia el backend o su configuración de despliegue.
+# El frontend lo despliega Vercel por su cuenta.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'deploy/oracle/**'
+  workflow_dispatch:        # permite lanzarlo a mano desde GitHub
+
+# Nunca dos despliegues al tiempo; si llega otro push, espera su turno
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Configurar SSH
+        env:
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.ORACLE_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      # La llave solo puede ejecutar deploy.sh en el servidor (forced command):
+      # trae main, reconstruye la imagen y reinicia los contenedores.
+      - name: Desplegar en Oracle
+        env:
+          HOST: ${{ secrets.ORACLE_HOST }}
+        run: ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "ubuntu@$HOST" deploy
+
+      - name: Verificar que responde
+        env:
+          HOST: ${{ secrets.ORACLE_HOST }}
+        run: |
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "https://$HOST/api/health/")
+            if [ "$code" = "200" ]; then echo "Backend OK"; exit 0; fi
+            echo "Intento $i: $code"
+            sleep 4
+          done
+          echo "El backend no respondió después del despliegue"
+          exit 1

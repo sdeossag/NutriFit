@@ -417,7 +417,7 @@ Responde ÚNICAMENTE con este JSON válido, sin texto adicional:
 }}"""
 
     payload = {
-        'model': 'qwen/qwen3.6-27b',
+        'model': settings.GROQ_MODEL,
         'messages': [
             {'role': 'system', 'content': system_msg},
             {'role': 'user',   'content': prompt},
@@ -827,7 +827,7 @@ REGLAS ABSOLUTAS:
 Solo la frase. Sin comillas. Sin explicaciones."""
 
     payload = {
-        'model':            'qwen/qwen3.6-27b',
+        'model':            settings.GROQ_MODEL,
         'messages':         [{'role': 'user', 'content': prompt}],
         'max_tokens':       110,
         'temperature':      0.9,
@@ -854,7 +854,7 @@ Solo la frase. Sin comillas. Sin explicaciones."""
 def _buscar_info_nutricional(nombre_alimento):
     """Estima información nutricional de un alimento usando conocimiento del modelo."""
     payload = {
-        'model': 'qwen/qwen3.6-27b',
+        'model': settings.GROQ_MODEL,
         'messages': [
             {
                 'role': 'system',
@@ -963,7 +963,7 @@ Usa confianza "baja" solo si la imagen es muy oscura, borrosa o el plato es irre
     ]}]
 
     payload = {
-        'model':            'qwen/qwen3.6-27b',
+        'model':            settings.GROQ_MODEL,
         'messages':         messages,
         'max_tokens':       500,
         'temperature':      0.1,
@@ -1048,7 +1048,7 @@ Usa confianza "baja" si la etiqueta está muy borrosa o incompleta. Nunca uses 0
     ]}]
 
     payload = {
-        'model':            'qwen/qwen3.6-27b',
+        'model':            settings.GROQ_MODEL,
         'messages':         messages,
         'max_tokens':       500,
         'temperature':      0.1,
@@ -1215,7 +1215,7 @@ CONOCIMIENTO:
     messages.append({'role': 'user', 'content': mensaje_usuario})
 
     payload = {
-        'model':            'qwen/qwen3.6-27b',
+        'model':            settings.GROQ_MODEL,
         'messages':         messages,
         'max_tokens':       800,
         'temperature':      0.8,
@@ -1628,7 +1628,7 @@ def push_check(request):
 
     try:
         frase = _groq_chat({
-            'model': 'qwen/qwen3.6-27b',
+            'model': settings.GROQ_MODEL,
             'messages': [{'role': 'user', 'content': prompt}],
             'max_tokens': 60,
             'temperature': 0.9,
@@ -1774,7 +1774,7 @@ def cron_notificaciones(request):
 
         try:
             frase = _groq_chat({
-                'model': 'qwen/qwen3.6-27b',
+                'model': settings.GROQ_MODEL,
                 'messages': [{'role': 'user', 'content': prompt}],
                 'max_tokens': 60,
                 'temperature': 0.9,
