@@ -1,0 +1,37 @@
+# Backend de NutriFit en la VM de Oracle Cloud (Always Free).
+# Caddy termina HTTPS (certificado de Let's Encrypt automático) y pasa el tráfico a Django.
+#
+# En el servidor, junto a este archivo, deben existir (no se suben a git):
+#   .env      → DOMAIN=tu-subdominio.duckdns.org
+#   api.env   → SECRET_KEY, DATABASE_URL, GROQ_API_KEY, ... (las variables de Render)
+
+services:
+  api:
+    build: ../../backend
+    restart: unless-stopped
+    env_file: api.env
+    environment:
+      PORT: "8000"
+      DEBUG: "False"
+      ALLOWED_HOSTS: ${DOMAIN}
+    expose:
+      - "8000"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
