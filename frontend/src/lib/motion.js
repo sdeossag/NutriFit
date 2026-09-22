@@ -85,6 +85,8 @@ export function velocityFrom(samples) {
 // Háptica ligera donde el navegador la soporte (Android). Solo para momentos
 // que lo merecen: completar, guardar, encajar.
 export const haptic = (ms = 10) => {
+  // El navegador solo permite vibrar después de que la persona tocó la página
+  if (navigator.userActivation && !navigator.userActivation.hasBeenActive) return
   try { navigator.vibrate?.(ms) } catch { /* no soportado */ }
 }
 

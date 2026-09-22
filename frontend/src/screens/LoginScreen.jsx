@@ -55,7 +55,7 @@ export default function LoginScreen({ onLogin }) {
 
   return (
     <div style={{
-      minHeight: '100dvh',
+      minHeight: 'var(--app-h)',
       display: 'flex', flexDirection: 'column',
       padding: 'calc(var(--safe-top) + 24px) 24px calc(var(--safe-bottom) + 24px)',
       background: 'radial-gradient(90% 55% at 50% 0%, rgba(74,222,128,0.12) 0%, transparent 70%)',

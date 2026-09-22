@@ -150,7 +150,7 @@ function PantallaGenerando({ nombre }) {
 
   return (
     <div style={{
-      minHeight: '100dvh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      minHeight: 'var(--app-h)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
       textAlign: 'center', padding: '24px',
     }} aria-busy='true'>
       <img src={bruceTuxedo} alt='' className='nf-float' style={{ width: '170px', marginBottom: '20px', filter: 'drop-shadow(0 10px 30px rgba(74,222,128,0.25))' }} />
@@ -170,7 +170,7 @@ function PantallaGenerando({ nombre }) {
 
 function PantallaPlan({ plan, calorias, proteina, carbos, grasas, onEntrar }) {
   return (
-    <div style={{ minHeight: '100dvh', padding: 'calc(var(--safe-top) + 32px) 20px calc(var(--safe-bottom) + 24px)', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ minHeight: 'var(--app-h)', padding: 'calc(var(--safe-top) + 32px) 20px calc(var(--safe-bottom) + 24px)', display: 'flex', flexDirection: 'column' }}>
       <div className='nf-enter' style={{ textAlign: 'center', marginBottom: '24px' }}>
         <img src={bruceMuyfeliz} alt='' style={{ width: '120px', margin: '0 auto 12px', filter: 'drop-shadow(0 8px 24px rgba(74,222,128,0.25))' }} />
         <h2 className='nf-large-title' style={{ marginBottom: '8px' }}>Tu plan está listo</h2>
@@ -549,7 +549,7 @@ export default function OnboardingScreen({ usuario, onComplete }) {
 
   return (
     <div style={{
-      minHeight: '100dvh', display: 'flex', flexDirection: 'column',
+      minHeight: 'var(--app-h)', display: 'flex', flexDirection: 'column',
       padding: 'calc(var(--safe-top) + 12px) 20px calc(var(--safe-bottom) + 20px)',
       overflowX: 'hidden',
     }}>

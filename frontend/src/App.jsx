@@ -39,7 +39,7 @@ function useTecladoAbierto() {
 
 function Splash() {
   return (
-    <div style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <div style={{ minHeight: 'var(--app-h)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <img
         src={bruceFace} alt='' width={72} height={72}
         style={{ borderRadius: '22px', animation: 'nf-pulse 1.6s ease-in-out infinite' }}
@@ -116,7 +116,11 @@ export default function App() {
 
   return (
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-      <div id='app-shell' style={{ height: '100dvh', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+      <div id='app-shell' style={{
+        // Fijo: ocupa la pantalla completa (incluida la franja muerta de iOS) sin hacer scroll el documento
+        position: 'fixed', top: 0, left: 0, right: 0, margin: '0 auto', maxWidth: '430px',
+        height: 'var(--app-h)', display: 'flex', flexDirection: 'column', background: 'var(--bg)',
+      }}>
         <main
           ref={mainRef}
           style={{
@@ -142,6 +146,8 @@ export default function App() {
             <BruceChatScreen screen={screen} tecladoAbierto={tecladoAbierto} />
           </div>
         </main>
+
+        <div className='nf-scroll-edge' aria-hidden='true' data-hidden={esChat || tecladoAbierto} />
 
         <TabBar
           screen={screen}
