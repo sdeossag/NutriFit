@@ -30,6 +30,29 @@ const ALACENA_INICIAL = [
   { nombre: 'Pasta pesto',                descripcion: '150g pasta + pesto',    calorias: 480, proteina: 16, carbos: 68, grasas: 18 },
 ]
 
+// Reduce la foto en el celular antes de subirla: de varios MB a unos cientos de KB.
+// createImageBitmap respeta la orientación EXIF, así la foto no llega de lado.
+async function fotoABase64(file, ladoMax) {
+  try {
+    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' })
+    const escala = Math.min(1, ladoMax / Math.max(bmp.width, bmp.height))
+    const canvas = document.createElement('canvas')
+    canvas.width  = Math.round(bmp.width * escala)
+    canvas.height = Math.round(bmp.height * escala)
+    canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height)
+    bmp.close?.()
+    return canvas.toDataURL('image/jpeg', 0.85).split(',')[1]
+  } catch {
+    // Formato que este navegador no sabe abrir (ej. HEIC en Chrome): se manda tal cual
+    return new Promise((resolve, reject) => {
+      const lector = new FileReader()
+      lector.onload  = () => resolve(String(lector.result).split(',')[1])
+      lector.onerror = reject
+      lector.readAsDataURL(file)
+    })
+  }
+}
+
 const soloMacros = (x) => ({
   nombre: x.nombre, descripcion: x.descripcion || '',
   calorias: x.calorias, proteina: x.proteina, carbos: x.carbos, grasas: x.grasas,
@@ -109,8 +132,8 @@ function ResultadoIA({ resultado, onConfirmar, onDescartar, modo, guardando }) {
       setReanalizado(true)
       setCorrigiendo(false)
       setCorreccion('')
-    } catch {
-      toast.error('Bruce no pudo re-analizar la foto. Intenta de nuevo.')
+    } catch (e) {
+      toast.error(e.mensaje || 'Bruce no pudo re-analizar la foto. Intenta de nuevo.')
     } finally {
       setCargando(false)
     }
@@ -348,23 +371,27 @@ export default function FoodScreen({ screen }) {
     { kcal: 0, pro: 0, car: 0, gra: 0 }
   )
 
-  const procesarFoto = (file, modo) => {
+  const procesarFoto = async (file, modo) => {
     if (!file) return
-    const reader = new FileReader()
-    reader.onload = async (ev) => {
-      const b64 = ev.target.result.split(',')[1]
-      setAnalizando(modo)
-      setResultado(null)
-      try {
-        const fn   = modo === 'etiqueta' ? analizarEtiqueta : analizarFoto
-        const data = await fn({ imagen: b64 })
-        setResultado({ ...data, modo, _b64: b64 })
-      } catch { toast.error('No se pudo analizar la imagen.') }
-      finally { setAnalizando(false) }
-    }
-    reader.readAsDataURL(file)
     if (fileInputPlato.current) fileInputPlato.current.value = ''
     if (fileInputEtiqueta.current) fileInputEtiqueta.current.value = ''
+    setAnalizando(modo)
+    setResultado(null)
+    try {
+      // Las etiquetas necesitan más resolución para leer la tabla nutricional
+      const b64  = await fotoABase64(file, modo === 'etiqueta' ? 1600 : 1280)
+      const fn   = modo === 'etiqueta' ? analizarEtiqueta : analizarFoto
+      const data = await fn({ imagen: b64 })
+      if (data.es_comida === false) {
+        toast('Bruce no ve comida en esta foto. Intenta con otra.')
+        return
+      }
+      setResultado({ ...data, modo, _b64: b64 })
+    } catch (e) {
+      toast.error(e.mensaje || 'No se pudo analizar la imagen.')
+    } finally {
+      setAnalizando(false)
+    }
   }
 
   const confirmarResultado = async (accion, datos) => {

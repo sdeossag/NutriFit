@@ -71,8 +71,14 @@ const post = (path, body) =>
   apiFetch(`${BASE}${path}`, {
     method: 'POST',
     body: body instanceof FormData ? body : JSON.stringify(body),
-  }).then((r) => {
-    if (!r.ok) throw new Error(`POST ${path} → ${r.status}`)
+  }).then(async (r) => {
+    if (!r.ok) {
+      const error = new Error(`POST ${path} → ${r.status}`)
+      error.status = r.status
+      // El backend manda mensajes pensados para mostrarse (ej. límite de la IA)
+      try { error.mensaje = (await r.json()).error } catch { /* sin cuerpo JSON */ }
+      throw error
+    }
     return r.json()
   })
 

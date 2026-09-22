@@ -1,3 +1,5 @@
+import base64
+import io
 import json
 import re
 import requests
@@ -900,6 +902,121 @@ Si es un alimento completamente desconocido o imposible de estimar, usa encontra
 
 # ── Analizar foto de plato ────────────────────────────────────────────────
 
+def _preparar_imagen(imagen_b64, lado_max=768):
+    """Normaliza la foto antes de mandarla a la IA.
+
+    Las fotos del celular llegan de varios MB, a veces de lado (orientación en
+    EXIF) y no siempre en JPEG. Se enderezan, se pasan a JPEG y se reducen: el
+    modelo reconoce mejor y cada análisis gasta muchos menos tokens (el plan de
+    Groq permite pocos por minuto). Si algo falla, se envía la original.
+    """
+    datos = imagen_b64.split(',', 1)[1] if imagen_b64.startswith('data:') else imagen_b64
+    try:
+        from PIL import Image, ImageOps
+        img = Image.open(io.BytesIO(base64.b64decode(datos)))
+        img = ImageOps.exif_transpose(img).convert('RGB')
+        img.thumbnail((lado_max, lado_max))
+        buf = io.BytesIO()
+        img.save(buf, 'JPEG', quality=85)
+        datos = base64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        pass
+    return f'data:image/jpeg;base64,{datos}'
+
+
+def _respuesta_error_groq(e):
+    """Traduce errores de Groq a algo que la app pueda mostrar."""
+    codigo = getattr(getattr(e, 'response', None), 'status_code', None)
+    if codigo == 429:
+        return Response(
+            {'error': 'Bruce está atendiendo muchas fotos. Intenta de nuevo en un minuto.'},
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+    return Response({'error': f'Error Groq: {str(e)}'}, status=status.HTTP_502_BAD_GATEWAY)
+
+
+def _sumar_alimentos(data):
+    """El modelo da macros por alimento; el total lo calcula el servidor.
+
+    Sumar en código es más confiable que pedirle al modelo que sume, y así las
+    calorías siempre cuadran con los macros (4·P + 4·C + 9·G).
+    """
+    def num(v):
+        try:
+            return max(float(v), 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    alimentos = [a for a in (data.get('alimentos') or []) if isinstance(a, dict)]
+    if data.get('es_comida') is False or not alimentos:
+        return {
+            'es_comida': False,
+            'nombre': 'No se ve comida',
+            'calorias': 0, 'proteina': 0.0, 'carbos': 0.0, 'grasas': 0.0,
+            'confianza': 'baja',
+            'descripcion': data.get('observacion') or 'No se ve comida en la foto.',
+            'fuente': 'estimacion',
+            'alimentos': [],
+        }
+
+    proteina = round(sum(num(a.get('proteina')) for a in alimentos), 1)
+    carbos   = round(sum(num(a.get('carbos'))   for a in alimentos), 1)
+    grasas   = round(sum(num(a.get('grasas'))   for a in alimentos), 1)
+    calorias = round(sum(num(a.get('calorias')) for a in alimentos))
+    por_macros = round(4 * proteina + 4 * carbos + 9 * grasas)
+    # Si las calorías no cuadran con los macros (más de 20%), mandan los macros
+    if por_macros and abs(calorias - por_macros) > 0.2 * por_macros:
+        calorias = por_macros
+
+    confianza = data.get('confianza') if data.get('confianza') in ('alta', 'media', 'baja') else 'media'
+    return {
+        'es_comida':   True,
+        'nombre':      data.get('nombre') or alimentos[0].get('nombre', 'Comida'),
+        'calorias':    calorias,
+        'proteina':    proteina,
+        'carbos':      carbos,
+        'grasas':      grasas,
+        'confianza':   confianza,
+        'descripcion': data.get('descripcion') or data.get('observacion', ''),
+        'fuente':      data.get('fuente', 'estimacion'),
+        'alimentos':   alimentos,
+    }
+
+
+_FORMATO_ANALISIS = """Responde únicamente con un objeto JSON con esta forma:
+{
+  "observacion": "qué se ve, en una frase",
+  "es_comida": true,
+  "nombre": "nombre corto en español de Colombia",
+  "alimentos": [
+    {"nombre": "...", "cantidad": "unidades o porción", "gramos": 0, "calorias": 0, "proteina": 0.0, "carbos": 0.0, "grasas": 0.0}
+  ],
+  "confianza": "alta | media | baja",
+  "descripcion": "la porción en palabras, con los gramos aproximados"
+}
+
+Confianza: "alta" si se reconoce sin duda; "media" si se reconoce pero la preparación, los ingredientes o la porción son inciertos; "baja" si la foto es borrosa, oscura o ambigua."""
+
+_PROMPT_FOTO = """Vas a registrar lo que una persona está por comer a partir de esta foto.
+
+PASO 1 — Observa antes de nombrar.
+Describe solo lo que se ve: cuántos elementos hay, forma, color, textura, brillo, si están enteros, pelados o cortados, y en qué recipiente o superficie están. No supongas ingredientes que no se vean.
+
+PASO 2 — Identifica cada alimento a partir de esa evidencia.
+- Si es un alimento entero y simple (una fruta, un huevo, un pan, una verdura), nómbralo tal cual. No lo conviertas en un plato ni en un producto procesado.
+- Cuidado con alimentos que se parecen: una fruta tiene piel natural, brillo irregular, tallo, hoja o semillas; un producto procesado (panela, queso, galletas, pan) tiene forma geométrica regular y superficie mate o uniforme.
+- Nombres en Colombia: "banano" es la fruta amarilla que se come cruda; "plátano" es el de cocinar (más grande, verde o maduro, casi siempre frito, asado o cocido). No los confundas.
+- Si los componentes visibles corresponden a un plato conocido, usa su nombre común en Colombia. Ejemplos: arroz amarillo mezclado con trozos de pollo = arroz con pollo; fríjoles, arroz, carne molida, chicharrón, huevo frito, plátano maduro, arepa y aguacate en un mismo plato = bandeja paisa. Si solo ves algunos componentes, nombra lo que ves en vez de inventar el plato completo.
+- Si no hay comida en la foto, responde con "es_comida": false.
+
+PASO 3 — Estima la porción que aparece en la foto (no valores por 100 g).
+Cuenta las unidades cuando se pueda y usa pesos típicos por unidad. En platos, usa referencias visuales como el tamaño del plato (plato llano ≈ 26 cm), cubiertos, vasos o manos.
+
+PASO 4 — Calcula los macros de cada alimento con valores nutricionales estándar (USDA o tabla del ICBF). Verifica que calorias ≈ 4×proteina + 4×carbos + 9×grasas.
+
+""" + _FORMATO_ANALISIS
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def analizar_foto(request):
@@ -910,72 +1027,51 @@ def analizar_foto(request):
     if not imagen_b64:
         return Response({'error': 'Se requiere campo "imagen"'}, status=status.HTTP_400_BAD_REQUEST)
 
-    # Si viene corrección, primero buscar en internet
     info_web = None
     if correccion:
+        # La persona corrige qué es: se respeta su palabra y la foto sirve para la porción
         info_web = _buscar_info_nutricional(correccion)
-
-    if correccion and nombre_prev:
         info_str = (
             'Referencia nutricional disponible: ' + json.dumps(info_web, ensure_ascii=False)
             if info_web and info_web.get('encontrado')
-            else 'No hay referencia externa — usa tu conocimiento nutricional para estimar.'
+            else 'No hay referencia externa: usa valores nutricionales estándar (USDA o ICBF).'
         )
-        prompt = f"""Identificaste una foto de comida como "{nombre_prev}" pero el usuario corrige: es "{correccion}".
+        prompt = f"""Antes identificaste esta foto como "{nombre_prev or 'otra cosa'}", pero la persona corrige: es "{correccion}".
+Confía en la corrección para saber QUÉ es, y usa la foto solo para estimar CUÁNTO hay (unidades, tamaño del plato, porción visible).
 
 {info_str}
 
-Ajusta el análisis a "{correccion}" con macros precisos para una porción colombiana típica.
-Responde ÚNICAMENTE con JSON válido:
-{{
-  "nombre": "{correccion}",
-  "calorias": 000,
-  "proteina": 00.0,
-  "carbos": 00.0,
-  "grasas": 00.0,
-  "confianza": "alta|media|baja",
-  "descripcion": "porción específica usada, ej: 1 plato mediano (~350g) con arroz, fríjoles y carne",
-  "fuente": "estimacion"
-}}"""
+Calcula los macros de la porción que se ve. Verifica que calorias ≈ 4×proteina + 4×carbos + 9×grasas. Usa "{correccion}" como nombre.
+
+""" + _FORMATO_ANALISIS
     else:
-        prompt = """Eres un experto en nutrición colombiana. Analiza esta foto de comida.
-
-Identifica el plato y estima macros para una porción colombiana típica (no valores por 100g — una porción real como se sirve).
-Si es un plato mixto (arroz + proteína + ensalada), estima el conjunto completo.
-
-Responde ÚNICAMENTE con JSON válido:
-{
-  "nombre": "nombre específico del plato en español colombiano",
-  "calorias": 000,
-  "proteina": 00.0,
-  "carbos": 00.0,
-  "grasas": 00.0,
-  "confianza": "alta|media|baja",
-  "descripcion": "describe qué componentes ves y la porción estimada, ej: '1 plato de arroz con pollo a la plancha y ensalada (~420g)'",
-  "fuente": "estimacion"
-}
-
-Usa confianza "baja" solo si la imagen es muy oscura, borrosa o el plato es irreconocible."""
-
-    messages = [{'role': 'user', 'content': [
-        {'type': 'text', 'text': prompt},
-        {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{imagen_b64}'}},
-    ]}]
+        prompt = _PROMPT_FOTO
 
     payload = {
-        'model':            settings.GROQ_MODEL,
-        'messages':         messages,
-        'max_tokens':       500,
-        'temperature':      0.1,
-        'reasoning_effort': 'none',  # clave: sin esto el modelo antepone <think> y rompe el parseo
+        'model':       settings.GROQ_MODEL,
+        'messages':    [{'role': 'user', 'content': [
+            {'type': 'text', 'text': prompt},
+            {'type': 'image_url', 'image_url': {'url': _preparar_imagen(imagen_b64)}},
+        ]}],
+        'max_tokens':  900,
+        'temperature': 0.1,
+        # Razona antes de responder (mejora la identificación) pero sin mezclar
+        # ese razonamiento en el texto: la respuesta llega como JSON limpio.
+        'reasoning_effort': 'default',
+        'reasoning_format': 'hidden',
+        'response_format':  {'type': 'json_object'},
     }
 
     try:
-        contenido = _groq_chat(payload, timeout=30)
-        data = _extraer_json(contenido)
-        return Response(data)
+        data = _extraer_json(_groq_chat(payload, timeout=45))
+        resultado = _sumar_alimentos(data)
+        if correccion:
+            resultado['nombre'] = correccion
+            if info_web and info_web.get('encontrado'):
+                resultado['fuente'] = 'internet'
+        return Response(resultado)
     except requests.RequestException as e:
-        return Response({'error': f'Error Groq: {str(e)}'}, status=status.HTTP_502_BAD_GATEWAY)
+        return _respuesta_error_groq(e)
     except json.JSONDecodeError:
         return Response({'error': 'Groq no devolvió JSON válido'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -1044,7 +1140,7 @@ Usa confianza "baja" si la etiqueta está muy borrosa o incompleta. Nunca uses 0
 
     messages = [{'role': 'user', 'content': [
         {'type': 'text', 'text': prompt},
-        {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{imagen_b64}'}},
+        {'type': 'image_url', 'image_url': {'url': _preparar_imagen(imagen_b64, lado_max=1280)}},
     ]}]
 
     payload = {
