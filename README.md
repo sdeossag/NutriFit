@@ -67,7 +67,7 @@ A full-stack AI-powered nutrition and fitness tracking Progressive Web App (PWA)
 | AI | Groq API — `qwen/qwen3.6-27b` (reasoning hidden) |
 | Push | pywebpush + VAPID (Web Push Protocol) |
 | Static files | WhiteNoise |
-| Hosting | Render (free tier, kept alive via UptimeRobot) |
+| Hosting | Koyeb (free instance, Docker, kept alive via UptimeRobot) |
 
 ### Frontend
 | Layer | Technology |
@@ -85,7 +85,7 @@ A full-stack AI-powered nutrition and fitness tracking Progressive Web App (PWA)
 | GitHub Actions | Cron — triggers smart notifications 4×/day |
 | UptimeRobot | Keepalive ping to `/api/health/` every 5 min |
 | Neon | Serverless PostgreSQL |
-| Render | Backend hosting |
+| Koyeb | Backend hosting |
 | Vercel | Frontend hosting + CDN |
 
 ---
@@ -193,7 +193,7 @@ nutrifit-v2/
 
 ## Environment Variables
 
-### Backend (Render)
+### Backend (Koyeb)
 ```env
 SECRET_KEY=
 DATABASE_URL=                  # Neon PostgreSQL connection string
@@ -211,7 +211,7 @@ DEBUG=False
 
 ### Frontend (Vercel)
 ```env
-VITE_API_URL=https://your-backend.onrender.com/api
+VITE_API_URL=https://your-backend.koyeb.app/api
 VITE_VAPID_PUBLIC_KEY=         # base64url EC public key (uncompressed point)
 VITE_GOOGLE_CLIENT_ID=
 ```
@@ -235,7 +235,7 @@ To set up, add these secrets to the GitHub repository:
 
 | Secret | Value |
 |--------|-------|
-| `BACKEND_URL` | `https://your-backend.onrender.com` |
+| `BACKEND_URL` | `https://your-backend.koyeb.app` |
 | `CRON_SECRET` | Your chosen secret string |
 
 ---
@@ -265,7 +265,7 @@ npm run dev
 
 ## Deployment
 
-- **Backend**: push to `main` → Render auto-deploys, runs migrations
+- **Backend**: push to `main` → Koyeb rebuilds `backend/Dockerfile` and runs migrations on start
 - **Frontend**: push to `main` → Vercel auto-deploys
 - **Notifications**: GitHub Actions runs on schedule — no additional setup needed after secrets are configured
-- **Keepalive**: UptimeRobot pings `/api/health/` every 5 minutes to prevent Render free-tier sleep
+- **Keepalive**: UptimeRobot pings `/api/health/` every 5 minutes so the Koyeb free instance never scales to zero (it sleeps after 1h idle)
