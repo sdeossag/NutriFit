@@ -36,10 +36,6 @@ const POSES = {
 const FRASE_RESPALDO = 'La consistencia gana siempre. Siempre.'
 
 // Sábado = 6, Domingo = 0
-const esDiaDescanso = () => {
-  const dia = new Date().getDay()
-  return dia === 0 || dia === 6
-}
 const esDeNoche = () => {
   const h = new Date().getHours()
   return h >= 20 || h < 6
@@ -93,7 +89,8 @@ function BruceCard({ resumen, entrar, onOpenChat, usuario }) {
   useEffect(() => () => { vivo.current = false }, [])
 
   const esNoche  = esDeNoche()
-  const descanso = esDiaDescanso()
+  // El servidor sabe qué días tienen rutina en tu semana
+  const descanso = resumen?.es_dia_descanso ?? false
   const imagenBruce = esNoche ? POSES.batman : POSES[pose] ?? POSES.normal
 
   useEffect(() => {
@@ -106,7 +103,7 @@ function BruceCard({ resumen, entrar, onOpenChat, usuario }) {
       meta_proteina:  resumen.metas?.proteina    ?? 140,
       carbos_hoy:     resumen.totales?.carbos    ?? 0,
       meta_carbos:    resumen.metas?.carbos      ?? 200,
-      es_dia_gym:     !esDiaDescanso(),
+      es_dia_gym:     !resumen.es_dia_descanso,
       hora:           new Date().getHours(),
       racha_gym:      resumen.racha_gym          ?? 0,
       racha_comida:   resumen.racha_comida       ?? 0,

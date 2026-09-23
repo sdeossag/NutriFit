@@ -65,6 +65,7 @@ const POOL_DEFAULT = [
 
 // Colores para las rutinas: los mismos tonos del sistema de diseño, pensados para fondo oscuro
 const PALETA = ['#4ade80', '#60a5fa', '#a78bfa', '#f472b6', '#f87171', '#fb923c', '#fbbf24', '#2dd4bf', '#22d3ee', '#a3a3a3']
+const NOMBRE_COLOR = ['Verde', 'Azul', 'Morado', 'Rosa', 'Rojo', 'Naranja', 'Amarillo', 'Turquesa', 'Cian', 'Gris']
 
 const DESCANSO = { id: null, nombre: 'Descanso', emoji: '🛌', color: null, ejercicios: [] }
 const COLORES_DESCANSO = { bg: 'rgba(255,255,255,0.05)', border: 'rgba(255,255,255,0.08)', text: '#9ca3af', glow: 'transparent' }
@@ -424,14 +425,14 @@ function RutinaEditor({ open, rutina, diasUso = [], pool, onSave, onClose, onEli
               </div>
             )}
             <div role='radiogroup' aria-label='Color de la rutina' style={{ display: 'flex', justifyContent: 'space-between', marginTop: '14px' }}>
-              {PALETA.map(c => {
+              {PALETA.map((c, i) => {
                 const activo = c === color
                 return (
                   <button
                     key={c}
                     role='radio'
                     aria-checked={activo}
-                    aria-label={`Color ${c}`}
+                    aria-label={NOMBRE_COLOR[i]}
                     onClick={() => { setColor(c); haptic(6) }}
                     className='nf-swatch'
                     style={{ '--swatch': c }}
@@ -705,9 +706,20 @@ export default function GymScreen({ t, screen }) {
         // Marca lo que ya se registró esta semana, contra la rutina de cada sesión
         const refs = {}, hechos = {}, logs = {}
         for (const s of Array.isArray(sesiones) ? sesiones : []) {
-          if (s.rutina_ref && nuevaLib[s.rutina_ref]) refs[s.fecha] = s.rutina_ref
           const [y, m, dd] = s.fecha.split('-').map(Number)
           const dow = (new Date(y, m - 1, dd).getDay() + 6) % 7
+          // Solo una sesión con ejercicios hechos fija la rutina de esa fecha.
+          // Las guardadas antes de existir rutina_ref se enlazan con la rutina
+          // que contiene esos ejercicios (primero la del plan de ese día).
+          const nombres = (s.ejercicios ?? []).map(e => e.nombre)
+          const contiene = (r) => r && nombres.every(n => r.ejercicios.some(ex => ex.nombre === n))
+          if (nombres.length) {
+            if (nuevaLib[s.rutina_ref]) refs[s.fecha] = s.rutina_ref
+            else if (!contiene(nuevaLib[nuevoPlan[dow]])) {
+              const r = Object.values(nuevaLib).find(contiene)
+              if (r) refs[s.fecha] = r.id
+            }
+          }
           const rutina = nuevaLib[refs[s.fecha] ?? nuevoPlan[dow]]
           if (!rutina) continue
           const idxs = [], log = {}
@@ -780,7 +792,7 @@ export default function GymScreen({ t, screen }) {
         fecha, rutina_ref: rutina.id, ejercicios,
         notas: `${ejercicios.length}/${rutina.ejercicios.length} ejercicios`,
       })
-      if (rutina.id != null) setRefPorFecha(prev => ({ ...prev, [fecha]: rutina.id }))
+      setRefPorFecha(prev => (rutina.id != null && ejercicios.length ? { ...prev, [fecha]: rutina.id } : sinClave(prev, fecha)))
       haptic(20)
       setGuardado(prev => ({ ...prev, [fecha]: true }))
       setTimeout(() => setGuardado(prev => sinClave(prev, fecha)), 2000)
@@ -899,7 +911,7 @@ export default function GymScreen({ t, screen }) {
   const totalEjerciciosDia       = rutinaSeleccionada?.ejercicios?.length ?? 0
   const sesionCompleta           = totalEjerciciosDia > 0 && completadosSeleccionados.length === totalEjerciciosDia
   // Si ese día ya tiene sesión guardada con otra rutina, cambiar el plan no la toca
-  const diaConSesionFija         = Boolean(refPorFecha[selectedFecha]) && selectedFecha !== hoy
+  const diaConSesionFija         = Boolean(refPorFecha[selectedFecha])
 
   return (
     <div style={{ padding: 'calc(var(--safe-top) + 20px) 16px 0' }}>
@@ -1023,8 +1035,8 @@ export default function GymScreen({ t, screen }) {
                 {cambiarAbierto ? <IconX size={15} /> : <IconReplace size={15} />} {cambiarAbierto ? 'Cerrar' : 'Cambiar'}
               </button>
               {rutinaSeleccionada.id != null && (
-                <button onClick={() => abrirEditor(rutinaSeleccionada)} className='nf-btn nf-btn--sm nf-btn--tinted' style={{ '--tint': colores.text }} aria-label={`Editar ${rutinaSeleccionada.nombre}`}>
-                  <IconPencil size={15} /> Editar
+                <button onClick={() => abrirEditor(rutinaSeleccionada)} className='nf-btn nf-btn--sm nf-btn--tinted' style={{ '--tint': colores.text, padding: 0, width: '34px' }} aria-label={`Editar ${rutinaSeleccionada.nombre}`}>
+                  <IconPencil size={16} />
                 </button>
               )}
             </div>

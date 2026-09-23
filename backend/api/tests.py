@@ -220,3 +220,10 @@ class RutinasTests(Base):
                                                    'ejercicios': [{'nombre': 'Pec fly'}]}, format='json')
         self.api.put('/api/rutinas/semana/', {'semana': {'0': None}}, format='json')
         self.assertEqual(SesionGym.objects.get().rutina_ref_id, pecho)
+
+    def test_resumen_sabe_si_hoy_es_descanso_segun_el_plan(self):
+        with en(HOY):  # martes
+            self.api.get('/api/rutinas/')
+            self.assertFalse(self.api.get('/api/resumen/').data['es_dia_descanso'])
+            self.api.put('/api/rutinas/semana/', {'semana': {'1': None}}, format='json')
+            self.assertTrue(self.api.get('/api/resumen/').data['es_dia_descanso'])

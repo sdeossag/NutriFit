@@ -37,6 +37,19 @@ function useTecladoAbierto() {
   return abierto
 }
 
+function SinConexion({ onReintentar }) {
+  return (
+    <div style={{ minHeight: 'var(--app-h)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', textAlign: 'center' }}>
+      <img src={bruceFace} alt='' width={72} height={72} style={{ borderRadius: '22px', marginBottom: '16px', opacity: 0.85 }} />
+      <p className='nf-headline' style={{ marginBottom: '4px' }}>No hay conexión con NutriFit</p>
+      <p className='nf-footnote' style={{ marginBottom: '20px', maxWidth: '280px' }}>
+        Revisa tu internet. Si estás conectado, el servidor se está actualizando: vuelve a intentar en unos segundos.
+      </p>
+      <button className='nf-btn nf-btn--tinted' onClick={onReintentar}>Reintentar</button>
+    </div>
+  )
+}
+
 function Splash() {
   return (
     <div style={{ minHeight: 'var(--app-h)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -52,22 +65,32 @@ export default function App() {
   const [screen,        setScreen]        = useState('home')
   const [lang,          setLang]          = useState('es')
   const [usuario,       setUsuario]       = useState(null)
-  const [authChecked,   setAuthChecked]   = useState(false)
+  // Sin token no hay nada que comprobar: directo a iniciar sesión
+  const [authChecked,   setAuthChecked]   = useState(() => !getAccessToken())
+  const [sinConexion,   setSinConexion]   = useState(false)
   const [perfilAbierto, setPerfilAbierto] = useState(false)
   const mainRef = useRef(null)
   const scrollPorPantalla = useRef({})
   const tecladoAbierto = useTecladoAbierto()
   const t = T[lang]
 
+  const cargarSesion = () => {
+    getMiPerfil()
+      .then(data => { setUsuario(data.usuario); setAuthChecked(true); checkPushHoy() })
+      .catch(e => {
+        // Token inválido: a iniciar sesión. Servidor caído o sin internet: se
+        // conserva la sesión y se ofrece reintentar, en vez de sacar a la persona.
+        if (e.status === 401 || e.status === 403) {
+          limpiarTokens()
+          setAuthChecked(true)
+        } else {
+          setSinConexion(true)
+        }
+      })
+  }
+
   useEffect(() => {
-    if (getAccessToken()) {
-      getMiPerfil()
-        .then(data => { setUsuario(data.usuario); checkPushHoy() })
-        .catch(() => limpiarTokens())
-        .finally(() => setAuthChecked(true))
-    } else {
-      setAuthChecked(true)
-    }
+    if (getAccessToken()) cargarSesion()
   }, [])
 
   const handleLogin              = (d) => { setUsuario(d); setScreen('home') }
@@ -92,6 +115,7 @@ export default function App() {
 
   const cerrarPerfil = useCallback(() => setPerfilAbierto(false), [])
 
+  if (sinConexion) return <SinConexion onReintentar={() => { setSinConexion(false); cargarSesion() }} />
   if (!authChecked) return <Splash />
 
   if (!usuario) {

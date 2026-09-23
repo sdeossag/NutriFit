@@ -510,7 +510,8 @@ def resumen_hoy(request):
         'grasas':   user.meta_grasas,
     }
 
-    racha_gym    = estadisticas.racha_gym(user, hoy)
+    descanso     = estadisticas.dias_descanso(user)
+    racha_gym    = estadisticas.racha_gym(user, hoy, descanso)
     racha_comida = estadisticas.racha_comida(user, hoy)
 
     agua_ml = RegistroAgua.objects.filter(usuario=user, fecha=hoy).aggregate(
@@ -525,6 +526,7 @@ def resumen_hoy(request):
         'racha_gym':    racha_gym,
         'agua_ml':      agua_ml,
         'racha_comida': racha_comida,
+        'es_dia_descanso': hoy.weekday() in descanso,
         'objetivo':     getattr(user, 'objetivo', 'mantener'),
     })
 

@@ -25,7 +25,14 @@ export const refrescarToken = async () => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refresh }),
   })
-  if (!res.ok) { limpiarTokens(); throw new Error('Sesión expirada') }
+  if (!res.ok) {
+    // Solo un token rechazado cierra la sesión. Si el servidor está caído o
+    // reiniciándose (un deploy), la sesión se conserva y se reintenta luego.
+    const error = new Error(`Refresh → ${res.status}`)
+    error.sesionExpirada = res.status === 400 || res.status === 401
+    if (error.sesionExpirada) limpiarTokens()
+    throw error
+  }
   const data = await res.json()
   localStorage.setItem('access_token', data.access)
   return data.access
@@ -52,20 +59,14 @@ const apiFetch = async (url, options = {}) => {
         ...options,
         headers: { ...headers, Authorization: `Bearer ${newToken}` },
       })
-    } catch {
-      limpiarTokens()
-      window.location.reload()
+    } catch (e) {
+      if (e.sesionExpirada) window.location.reload()
+      // Sin conexión: se devuelve el 401 original y quien llamó muestra el error
     }
   }
 
   return res
 }
-
-const get  = (path) =>
-  apiFetch(`${BASE}${path}`).then((r) => {
-    if (!r.ok) throw new Error(`GET ${path} → ${r.status}`)
-    return r.json()
-  })
 
 // Envío con cuerpo. Si falla, el error trae status y el mensaje del backend
 // (pensado para mostrarse, ej. límite de la IA o un dato inválido).
@@ -83,6 +84,7 @@ const enviar = (method) => (path, body) =>
     return r.status === 204 ? null : r.json()
   })
 
+const get   = (path) => enviar('GET')(path)
 const post  = enviar('POST')
 const patch = enviar('PATCH')
 const put   = enviar('PUT')
