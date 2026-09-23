@@ -3,13 +3,14 @@ import io
 import json
 import re
 import requests
+from datetime import timedelta
 
 from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
 
 from rest_framework import status
@@ -19,6 +20,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from . import estadisticas
 from .models import (
     Comida, SesionGym, EjercicioLog, PesoCorporal, AlimentoAlacena,
     MensajeChat, SesionChat, RutinaDia, EjercicioPersonalizado, PushSubscription,
@@ -243,17 +245,11 @@ def apple_login(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def mi_perfil(request):
-    from datetime import timedelta
     user = request.user
     hoy  = timezone.localdate()
 
-    sesiones_totales = SesionGym.objects.filter(usuario=user).count()
-
-    racha = 0
-    dia   = hoy
-    while SesionGym.objects.filter(usuario=user, fecha=dia).exists():
-        racha += 1
-        dia   -= timedelta(days=1)
+    sesiones_totales = SesionGym.objects.filter(usuario=user, completada=True).count()
+    racha = estadisticas.racha_gym(user, hoy)
 
     ultimo_peso = PesoCorporal.objects.filter(usuario=user).order_by('-fecha').first()
 
@@ -440,6 +436,56 @@ Responde ÚNICAMENTE con este JSON válido, sin texto adicional:
 
 
 # ──────────────────────────────────────────────
+#  VALIDACIÓN DE ENTRADAS
+# ──────────────────────────────────────────────
+
+MAX_EJERCICIOS = 40
+RUTINAS_VALIDAS = {'A', 'B', 'C', 'D', 'R'}
+
+
+def _a_bool(valor):
+    if isinstance(valor, str):
+        return valor.strip().lower() in ('true', '1', 'si', 'sí', 'yes')
+    return bool(valor)
+
+
+def _numero(valor, minimo, maximo, entero=False, opcional=False):
+    """Convierte a número dentro de [minimo, maximo]. Devuelve (numero, error)."""
+    if valor in (None, ''):
+        return (None, None) if opcional else (None, 'es obligatorio')
+    try:
+        n = float(str(valor).replace(',', '.'))
+    except (TypeError, ValueError):
+        return None, 'no es un número'
+    if n != n or not (minimo <= n <= maximo):  # n != n: NaN
+        return None, f'debe estar entre {minimo} y {maximo}'
+    return (round(n) if entero else n), None
+
+
+def _validar_ejercicio(item):
+    """Limpia un ejercicio registrado. Devuelve (datos, error)."""
+    if not isinstance(item, dict):
+        return None, 'formato inválido'
+    nombre = str(item.get('nombre') or '').strip()[:200]
+    if not nombre:
+        return None, 'falta el nombre'
+    series, err = _numero(item.get('series', 3), 1, 50, entero=True)
+    if err:
+        return None, f'series {err}'
+    peso, err = _numero(item.get('peso_kg'), 0, 1000, opcional=True)
+    if err:
+        return None, f'peso {err}'
+    return {
+        'nombre':  nombre,
+        'musculo': str(item.get('musculo') or '')[:100],
+        'series':  series,
+        'reps':    str(item.get('reps') or '10').strip()[:50],
+        'peso_kg': peso,
+        'notas':   str(item.get('notas') or '')[:500],
+    }, None
+
+
+# ──────────────────────────────────────────────
 #  RESUMEN DIARIO (Home screen)
 # ──────────────────────────────────────────────
 
@@ -465,18 +511,8 @@ def resumen_hoy(request):
         'grasas':   user.meta_grasas,
     }
 
-    # Rachas (hacia atrás desde hoy)
-    racha_gym = 0
-    dia = hoy
-    while SesionGym.objects.filter(usuario=user, fecha=dia, completada=True).exists():
-        racha_gym += 1
-        dia -= timedelta(days=1)
-
-    racha_comida = 0
-    dia = hoy
-    while Comida.objects.filter(usuario=user, fecha=dia).exists():
-        racha_comida += 1
-        dia -= timedelta(days=1)
+    racha_gym    = estadisticas.racha_gym(user, hoy)
+    racha_comida = estadisticas.racha_comida(user, hoy)
 
     agua_ml = RegistroAgua.objects.filter(usuario=user, fecha=hoy).aggregate(
         total=models.Sum('cantidad_ml')
@@ -502,7 +538,9 @@ def resumen_hoy(request):
 @permission_classes([IsAuthenticated])
 def comidas(request):
     if request.method == 'GET':
-        fecha = request.query_params.get('fecha', timezone.localdate().isoformat())
+        fecha = estadisticas.parsear_fecha(request.query_params.get('fecha'), timezone.localdate())
+        if fecha is None:
+            return Response({'error': 'Formato de fecha inválido (YYYY-MM-DD)'}, status=status.HTTP_400_BAD_REQUEST)
         qs    = Comida.objects.filter(usuario=request.user, fecha=fecha)
         return Response(ComidaSerializer(qs, many=True).data)
 
@@ -585,53 +623,83 @@ def sesion_por_fecha(request, fecha):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def registrar_sesion(request):
-    fecha = request.data.get('fecha', timezone.localdate().isoformat())
-    sesion, _ = SesionGym.objects.update_or_create(
-        usuario=request.user,
-        fecha=fecha,
-        defaults={
-            'rutina':     request.data.get('rutina', 'R'),
-            'completada': request.data.get('completada', False),
-            'notas':      request.data.get('notas', ''),
-        },
-    )
+    """Guarda la sesión de un día y, si llegan, sus ejercicios hechos.
+
+    Body: { fecha, rutina, notas, ejercicios?: [{nombre, musculo, series, reps, peso_kg, notas}] }
+    Con `ejercicios`, los registros del día se reemplazan por los enviados (lo
+    que se desmarcó desaparece) y la sesión cuenta como completada si hubo al
+    menos uno. Todo en una transacción: o se guarda completa o nada.
+    """
+    fecha = estadisticas.parsear_fecha(request.data.get('fecha'), timezone.localdate())
+    if fecha is None:
+        return Response({'error': 'Formato de fecha inválido (YYYY-MM-DD)'}, status=status.HTTP_400_BAD_REQUEST)
+    if fecha > timezone.localdate() + timedelta(days=1):
+        return Response({'error': 'No se pueden registrar sesiones futuras'}, status=status.HTTP_400_BAD_REQUEST)
+
+    rutina = str(request.data.get('rutina') or 'R')[:1]
+    lista  = request.data.get('ejercicios')
+
+    registros = None
+    if lista is not None:
+        if not isinstance(lista, list) or len(lista) > MAX_EJERCICIOS:
+            return Response({'error': 'ejercicios debe ser una lista'}, status=status.HTTP_400_BAD_REQUEST)
+        registros, errores = [], []
+        vistos = set()
+        for i, item in enumerate(lista):
+            datos, error = _validar_ejercicio(item)
+            if error:
+                errores.append(f'Ejercicio {i + 1}: {error}')
+            elif datos['nombre'].lower() not in vistos:
+                vistos.add(datos['nombre'].lower())
+                registros.append(datos)
+        if errores:
+            return Response({'error': ' · '.join(errores)}, status=status.HTTP_400_BAD_REQUEST)
+        completada = len(registros) > 0
+    else:
+        completada = _a_bool(request.data.get('completada', False))
+
+    with transaction.atomic():
+        sesion, _ = SesionGym.objects.update_or_create(
+            usuario=request.user,
+            fecha=fecha,
+            defaults={
+                'rutina':     rutina,
+                'completada': completada,
+                'notas':      str(request.data.get('notas', ''))[:500],
+            },
+        )
+        if registros is not None:
+            sesion.ejercicios.all().delete()
+            EjercicioLog.objects.bulk_create([EjercicioLog(sesion=sesion, **r) for r in registros])
+
     return Response(SesionGymSerializer(sesion).data, status=status.HTTP_201_CREATED)
 
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def log_ejercicio(request):
-    from datetime import datetime
+    """Registra un solo ejercicio (versiones viejas de la app). Marca la sesión como hecha."""
+    fecha = estadisticas.parsear_fecha(request.data.get('fecha'), timezone.localdate())
+    if fecha is None:
+        return Response({'error': 'Formato de fecha inválido (YYYY-MM-DD)'}, status=status.HTTP_400_BAD_REQUEST)
 
-    fecha = request.data.get('fecha')
-    if fecha:
-        try:
-            fecha_obj = datetime.strptime(fecha, '%Y-%m-%d').date()
-        except (ValueError, TypeError):
-            return Response({'error': 'Formato de fecha inválido (YYYY-MM-DD)'}, status=status.HTTP_400_BAD_REQUEST)
-    else:
-        fecha_obj = timezone.localdate()
+    datos, error = _validar_ejercicio(request.data)
+    if error:
+        return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
 
-    sesion, _ = SesionGym.objects.get_or_create(
-        usuario=request.user,
-        fecha=fecha_obj,
-        defaults={'rutina': 'R', 'completada': False},
-    )
-
-    nombre = request.data.get('nombre')
-    if not nombre:
-        return Response({'error': 'Campo "nombre" requerido'}, status=status.HTTP_400_BAD_REQUEST)
-
-    ejercicio, created = EjercicioLog.objects.update_or_create(
-        sesion=sesion,
-        nombre=nombre,
-        defaults={
-            'musculo': request.data.get('musculo', ''),
-            'series':  request.data.get('series'),
-            'reps':    request.data.get('reps'),
-            'peso_kg': request.data.get('peso_kg'),
-        },
-    )
+    with transaction.atomic():
+        sesion, _ = SesionGym.objects.get_or_create(
+            usuario=request.user,
+            fecha=fecha,
+            defaults={'rutina': 'R'},
+        )
+        if not sesion.completada:
+            sesion.completada = True
+            sesion.save(update_fields=['completada'])
+        nombre = datos.pop('nombre')
+        ejercicio, created = EjercicioLog.objects.update_or_create(
+            sesion=sesion, nombre=nombre, defaults=datos,
+        )
     return Response(
         EjercicioLogSerializer(ejercicio).data,
         status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
@@ -649,18 +717,18 @@ def progreso_semanal(request):
     hoy  = timezone.localdate()
     user = request.user
 
+    inicio   = hoy - timedelta(days=6)
+    totales  = estadisticas.totales_por_dia(user, inicio, hoy)
+    con_gym  = estadisticas.dias_con_gym(user, inicio, hoy)
+
     calorias_semana = []
     for i in range(6, -1, -1):
-        dia         = hoy - timedelta(days=i)
-        comidas_dia = Comida.objects.filter(usuario=user, fecha=dia)
-        total_cal   = sum(c.calorias for c in comidas_dia)
-        hubo_gym    = SesionGym.objects.filter(usuario=user, fecha=dia, completada=True).exists()
-
+        dia = hoy - timedelta(days=i)
         calorias_semana.append({
             'fecha':    dia.isoformat(),
             'dia':      dia.strftime('%a'),
-            'calorias': total_cal,
-            'gym':      hubo_gym,
+            'calorias': totales.get(dia, {}).get('calorias', 0),
+            'gym':      dia in con_gym,
         })
 
     pesos = PesoCorporal.objects.filter(usuario=user).order_by('-fecha')[:7]
@@ -676,14 +744,15 @@ def progreso_semanal(request):
 @permission_classes([IsAuthenticated])
 def registrar_peso(request):
     serializer = PesoCorporalSerializer(data=request.data)
-    if serializer.is_valid():
-        peso, _ = PesoCorporal.objects.update_or_create(
-            usuario=request.user,
-            fecha=request.data.get('fecha', timezone.localdate().isoformat()),
-            defaults={'peso_kg': request.data['peso_kg']},
-        )
-        return Response(PesoCorporalSerializer(peso).data, status=status.HTTP_201_CREATED)
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    datos = serializer.validated_data
+    peso, _ = PesoCorporal.objects.update_or_create(
+        usuario=request.user,
+        fecha=datos.get('fecha') or timezone.localdate(),
+        defaults={'peso_kg': datos['peso_kg']},
+    )
+    return Response(PesoCorporalSerializer(peso).data, status=status.HTTP_201_CREATED)
 
 
 # ──────────────────────────────────────────────
@@ -731,8 +800,13 @@ def alacena_usar(request, pk):
     except AlimentoAlacena.DoesNotExist:
         return Response(status=status.HTTP_404_NOT_FOUND)
 
-    porciones = float(request.data.get('porciones', 1))
-    fecha     = request.data.get('fecha', timezone.localdate().isoformat())
+    porciones, error = _numero(request.data.get('porciones', 1), 0.1, 20)
+    if error:
+        return Response({'error': f'porciones {error}'}, status=status.HTTP_400_BAD_REQUEST)
+    porciones = round(porciones, 2)
+    fecha = estadisticas.parsear_fecha(request.data.get('fecha'), timezone.localdate())
+    if fecha is None:
+        return Response({'error': 'Formato de fecha inválido (YYYY-MM-DD)'}, status=status.HTTP_400_BAD_REQUEST)
 
     comida = Comida.objects.create(
         usuario     = request.user,
@@ -1229,18 +1303,8 @@ def bruce_chat(request, pk):
     fue_al_gym  = sesion_gym.completada if sesion_gym else False
     ultimo_peso = PesoCorporal.objects.filter(usuario=user).order_by('-fecha').first()
 
-    # Rachas
-    racha_gym = 0
-    dia_check = hoy
-    while SesionGym.objects.filter(usuario=user, fecha=dia_check, completada=True).exists():
-        racha_gym += 1
-        dia_check -= timedelta(days=1)
-
-    racha_comida = 0
-    dia_check = hoy
-    while Comida.objects.filter(usuario=user, fecha=dia_check).exists():
-        racha_comida += 1
-        dia_check -= timedelta(days=1)
+    racha_gym    = estadisticas.racha_gym(user, hoy)
+    racha_comida = estadisticas.racha_comida(user, hoy)
 
     objetivo_texto = {
         'perder':   'perder grasa',
@@ -1348,20 +1412,20 @@ def progreso_completo(request):
     user = request.user
 
     # ── 30 días de actividad ──────────────────────────────────────────────
+    inicio  = hoy - timedelta(days=29)
+    totales = estadisticas.totales_por_dia(user, inicio, hoy)
+    con_gym = estadisticas.dias_con_gym(user, inicio, hoy)
     dias = []
     for i in range(29, -1, -1):
-        dia         = hoy - timedelta(days=i)
-        comidas_dia = Comida.objects.filter(usuario=user, fecha=dia)
-        total_cal   = sum(c.calorias for c in comidas_dia)
-        total_prot  = round(sum(c.proteina for c in comidas_dia), 1)
-        hubo_gym    = SesionGym.objects.filter(usuario=user, fecha=dia, completada=True).exists()
+        dia = hoy - timedelta(days=i)
+        t   = totales.get(dia, {})
         dias.append({
             'fecha':    dia.isoformat(),
             'dia_sem':  dia.weekday(),
             'dia_abr':  dia.strftime('%a'),
-            'calorias': total_cal,
-            'proteina': total_prot,
-            'gym':      hubo_gym,
+            'calorias': t.get('calorias', 0),
+            'proteina': t.get('proteina', 0),
+            'gym':      dia in con_gym,
         })
 
     semana_actual   = dias[-7:]
@@ -1400,41 +1464,24 @@ def progreso_completo(request):
         }
 
     # ── Score semanal (0–100) ─────────────────────────────────────────────
+    # El gym se mide contra los días que la persona planeó entrenar, no contra 7
+    descanso       = estadisticas.dias_descanso(user)
+    dias_planeados = max(7 - len(descanso), 1)
     meta_cal     = user.meta_calorias or 1900
     dias_s       = semana_actual
     dias_gym     = sum(1 for d in dias_s if d['gym'])
     dias_cal     = sum(1 for d in dias_s if d['calorias'] >= meta_cal * 0.8 and d['calorias'] <= meta_cal * 1.1)
     dias_activos = sum(1 for d in dias_s if d['calorias'] > 0 or d['gym'])
-    score = round(
-        (dias_gym / 7)     * 50 +
-        (dias_cal / 7)     * 35 +
-        (dias_activos / 7) * 15
-    )
+    pct_gym        = round(min(dias_gym / dias_planeados, 1) * 50)
+    pct_cal        = round((dias_cal / 7) * 35)
+    pct_constancia = round((dias_activos / 7) * 15)
+    score = pct_gym + pct_cal + pct_constancia
 
-    # ── Racha real (hacia atrás desde hoy sin límite de 7 días) ──────────
-    racha_gym    = 0
-    racha_comida = 0
-    dia_check    = hoy
-
-    while True:
-        existe = SesionGym.objects.filter(
-            usuario=user, fecha=dia_check, completada=True
-        ).exists()
-        if not existe:
-            break
-        racha_gym += 1
-        dia_check -= timedelta(days=1)
-
-    dia_check = hoy
-    while True:
-        tiene_comida = Comida.objects.filter(usuario=user, fecha=dia_check).exists()
-        if not tiene_comida:
-            break
-        racha_comida += 1
-        dia_check -= timedelta(days=1)
+    racha_gym    = estadisticas.racha_gym(user, hoy, descanso)
+    racha_comida = estadisticas.racha_comida(user, hoy)
 
     # ── Logros desbloqueados ──────────────────────────────────────────────
-    total_sesiones = SesionGym.objects.filter(usuario=user).count()
+    total_sesiones = SesionGym.objects.filter(usuario=user, completada=True).count()
     total_pesos    = len(pesos)
     peso_inicial   = user.peso_inicial_kg or (pesos[0]['peso_kg'] if pesos else None)
     peso_actual    = pesos[-1]['peso_kg'] if pesos else None
@@ -1462,9 +1509,10 @@ def progreso_completo(request):
             'dias_gym':      dias_gym,
             'dias_cal':      dias_cal,
             'dias_activos':  dias_activos,
-            'pct_gym':       round((dias_gym / 7) * 50),
-            'pct_cal':       round((dias_cal / 7) * 35),
-            'pct_constancia': round((dias_activos / 7) * 15),
+            'dias_planeados': dias_planeados,
+            'pct_gym':       pct_gym,
+            'pct_cal':       pct_cal,
+            'pct_constancia': pct_constancia,
         },
         'racha_gym':        racha_gym,
         'racha_comida':     racha_comida,
@@ -1540,14 +1588,19 @@ def rutinas_dia(request):
         }
         return Response(data)
 
-    dia_semana = request.data.get('dia_semana')
-    if dia_semana is None:
-        return Response({'error': 'Se requiere dia_semana'}, status=status.HTTP_400_BAD_REQUEST)
+    dia_semana, error = _numero(request.data.get('dia_semana'), 0, 6, entero=True)
+    if error:
+        return Response({'error': f'dia_semana {error}'}, status=status.HTTP_400_BAD_REQUEST)
 
-    nombre     = request.data.get('nombre', '')
-    rutina_id  = request.data.get('rutina_id', 'A')
-    emoji      = request.data.get('emoji', '💪')
+    nombre     = str(request.data.get('nombre') or '').strip()[:100]
+    rutina_id  = str(request.data.get('rutina_id') or 'A')[:1]
+    emoji      = str(request.data.get('emoji') or '💪')[:10]
     ejercicios = request.data.get('ejercicios', [])
+    if rutina_id not in RUTINAS_VALIDAS:
+        return Response({'error': 'rutina_id inválido'}, status=status.HTTP_400_BAD_REQUEST)
+    if (not isinstance(ejercicios, list) or len(ejercicios) > MAX_EJERCICIOS
+            or not all(isinstance(e, dict) and str(e.get('nombre') or '').strip() for e in ejercicios)):
+        return Response({'error': 'ejercicios debe ser una lista de ejercicios con nombre'}, status=status.HTTP_400_BAD_REQUEST)
 
     rutina, _ = RutinaDia.objects.update_or_create(
         usuario=request.user, dia_semana=dia_semana,
@@ -1592,14 +1645,21 @@ def ejercicios_personalizados(request):
     if not nombre:
         return Response({'error': 'Se requiere nombre'}, status=status.HTTP_400_BAD_REQUEST)
 
+    series, error = _numero(request.data.get('series', 3), 1, 50, entero=True)
+    if error:
+        return Response({'error': f'series {error}'}, status=status.HTTP_400_BAD_REQUEST)
+    color = str(request.data.get('color') or '#4ade80')
+    if not re.fullmatch(r'#[0-9a-fA-F]{6}', color):
+        return Response({'error': 'color debe ser hexadecimal (#rrggbb)'}, status=status.HTTP_400_BAD_REQUEST)
+
     ejercicio = EjercicioPersonalizado.objects.create(
         usuario=request.user,
-        nombre=nombre,
-        musculo=request.data.get('musculo', 'Personalizado'),
-        series=request.data.get('series', 3),
-        reps=request.data.get('reps', '10'),
-        peso=request.data.get('peso', '—'),
-        color=request.data.get('color', '#4ade80'),
+        nombre=nombre[:200],
+        musculo=str(request.data.get('musculo') or 'Personalizado')[:100],
+        series=series,
+        reps=str(request.data.get('reps') or '10')[:50],
+        peso=str(request.data.get('peso') or '—')[:50],
+        color=color,
     )
     return Response({
         'nombre': ejercicio.nombre, 'musculo': ejercicio.musculo,
@@ -1915,21 +1975,24 @@ def agua(request):
     hoy  = timezone.localdate()
     user = request.user
 
+    fecha = estadisticas.parsear_fecha(
+        request.query_params.get('fecha') if request.method == 'GET' else request.data.get('fecha'), hoy)
+    if fecha is None:
+        return Response({'error': 'Formato de fecha inválido (YYYY-MM-DD)'}, status=400)
+
     if request.method == 'GET':
-        fecha = request.query_params.get('fecha', hoy.isoformat())
         registros = RegistroAgua.objects.filter(usuario=user, fecha=fecha)
         total_ml  = registros.aggregate(total=models.Sum('cantidad_ml'))['total'] or 0
         return Response({
-            'fecha':    fecha,
+            'fecha':    fecha.isoformat(),
             'total_ml': total_ml,
             'registros': [{'id': r.id, 'cantidad_ml': r.cantidad_ml} for r in registros],
         })
 
-    cantidad_ml = int(request.data.get('cantidad_ml', 0))
-    if cantidad_ml <= 0:
-        return Response({'error': 'cantidad_ml debe ser mayor a 0'}, status=400)
+    cantidad_ml, error = _numero(request.data.get('cantidad_ml'), 1, 5000, entero=True)
+    if error:
+        return Response({'error': f'cantidad_ml {error}'}, status=400)
 
-    fecha = request.data.get('fecha', hoy.isoformat())
     registro = RegistroAgua.objects.create(usuario=user, fecha=fecha, cantidad_ml=cantidad_ml)
     total_ml  = RegistroAgua.objects.filter(usuario=user, fecha=fecha).aggregate(
         total=models.Sum('cantidad_ml')

@@ -4,7 +4,7 @@ import {
   IconClock, IconPencil, IconTrash, IconSearch, IconPalette, IconBarbell,
 } from '@tabler/icons-react'
 import {
-  registrarSesion, logEjercicio, getSesionFecha,
+  registrarSesion, getSesionFecha,
   getRutinasDia, guardarRutinaDia,
   getEjerciciosPersonalizados, crearEjercicioPersonalizado,
 } from '../api'
@@ -682,36 +682,34 @@ export default function GymScreen({ t, screen }) {
     const rutina = rutinas[dayOfWeek]
     const completadosDelDia = completados[fecha] || []
     setGuardando(true)
+    // Un solo envío: el servidor reemplaza los ejercicios del día y marca la
+    // sesión como hecha. O se guarda todo o nada.
+    const ejercicios = completadosDelDia
+      .map(idx => {
+        const ejercicio = rutina.ejercicios[idx]
+        if (!ejercicio) return null
+        const logEx = logData[fecha]?.[idx] ?? {}
+        const m = String(logEx.peso || ejercicio.peso || '').replace(',', '.').match(/\d+(\.\d+)?/)
+        return {
+          nombre:  ejercicio.nombre,
+          musculo: ejercicio.musculo || '',
+          series:  ejercicio.series,
+          reps:    logEx.reps || ejercicio.reps,
+          peso_kg: m ? parseFloat(m[0]) : null,
+          notas:   logEx.nota || '',
+        }
+      })
+      .filter(Boolean)
     try {
       await registrarSesion({
-        fecha, rutina: rutina.id, completada: false,
-        notas: `${completadosDelDia.length}/${rutina.ejercicios.length} ejercicios`,
+        fecha, rutina: rutina.id, ejercicios,
+        notas: `${ejercicios.length}/${rutina.ejercicios.length} ejercicios`,
       })
-      for (const idx of completadosDelDia) {
-        const ejercicio = rutina.ejercicios[idx]
-        if (!ejercicio) continue
-        const logEx = logData[fecha]?.[idx] ?? {}
-        const pesoKg = logEx.peso ? parseFloat(logEx.peso) : (() => {
-          const m = ejercicio.peso.match(/[\d.]+/)
-          return m ? parseFloat(m[0]) : null
-        })()
-        try {
-          await logEjercicio({
-            fecha, nombre: ejercicio.nombre,
-            musculo: ejercicio.musculo || '',
-            series: ejercicio.series,
-            reps: logEx.reps || ejercicio.reps,
-            peso_kg: pesoKg,
-            notas: logEx.nota || '',
-          })
-        } catch { /* un ejercicio fallido no bloquea el resto */ }
-      }
       haptic(20)
       setGuardado(prev => ({ ...prev, [fecha]: true }))
       setTimeout(() => setGuardado(prev => sinClave(prev, fecha)), 2000)
     } catch (e) {
-      console.error(e)
-      toast.error('No se pudo guardar la sesión.')
+      toast.error(e.mensaje || 'No se pudo guardar la sesión. Revisa tu conexión e intenta de nuevo.')
     } finally {
       setGuardando(false)
     }

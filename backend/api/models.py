@@ -91,13 +91,18 @@ class Usuario(AbstractUser):
             edad -= 1
         return edad
 
+    def peso_actual(self):
+        """Último peso registrado; si nunca se ha pesado, el del onboarding."""
+        ultimo = self.pesos.order_by('-fecha').values_list('peso_kg', flat=True).first()
+        return ultimo or self.peso_inicial_kg
+
     def calcular_tdee(self):
         """
         Calcula el TDEE usando Harris-Benedict revisado (Mifflin-St Jeor).
         Devuelve None si faltan datos.
         """
         edad    = self.get_edad()
-        peso    = self.peso_inicial_kg
+        peso    = self.peso_actual()
         estatura = self.estatura_cm
 
         if not all([edad, peso, estatura, self.sexo, self.nivel_actividad]):
@@ -141,7 +146,7 @@ class Usuario(AbstractUser):
         calorias = tdee + ajuste
 
         # Macros: proteína alta (2g/kg), grasas 25%, resto carbos
-        peso = self.peso_inicial_kg or 70
+        peso = self.peso_actual() or 70
         proteina = round(peso * 2)
         grasas   = round(calorias * 0.25 / 9)
         carbos   = round((calorias - proteina * 4 - grasas * 9) / 4)
@@ -180,6 +185,7 @@ class Comida(models.Model):
 
     class Meta:
         ordering = ['-creado_en']
+        indexes  = [models.Index(fields=['usuario', 'fecha'], name='comida_usuario_fecha')]
 
     def __str__(self):
         return f"{self.nombre} ({self.fecha}) — {self.calorias} kcal"
@@ -207,7 +213,8 @@ class SesionGym(models.Model):
     notas      = models.TextField(blank=True)
 
     class Meta:
-        ordering = ['-fecha']
+        ordering    = ['-fecha']
+        constraints = [models.UniqueConstraint(fields=['usuario', 'fecha'], name='sesion_unica_por_dia')]
 
     def __str__(self):
         return f"Gym {self.rutina} — {self.fecha}"
@@ -352,6 +359,7 @@ class RegistroAgua(models.Model):
 
     class Meta:
         ordering            = ['-creado_en']
+        indexes             = [models.Index(fields=['usuario', 'fecha'], name='agua_usuario_fecha')]
         verbose_name        = 'Registro de agua'
         verbose_name_plural = 'Registros de agua'
 

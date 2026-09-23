@@ -92,19 +92,19 @@ function ScoreArc({ score, animado, desglose }) {
         >
           <p className='nf-footnote' style={{ fontWeight: 600, marginBottom: '10px', color: 'var(--label)' }}>Cómo se calcula</p>
           {[
-            { label: 'Gym (50%)',        val: desglose.dias_gym,     pts: desglose.pct_gym,        color: C.green  },
-            { label: 'Calorías (35%)',   val: desglose.dias_cal,     pts: desglose.pct_cal,        color: C.blue   },
-            { label: 'Constancia (15%)', val: desglose.dias_activos, pts: desglose.pct_constancia, color: C.purple },
-          ].map(({ label, val, pts, color }) => (
+            { label: 'Gym (50%)',        val: desglose.dias_gym,     total: desglose.dias_planeados ?? 7, pts: desglose.pct_gym,        color: C.green  },
+            { label: 'Calorías (35%)',   val: desglose.dias_cal,     total: 7, pts: desglose.pct_cal,        color: C.blue   },
+            { label: 'Constancia (15%)', val: desglose.dias_activos, total: 7, pts: desglose.pct_constancia, color: C.purple },
+          ].map(({ label, val, total, pts, color }) => (
             <div key={label} style={{ marginBottom: '10px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                 <span className='nf-caption' style={{ color: 'var(--label-2)' }}>{label}</span>
                 <span className='nf-num' style={{ fontSize: '12px', fontWeight: 700, color }}>+{pts} pts</span>
               </div>
               <div style={{ height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '2px', overflow: 'hidden' }}>
-                <div style={{ height: '100%', width: '100%', background: color, transform: `scaleX(${val / 7})`, transformOrigin: 'left' }} />
+                <div style={{ height: '100%', width: '100%', background: color, transform: `scaleX(${Math.min(val / total, 1)})`, transformOrigin: 'left' }} />
               </div>
-              <span className='nf-caption nf-num'>{val} de 7 días</span>
+              <span className='nf-caption nf-num'>{val} de {total} días</span>
             </div>
           ))}
         </div>
@@ -113,11 +113,12 @@ function ScoreArc({ score, animado, desglose }) {
   )
 }
 
-const ANILLOS = (diasGym, diasCal, diasActivos) => [
-  { label: 'Gym',       val: diasGym     / 7, color: C.green,  r: 44, stroke: 10 },
-  { label: 'Calorías',  val: diasCal     / 7, color: C.blue,   r: 32, stroke: 9  },
-  { label: 'Actividad', val: diasActivos / 7, color: C.purple, r: 20, stroke: 8  },
-]
+// El anillo de gym se cierra con los días que la persona planeó entrenar, no con 7
+const ANILLOS = (diasGym, diasCal, diasActivos, planeados = 7) => [
+  { label: 'Gym',       dias: diasGym,     total: planeados, color: C.green,  r: 44, stroke: 10 },
+  { label: 'Calorías',  dias: diasCal,     total: 7,         color: C.blue,   r: 32, stroke: 9  },
+  { label: 'Actividad', dias: diasActivos, total: 7,         color: C.purple, r: 20, stroke: 8  },
+].map(a => ({ ...a, val: a.dias / a.total }))
 
 function AnillosFitness({ anillos, animado }) {
   const SIZE = 110
@@ -145,9 +146,9 @@ function AnillosFitness({ anillos, animado }) {
 function LeyendaAnillos({ anillos }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginTop: '14px', paddingTop: '14px', boxShadow: 'inset 0 0.5px 0 var(--separator)' }}>
-      {anillos.map(({ label, val, color }) => (
+      {anillos.map(({ label, dias, total, color }) => (
         <div key={label} style={{ textAlign: 'center' }}>
-          <p className='nf-num' style={{ fontSize: '17px', fontWeight: 700, color }}>{Math.round(val * 7)}<span className='nf-caption' style={{ fontWeight: 500 }}>/7</span></p>
+          <p className='nf-num' style={{ fontSize: '17px', fontWeight: 700, color }}>{dias}<span className='nf-caption' style={{ fontWeight: 500 }}>/{total}</span></p>
           <p className='nf-caption' style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
             <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: color }} />
             {label}
@@ -700,9 +701,10 @@ export default function ProgressScreen({ t, screen }) {
   const pesoDiff     = pesoActual && pesoAnterior ? +(pesoActual - pesoAnterior).toFixed(1) : null
 
   const diasGym     = semanaActual.filter(d => d.gym).length
-  const diasCal     = semanaActual.filter(d => d.calorias >= metaCal * 0.8).length
+  // Mismo criterio que el servidor: entre 80% y 110% de la meta
+  const diasCal     = semanaActual.filter(d => d.calorias >= metaCal * 0.8 && d.calorias <= metaCal * 1.1).length
   const diasActivos = semanaActual.filter(d => d.calorias > 0 || d.gym).length
-  const anillos     = ANILLOS(diasGym, diasCal, diasActivos)
+  const anillos     = ANILLOS(diasGym, diasCal, diasActivos, data?.desglose_score?.dias_planeados)
 
   const promedioCal = (() => {
     const con = semanaActual.filter(d => d.calorias > 0)

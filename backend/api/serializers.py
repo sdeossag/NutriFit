@@ -124,6 +124,11 @@ class OnboardingSerializer(serializers.ModelSerializer):
 # ──────────────────────────────────────────────
 
 class ComidaSerializer(serializers.ModelSerializer):
+    calorias = serializers.IntegerField(min_value=0, max_value=10000, required=False)
+    proteina = serializers.FloatField(min_value=0, max_value=1000, required=False)
+    carbos   = serializers.FloatField(min_value=0, max_value=1000, required=False)
+    grasas   = serializers.FloatField(min_value=0, max_value=1000, required=False)
+
     class Meta:
         model  = Comida
         fields = '__all__'
@@ -154,10 +159,14 @@ class SesionGymSerializer(serializers.ModelSerializer):
 # ──────────────────────────────────────────────
 
 class PesoCorporalSerializer(serializers.ModelSerializer):
+    peso_kg = serializers.FloatField(min_value=20, max_value=400)
+
     class Meta:
         model  = PesoCorporal
         fields = '__all__'
         read_only_fields = ['usuario']
+        # La unicidad (usuario, fecha) la resuelve la vista con update_or_create
+        validators = []
 
 
 # ──────────────────────────────────────────────
