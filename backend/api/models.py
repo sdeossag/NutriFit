@@ -208,6 +208,8 @@ class SesionGym(models.Model):
         null=True, blank=True, related_name='sesiones'
     )
     rutina     = models.CharField(max_length=1, choices=RUTINAS)
+    # Qué rutina se hizo ese día: si luego se mueve a otro día, el historial no cambia
+    rutina_ref = models.ForeignKey('Rutina', on_delete=models.SET_NULL, null=True, blank=True, related_name='sesiones')
     fecha      = models.DateField(default=timezone.localdate)
     completada = models.BooleanField(default=False)
     notas      = models.TextField(blank=True)
@@ -308,18 +310,33 @@ class MensajeChat(models.Model):
 #  RUTINAS PERSONALIZADAS POR DÍA
 # ──────────────────────────────────────────────
 
-class RutinaDia(models.Model):
+class Rutina(models.Model):
+    """Una rutina completa (el "paquete"): se asigna a uno o varios días de la semana.
+
+    ejercicios: lista de { nombre, musculo, series, reps, peso, custom, color }
     """
-    Rutina de gym personalizada por usuario y día de la semana.
+    usuario     = models.ForeignKey('Usuario', on_delete=models.CASCADE, related_name='rutinas')
+    nombre      = models.CharField(max_length=100)
+    emoji       = models.CharField(max_length=10, default='💪')
+    color       = models.CharField(max_length=7, default='#4ade80')  # hex
+    ejercicios  = models.JSONField(default=list, blank=True)
+    creado_en   = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['creado_en', 'id']
+
+    def __str__(self):
+        return f"{self.usuario} — {self.nombre}"
+
+
+class RutinaDia(models.Model):
+    """Qué rutina toca cada día de la semana. rutina=None es día de descanso.
     dia_semana: 0=Lunes ... 6=Domingo (mismo criterio que usa el frontend)
-    ejercicios: lista de objetos { nombre, series, reps, peso, musculo, custom, color }
     """
     usuario     = models.ForeignKey('Usuario', on_delete=models.CASCADE, related_name='rutinas_dia')
     dia_semana  = models.IntegerField()  # 0-6
-    nombre      = models.CharField(max_length=100)
-    rutina_id   = models.CharField(max_length=1, default='A')  # A/B/C/D/R — para el color del calendario
-    emoji       = models.CharField(max_length=10, default='💪')
-    ejercicios  = models.JSONField(default=list, blank=True)
+    rutina      = models.ForeignKey(Rutina, on_delete=models.SET_NULL, null=True, blank=True, related_name='dias')
     actualizado = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -327,7 +344,7 @@ class RutinaDia(models.Model):
         unique_together  = ['usuario', 'dia_semana']
 
     def __str__(self):
-        return f"{self.usuario} — Día {self.dia_semana}: {self.nombre}"
+        return f"{self.usuario} — Día {self.dia_semana}: {self.rutina or 'Descanso'}"
 
 
 class EjercicioPersonalizado(models.Model):

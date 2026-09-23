@@ -28,17 +28,14 @@ def parsear_fecha(valor, por_defecto=None):
 
 def dias_descanso(user):
     """Días de la semana (0=Lunes) en que el usuario no tiene que entrenar."""
-    guardadas = {
-        r.dia_semana: r
-        for r in RutinaDia.objects.filter(usuario=user).only('dia_semana', 'rutina_id', 'ejercicios')
-    }
+    guardados = {d.dia_semana: d for d in RutinaDia.objects.filter(usuario=user).select_related('rutina')}
     descanso = set()
     for dia in range(7):
-        r = guardadas.get(dia)
-        if r is None:
+        d = guardados.get(dia)
+        if d is None:
             if dia in DESCANSO_POR_DEFECTO:
                 descanso.add(dia)
-        elif r.rutina_id == 'R' or not r.ejercicios:
+        elif d.rutina is None or not d.rutina.ejercicios:
             descanso.add(dia)
     return descanso
 

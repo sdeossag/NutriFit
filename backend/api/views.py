@@ -23,7 +23,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from . import estadisticas
 from .models import (
     Comida, SesionGym, EjercicioLog, PesoCorporal, AlimentoAlacena,
-    MensajeChat, SesionChat, RutinaDia, EjercicioPersonalizado, PushSubscription,
+    MensajeChat, SesionChat, Rutina, EjercicioPersonalizado, PushSubscription,
     RegistroAgua,
 )
 from .serializers import (
@@ -440,7 +440,6 @@ Responde ÚNICAMENTE con este JSON válido, sin texto adicional:
 # ──────────────────────────────────────────────
 
 MAX_EJERCICIOS = 40
-RUTINAS_VALIDAS = {'A', 'B', 'C', 'D', 'R'}
 
 
 def _a_bool(valor):
@@ -639,6 +638,13 @@ def registrar_sesion(request):
     rutina = str(request.data.get('rutina') or 'R')[:1]
     lista  = request.data.get('ejercicios')
 
+    rutina_ref = None
+    if request.data.get('rutina_ref') is not None:
+        rutina_ref = Rutina.objects.filter(pk=request.data.get('rutina_ref'), usuario=request.user).first()
+        if rutina_ref is None:
+            return Response({'error': 'Esa rutina no existe'}, status=status.HTTP_400_BAD_REQUEST)
+        rutina = 'A'
+
     registros = None
     if lista is not None:
         if not isinstance(lista, list) or len(lista) > MAX_EJERCICIOS:
@@ -664,6 +670,7 @@ def registrar_sesion(request):
             fecha=fecha,
             defaults={
                 'rutina':     rutina,
+                'rutina_ref': rutina_ref,
                 'completada': completada,
                 'notas':      str(request.data.get('notas', ''))[:500],
             },
@@ -1563,60 +1570,6 @@ def historial_ejercicios(request):
     ]
 
     return Response(resultado)
-
-
-# ── Rutinas personalizadas por día ──────────────────────────────────────────
-
-@api_view(['GET', 'PUT'])
-@permission_classes([IsAuthenticated])
-def rutinas_dia(request):
-    """
-    GET: devuelve todas las rutinas del usuario, indexadas por dia_semana.
-    PUT: guarda/actualiza UNA rutina de un día.
-         Body: { dia_semana: 0, nombre, rutina_id, emoji, ejercicios }
-    """
-    if request.method == 'GET':
-        rutinas = RutinaDia.objects.filter(usuario=request.user)
-        data = {
-            str(r.dia_semana): {
-                'nombre': r.nombre,
-                'rutina_id': r.rutina_id,
-                'emoji': r.emoji,
-                'ejercicios': r.ejercicios,
-            }
-            for r in rutinas
-        }
-        return Response(data)
-
-    dia_semana, error = _numero(request.data.get('dia_semana'), 0, 6, entero=True)
-    if error:
-        return Response({'error': f'dia_semana {error}'}, status=status.HTTP_400_BAD_REQUEST)
-
-    nombre     = str(request.data.get('nombre') or '').strip()[:100]
-    rutina_id  = str(request.data.get('rutina_id') or 'A')[:1]
-    emoji      = str(request.data.get('emoji') or '💪')[:10]
-    ejercicios = request.data.get('ejercicios', [])
-    if rutina_id not in RUTINAS_VALIDAS:
-        return Response({'error': 'rutina_id inválido'}, status=status.HTTP_400_BAD_REQUEST)
-    if (not isinstance(ejercicios, list) or len(ejercicios) > MAX_EJERCICIOS
-            or not all(isinstance(e, dict) and str(e.get('nombre') or '').strip() for e in ejercicios)):
-        return Response({'error': 'ejercicios debe ser una lista de ejercicios con nombre'}, status=status.HTTP_400_BAD_REQUEST)
-
-    rutina, _ = RutinaDia.objects.update_or_create(
-        usuario=request.user, dia_semana=dia_semana,
-        defaults={
-            'nombre': nombre,
-            'rutina_id': rutina_id,
-            'emoji': emoji,
-            'ejercicios': ejercicios,
-        },
-    )
-    return Response({
-        'nombre': rutina.nombre,
-        'rutina_id': rutina.rutina_id,
-        'emoji': rutina.emoji,
-        'ejercicios': rutina.ejercicios,
-    })
 
 
 # ── Ejercicios personalizados del pool ──────────────────────────────────────

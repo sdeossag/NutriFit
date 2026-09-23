@@ -1,11 +1,12 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   IconCheck, IconChevronRight, IconChevronUp, IconChevronDown, IconPlus, IconX,
   IconClock, IconPencil, IconTrash, IconSearch, IconPalette, IconBarbell,
+  IconReplace, IconArrowsExchange,
 } from '@tabler/icons-react'
 import {
-  registrarSesion, getSesionFecha,
-  getRutinasDia, guardarRutinaDia,
+  registrarSesion, getSesionesSemana,
+  getRutinas, crearRutina, editarRutina, eliminarRutina, asignarSemana,
   getEjerciciosPersonalizados, crearEjercicioPersonalizado,
 } from '../api'
 import Sheet, { SheetHeader } from '../components/Sheet'
@@ -22,46 +23,6 @@ const sinClave = (obj, clave) => {
 }
 
 // ─── DATOS BASE ────────────────────────────────────────────────────────────────
-
-const RUTINAS_DEFAULT = {
-  0: { nombre: 'Pecho/Hombros', id: 'B', emoji: '💪', ejercicios: [
-    { nombre: 'Chest press máquina',   series: 3, reps: '10', peso: '36–64 kg'   },
-    { nombre: 'Press banca plano',     series: 4, reps: '10', peso: '10–12.5 kg' },
-    { nombre: 'Pec fly',               series: 3, reps: '10', peso: '32–52 kg'   },
-    { nombre: 'Press militar',         series: 3, reps: '10', peso: '8–10 kg'    },
-    { nombre: 'Elevaciones laterales', series: 3, reps: '10', peso: '6–8 kg'     },
-    { nombre: 'Tríceps polea',         series: 3, reps: '10', peso: '18–27 kg'   },
-    { nombre: 'Elevación de piernas',  series: 3, reps: '12', peso: '—'          },
-  ]},
-  1: { nombre: 'Natación', id: 'D', emoji: '🏊', ejercicios: [
-    { nombre: 'Natación libre', series: 1, reps: '15-20m', peso: '—' },
-  ]},
-  2: { nombre: 'Espalda/Brazos', id: 'C', emoji: '🦾', ejercicios: [
-    { nombre: 'Jalón al pecho',   series: 4, reps: '10', peso: '32–45 kg' },
-    { nombre: 'Remo mancuerna',   series: 3, reps: '10', peso: '18–20 kg' },
-    { nombre: 'Remo máquina',     series: 3, reps: '10', peso: '32–45 kg' },
-    { nombre: 'Curl bíceps',      series: 4, reps: '10', peso: '8–10 kg'  },
-    { nombre: 'Curl martillo',    series: 3, reps: '10', peso: '8–10 kg'  },
-    { nombre: 'Plancha',          series: 4, reps: '45s', peso: '—'      },
-    { nombre: 'Crunch bicicleta', series: 3, reps: '20', peso: '—'       },
-  ]},
-  3: { nombre: 'Natación', id: 'D', emoji: '🏊', ejercicios: [
-    { nombre: 'Natación libre', series: 1, reps: '15-20m', peso: '—' },
-  ]},
-  4: { nombre: 'Pecho/Hombros o Core+Bici', id: 'B', emoji: '🔁', ejercicios: [
-    { nombre: 'Chest press máquina',   series: 3, reps: '10', peso: '36–64 kg'   },
-    { nombre: 'Press banca plano',     series: 4, reps: '10', peso: '10–12.5 kg' },
-    { nombre: 'Pec fly',               series: 3, reps: '10', peso: '32–52 kg'   },
-    { nombre: 'Press militar',         series: 3, reps: '10', peso: '8–10 kg'    },
-    { nombre: 'Elevaciones laterales', series: 3, reps: '10', peso: '6–8 kg'     },
-    { nombre: 'Tríceps polea',         series: 3, reps: '10', peso: '18–27 kg'   },
-    { nombre: 'Elevación de piernas',  series: 3, reps: '12', peso: '—'          },
-  ]},
-  5: { nombre: 'Natación', id: 'D', emoji: '🏊', ejercicios: [
-    { nombre: 'Natación libre', series: 1, reps: '15-20m', peso: '—' },
-  ]},
-  6: { nombre: 'Descanso', id: 'R', emoji: '🛌', ejercicios: [] },
-}
 
 const POOL_DEFAULT = [
   { nombre: 'Sentadilla',             musculo: 'Piernas',   series: 4, reps: '8',   peso: '60 kg'    },
@@ -102,12 +63,26 @@ const POOL_DEFAULT = [
   { nombre: 'Remo ergómetro',         musculo: 'Cardio',    series: 1, reps: '10m', peso: '—'        },
 ]
 
-const COLORES_RUTINA = {
-  'A': { bg: 'rgba(74,222,128,0.12)',  border: 'rgba(74,222,128,0.2)',  text: '#4ade80', glow: 'rgba(74,222,128,0.3)' },
-  'B': { bg: 'rgba(96,165,250,0.12)',  border: 'rgba(96,165,250,0.2)',  text: '#60a5fa', glow: 'rgba(96,165,250,0.3)' },
-  'C': { bg: 'rgba(167,139,250,0.12)', border: 'rgba(167,139,250,0.2)', text: '#a78bfa', glow: 'rgba(167,139,250,0.3)' },
-  'D': { bg: 'rgba(251,146,60,0.12)',  border: 'rgba(251,146,60,0.2)',  text: '#fb923c', glow: 'rgba(251,146,60,0.3)' },
-  'R': { bg: 'rgba(255,255,255,0.05)', border: 'rgba(255,255,255,0.08)', text: '#9ca3af', glow: 'transparent' },
+// Colores para las rutinas: los mismos tonos del sistema de diseño, pensados para fondo oscuro
+const PALETA = ['#4ade80', '#60a5fa', '#a78bfa', '#f472b6', '#f87171', '#fb923c', '#fbbf24', '#2dd4bf', '#22d3ee', '#a3a3a3']
+
+const DESCANSO = { id: null, nombre: 'Descanso', emoji: '🛌', color: null, ejercicios: [] }
+const COLORES_DESCANSO = { bg: 'rgba(255,255,255,0.05)', border: 'rgba(255,255,255,0.08)', text: '#9ca3af', glow: 'transparent' }
+
+// Toda la paleta de una rutina sale de su color (hex + alfa)
+function coloresDe(rutina) {
+  const hex = rutina?.color
+  if (!hex) return COLORES_DESCANSO
+  return { text: hex, bg: `${hex}1f`, border: `${hex}33`, glow: `${hex}4d` }
+}
+
+const NOMBRES_DIA = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo']
+const DIAS_ABR    = ['L', 'M', 'X', 'J', 'V', 'S', 'D']
+
+// "lunes y jueves", "lunes, miércoles y viernes"
+const listaDias = (dias) => {
+  const n = dias.map(d => NOMBRES_DIA[d])
+  return n.length <= 1 ? (n[0] ?? '') : `${n.slice(0, -1).join(', ')} y ${n[n.length - 1]}`
 }
 
 const COLORES_MUSCULO = {
@@ -134,12 +109,12 @@ function getEjercicioColor(ex, pool) {
 }
 
 // ─── RESUMEN SEMANAL ───────────────────────────────────────────────────────────
-function ResumenSemanal({ semana, completados, rutinas, pool }) {
+function ResumenSemanal({ semana, completados, rutinaDe, pool }) {
   const diasActivos = semana.filter(({ fecha }) => (completados[fecha] ?? []).length > 0).length
 
   const musculosSemana = new Set()
   semana.forEach(({ fecha, dayOfWeek }) => {
-    const rutina = rutinas[dayOfWeek]
+    const rutina = rutinaDe(fecha, dayOfWeek)
     ;(completados[fecha] ?? []).forEach(idx => {
       const ex = rutina?.ejercicios?.[idx]
       if (!ex) return
@@ -347,10 +322,15 @@ function CrearEjercicioForm({ onCrear, onCancel }) {
 // ─── EDITOR DE RUTINA (hoja) ──────────────────────────────────────────────────
 const EMOJIS = ['💪', '🏃', '🚴', '🏊', '🦾', '🏋️‍♀️', '🧘', '🔁', '🛌', '🔥', '⚡️', '😊', '🥇', '🧠', '💥']
 
-function RutinaEditor({ open, rutina, colores, pool, onSave, onClose, onCrearEjercicio }) {
+function RutinaEditor({ open, rutina, diasUso = [], pool, onSave, onClose, onEliminar, onCrearEjercicio }) {
+  const esNueva = rutina.id == null
   const [ejercicios, setEjercicios] = useState([...rutina.ejercicios])
   const [nombre, setNombre]         = useState(rutina.nombre)
   const [emoji, setEmoji]           = useState(rutina.emoji || '💪')
+  const [color, setColor]           = useState(rutina.color || PALETA[0])
+  const [confirmarBorrar, setConfirmarBorrar] = useState(false)
+  const colores = coloresDe({ color })
+  const puedeGuardar = nombre.trim().length > 0
   const [vistaPool, setVistaPool]   = useState(false)
   const [busqueda, setBusqueda]     = useState('')
   const [filtroMus, setFiltroMus]   = useState('Todos')
@@ -390,15 +370,20 @@ function RutinaEditor({ open, rutina, colores, pool, onSave, onClose, onCrearEje
       open={open}
       onClose={onClose}
       large
-      label='Editar rutina'
+      label={esNueva ? 'Nueva rutina' : 'Editar rutina'}
       header={
         <>
           <SheetHeader
-            title='Editar rutina'
+            title={esNueva ? 'Nueva rutina' : 'Editar rutina'}
             left={<button className='nf-btn nf-btn--plain' onClick={onClose} style={{ color: 'var(--label-2)' }}>Cancelar</button>}
             right={
-              <button className='nf-btn nf-btn--plain' onClick={() => onSave({ nombre, ejercicios, emoji })} style={{ '--tint': colores.text, fontWeight: 700 }}>
-                Guardar
+              <button
+                className='nf-btn nf-btn--plain'
+                disabled={!puedeGuardar}
+                onClick={() => onSave({ nombre: nombre.trim(), ejercicios, emoji, color })}
+                style={{ '--tint': colores.text, fontWeight: 700, opacity: puedeGuardar ? 1 : 0.4 }}
+              >
+                {esNueva ? 'Crear' : 'Guardar'}
               </button>
             }
           />
@@ -408,7 +393,7 @@ function RutinaEditor({ open, rutina, colores, pool, onSave, onClose, onCrearEje
                 onClick={() => setMostrarPalette(p => !p)}
                 aria-label='Cambiar emoji de la rutina'
                 aria-expanded={mostrarPalette}
-                style={{ width: '48px', height: '48px', borderRadius: '14px', background: colores.bg, fontSize: '24px', flexShrink: 0 }}
+                style={{ width: '48px', height: '48px', borderRadius: '14px', background: colores.bg, fontSize: '24px', flexShrink: 0, transition: 'background-color 200ms ease' }}
               >
                 {emoji}
               </button>
@@ -417,9 +402,14 @@ function RutinaEditor({ open, rutina, colores, pool, onSave, onClose, onCrearEje
                   value={nombre}
                   onChange={e => setNombre(e.target.value)}
                   aria-label='Nombre de la rutina'
+                  placeholder='Nombre, ej. Brazo'
+                  maxLength={100}
                   style={{ background: 'none', border: 'none', outline: 'none', width: '100%', fontSize: '22px', fontWeight: 700, letterSpacing: '-0.016em' }}
                 />
-                <p className='nf-caption'>{ejercicios.length} ejercicios</p>
+                <p className='nf-caption'>
+                  {ejercicios.length} ejercicios
+                  {diasUso.length > 1 && ` · se usa el ${listaDias(diasUso)}`}
+                </p>
               </div>
             </div>
             {mostrarPalette && (
@@ -433,6 +423,23 @@ function RutinaEditor({ open, rutina, colores, pool, onSave, onClose, onCrearEje
                 ))}
               </div>
             )}
+            <div role='radiogroup' aria-label='Color de la rutina' style={{ display: 'flex', justifyContent: 'space-between', marginTop: '14px' }}>
+              {PALETA.map(c => {
+                const activo = c === color
+                return (
+                  <button
+                    key={c}
+                    role='radio'
+                    aria-checked={activo}
+                    aria-label={`Color ${c}`}
+                    onClick={() => { setColor(c); haptic(6) }}
+                    className='nf-swatch'
+                    style={{ '--swatch': c }}
+                    data-activo={activo}
+                  />
+                )
+              })}
+            </div>
             <div className='nf-seg' role='tablist' style={{ marginTop: '14px' }}>
               <div className='nf-seg-thumb' aria-hidden='true' style={{ width: 'calc((100% - 6px) / 2)', transform: `translateX(${vistaPool ? 100 : 0}%)` }} />
               <button role='tab' aria-selected={!vistaPool} onClick={() => setVistaPool(false)}>Mi rutina ({ejercicios.length})</button>
@@ -541,16 +548,116 @@ function RutinaEditor({ open, rutina, colores, pool, onSave, onClose, onCrearEje
             )}
           </>
         )}
+
+        {/* Borrar: dos toques en vez de un diálogo; el segundo confirma */}
+        {!vistaPool && !esNueva && (
+          <button
+            onClick={() => {
+              if (!confirmarBorrar) {
+                setConfirmarBorrar(true)
+                setTimeout(() => setConfirmarBorrar(false), 3000)
+                return
+              }
+              onEliminar()
+            }}
+            className='nf-btn nf-btn--destructive nf-btn--block'
+            style={{ marginTop: '20px' }}
+            aria-live='polite'
+          >
+            <IconTrash size={17} />
+            {confirmarBorrar ? 'Toca otra vez para eliminar' : 'Eliminar rutina'}
+          </button>
+        )}
+        {!vistaPool && !esNueva && diasUso.length > 0 && (
+          <p className='nf-caption' style={{ textAlign: 'center', marginTop: '8px' }}>
+            Si la eliminas, el {listaDias(diasUso)} quedará de descanso.
+          </p>
+        )}
       </div>
     </Sheet>
   )
 }
 
+// ─── CAMBIAR LA RUTINA DE UN DÍA ────────────────────────────────────────────────
+// Se despliega dentro de la tarjeta del día (anclado a lo que se está cambiando).
+// Asignar pone el paquete completo en este día; intercambiar mueve los dos paquetes.
+function PanelCambiar({ abierto, dow, plan, lib, sesionFija, onAsignar, onIntercambiar, onNueva }) {
+  const actual  = plan[dow]
+  const rutinas = Object.values(lib)
+  const dia     = NOMBRES_DIA[dow]
+  const plural  = dia.endsWith('s') ? dia : `${dia}s`
+  return (
+    <div className='nf-collapse' data-open={abierto} aria-hidden={!abierto}>
+      <div>
+        <div style={{ padding: '14px 16px 16px', boxShadow: 'inset 0 -0.5px 0 var(--separator)' }}>
+          <p className='nf-caption' style={{ fontWeight: 600, marginBottom: '8px' }}>Rutina del {dia}</p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            {rutinas.map(r => (
+              <button
+                key={r.id}
+                tabIndex={abierto ? 0 : -1}
+                onClick={() => onAsignar(dow, r.id)}
+                className='nf-chip'
+                aria-pressed={actual === r.id}
+                style={{ '--tint': r.color }}
+              >
+                <span aria-hidden='true'>{r.emoji}</span> {r.nombre}
+              </button>
+            ))}
+            <button tabIndex={abierto ? 0 : -1} onClick={() => onAsignar(dow, null)} className='nf-chip' aria-pressed={actual == null} style={{ '--tint': COLORES_DESCANSO.text }}>
+              <span aria-hidden='true'>🛌</span> Descanso
+            </button>
+            <button tabIndex={abierto ? 0 : -1} onClick={() => onNueva(dow)} className='nf-chip' style={{ '--tint': 'var(--label-2)' }}>
+              <IconPlus size={15} /> Nueva rutina
+            </button>
+          </div>
+
+          <p className='nf-caption' style={{ fontWeight: 600, margin: '16px 0 8px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+            <IconArrowsExchange size={14} /> Intercambiar con otro día
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '6px' }}>
+            {[0, 1, 2, 3, 4, 5, 6].filter(d => d !== dow).map(d => {
+              const r = lib[plan[d]]
+              const c = coloresDe(r)
+              return (
+                <button
+                  key={d}
+                  tabIndex={abierto ? 0 : -1}
+                  onClick={() => onIntercambiar(dow, d)}
+                  aria-label={`Intercambiar ${dia} con ${NOMBRES_DIA[d]} (${r?.nombre ?? 'Descanso'})`}
+                  className='nf-press-soft'
+                  style={{
+                    height: '52px', borderRadius: '12px', background: c.bg,
+                    boxShadow: `inset 0 0 0 0.5px ${c.border}`,
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '2px',
+                  }}
+                >
+                  <span style={{ fontSize: '11px', fontWeight: 700, color: c.text }}>{DIAS_ABR[d]}</span>
+                  <span aria-hidden='true' style={{ fontSize: '15px', lineHeight: 1 }}>{r?.emoji ?? '🛌'}</span>
+                </button>
+              )
+            })}
+          </div>
+
+          <p className='nf-caption' style={{ marginTop: '10px' }}>
+            {sesionFija
+              ? `Esta fecha ya tiene su sesión guardada; el cambio aplica desde el próximo ${dia}.`
+              : `El cambio aplica a todos los ${plural}.`}
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── COMPONENTE PRINCIPAL ──────────────────────────────────────────────────────
 export default function GymScreen({ t, screen }) {
-  const [rutinas, setRutinas]           = useState(RUTINAS_DEFAULT)
+  // Rutinas: paquetes por id. Plan: qué rutina toca cada día (0=Lunes … 6=Domingo)
+  const [lib, setLib]                   = useState({})
+  const [plan, setPlan]                 = useState(null)
+  const [refPorFecha, setRefPorFecha]   = useState({})   // rutina que se hizo en una sesión ya guardada
   const [pool, setPool]                 = useState(POOL_DEFAULT)
-  const [selectedFecha, setSelectedFecha] = useState(null)
+  const [selectedFecha, setSelectedFecha] = useState(() => fechaLocal())
   const [completados, setCompletados]   = useState({})
   const [logData, setLogData]           = useState({})
   const [expandido, setExpandido]       = useState({})
@@ -558,50 +665,14 @@ export default function GymScreen({ t, screen }) {
   const [guardando, setGuardando]       = useState(false)
   const [guardado, setGuardado]         = useState({})
   const [confetti, setConfetti]         = useState(false)
-  const [editorDia, setEditorDia]       = useState(null)
+  const [cambiarAbierto, setCambiarAbierto] = useState(false)
+  // Editor: { rutina, dia } — dia es a qué día asignar una rutina nueva
+  const [editor, setEditor]             = useState(null)
+  const [editorAbierto, setEditorAbierto] = useState(false)
   const [editorKey, setEditorKey]       = useState(0)
-  const [diaEditor, setDiaEditor]       = useState(null)   // se conserva al cerrar para animar la salida
   const entrar = useEntrada(screen === 'gym')
 
   const [hoy] = useState(() => fechaLocal())
-
-  useEffect(() => {
-    let cancelado = false
-
-    const cargarDatosGym = async () => {
-      try {
-        const [rutinasGuardadas, ejerciciosCustom] = await Promise.all([
-          getRutinasDia().catch(() => ({})),
-          getEjerciciosPersonalizados().catch(() => []),
-        ])
-        if (cancelado) return
-
-        if (rutinasGuardadas && Object.keys(rutinasGuardadas).length > 0) {
-          setRutinas(prev => {
-            const merged = { ...prev }
-            Object.entries(rutinasGuardadas).forEach(([dia, data]) => {
-              merged[Number(dia)] = {
-                nombre: data.nombre,
-                id: data.rutina_id,
-                emoji: data.emoji,
-                ejercicios: data.ejercicios,
-              }
-            })
-            return merged
-          })
-        }
-
-        if (Array.isArray(ejerciciosCustom) && ejerciciosCustom.length > 0) {
-          setPool([...POOL_DEFAULT, ...ejerciciosCustom])
-        }
-      } catch (e) {
-        console.error('Error cargando datos de gym:', e)
-      }
-    }
-
-    cargarDatosGym()
-    return () => { cancelado = true }
-  }, [])
 
   const semana = [...Array(7)].map((_, i) => {
     const d = new Date()
@@ -611,55 +682,60 @@ export default function GymScreen({ t, screen }) {
     return { fecha, dayOfWeek, d }
   })
 
-  const cargarSesionFecha = useCallback(async (fecha) => {
-    try {
-      const sesion = await getSesionFecha(fecha)
-      const [y, m, day] = fecha.split('-').map(Number)
-      const dObj = new Date(y, m - 1, day)
-      const dayOfWeek = dObj.getDay() === 0 ? 6 : dObj.getDay() - 1
-      const rutina = rutinas[dayOfWeek]
+  const rutinaDelDia = (dow) => (plan && lib[plan[dow]]) || DESCANSO
+  // Un día con sesión guardada muestra la rutina que se hizo, aunque luego se haya movido
+  const rutinaDe = (fecha, dow) => lib[refPorFecha[fecha]] || rutinaDelDia(dow)
+  const diasDeRutina = (id) => (plan ? Object.keys(plan).map(Number).filter(d => plan[d] === id).sort() : [])
 
-      if (sesion?.ejercicios?.length > 0 && rutina?.ejercicios?.length > 0) {
-        const idxs = []
-        const logDataFecha = {}
-        sesion.ejercicios.forEach(ej => {
-          const idx = rutina.ejercicios.findIndex(ex => ex.nombre === ej.nombre)
-          if (idx !== -1) {
+  useEffect(() => {
+    let cancelado = false
+    Promise.all([
+      getRutinas(),
+      getSesionesSemana().catch(() => []),
+      getEjerciciosPersonalizados().catch(() => []),
+    ])
+      .then(([datos, sesiones, custom]) => {
+        if (cancelado) return
+        const nuevaLib = Object.fromEntries(datos.rutinas.map(r => [r.id, r]))
+        const nuevoPlan = Object.fromEntries(Object.entries(datos.semana).map(([d, id]) => [Number(d), id]))
+        setLib(nuevaLib)
+        setPlan(nuevoPlan)
+        if (Array.isArray(custom) && custom.length > 0) setPool([...POOL_DEFAULT, ...custom])
+
+        // Marca lo que ya se registró esta semana, contra la rutina de cada sesión
+        const refs = {}, hechos = {}, logs = {}
+        for (const s of Array.isArray(sesiones) ? sesiones : []) {
+          if (s.rutina_ref && nuevaLib[s.rutina_ref]) refs[s.fecha] = s.rutina_ref
+          const [y, m, dd] = s.fecha.split('-').map(Number)
+          const dow = (new Date(y, m - 1, dd).getDay() + 6) % 7
+          const rutina = nuevaLib[refs[s.fecha] ?? nuevoPlan[dow]]
+          if (!rutina) continue
+          const idxs = [], log = {}
+          for (const ej of s.ejercicios ?? []) {
+            const idx = rutina.ejercicios.findIndex(ex => ex.nombre === ej.nombre)
+            if (idx === -1) continue
             idxs.push(idx)
-            logDataFecha[idx] = {
-              peso: ej.peso_kg ? String(ej.peso_kg) : '',
-              reps: ej.reps ?? '',
-              nota: ej.notas ?? '',
-            }
+            log[idx] = { peso: ej.peso_kg != null ? String(ej.peso_kg) : '', reps: ej.reps ?? '', nota: ej.notas ?? '' }
           }
-        })
-        setCompletados(prev => ({ ...prev, [fecha]: idxs }))
-        setLogData(prev => ({ ...prev, [fecha]: logDataFecha }))
-      } else {
-        setCompletados(prev => ({ ...prev, [fecha]: [] }))
-      }
-    } catch {
-      setCompletados(prev => ({ ...prev, [fecha]: [] }))
-    }
-  }, [rutinas])
-
-  useEffect(() => {
-    Promise.all(semana.map(({ fecha }) => cargarSesionFecha(fecha)))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+          hechos[s.fecha] = idxs
+          logs[s.fecha] = log
+        }
+        setRefPorFecha(refs)
+        setCompletados(hechos)
+        setLogData(logs)
+      })
+      .catch(() => { if (!cancelado) toast.error('No se pudieron cargar tus rutinas.') })
+    return () => { cancelado = true }
   }, [])
-
-  useEffect(() => {
-    if (!selectedFecha) setSelectedFecha(hoy)
-  }, [hoy, selectedFecha])
 
   const toggleEjercicio = (fecha, idx) => {
     haptic(8)
+    const dia = semana.find(d => d.fecha === fecha)
+    const rutina = dia ? rutinaDe(fecha, dia.dayOfWeek) : null
     setCompletados(prev => {
       const lista = prev[fecha] ?? []
       const yaEsta = lista.includes(idx)
       const nueva  = yaEsta ? lista.filter(i => i !== idx) : [...lista, idx]
-
-      const rutina = rutinas[semana.find(d => d.fecha === fecha)?.dayOfWeek]
       if (!yaEsta && rutina?.ejercicios?.length > 0 && nueva.length === rutina.ejercicios.length) {
         setConfetti(true)
         haptic(30)
@@ -667,7 +743,6 @@ export default function GymScreen({ t, screen }) {
       }
       return { ...prev, [fecha]: nueva }
     })
-
     setGuardado(prev => (prev[fecha] ? sinClave(prev, fecha) : prev))
   }
 
@@ -679,7 +754,7 @@ export default function GymScreen({ t, screen }) {
   }
 
   const guardarSesion = async (fecha, dayOfWeek) => {
-    const rutina = rutinas[dayOfWeek]
+    const rutina = rutinaDe(fecha, dayOfWeek)
     const completadosDelDia = completados[fecha] || []
     setGuardando(true)
     // Un solo envío: el servidor reemplaza los ejercicios del día y marca la
@@ -702,9 +777,10 @@ export default function GymScreen({ t, screen }) {
       .filter(Boolean)
     try {
       await registrarSesion({
-        fecha, rutina: rutina.id, ejercicios,
+        fecha, rutina_ref: rutina.id, ejercicios,
         notas: `${ejercicios.length}/${rutina.ejercicios.length} ejercicios`,
       })
+      if (rutina.id != null) setRefPorFecha(prev => ({ ...prev, [fecha]: rutina.id }))
       haptic(20)
       setGuardado(prev => ({ ...prev, [fecha]: true }))
       setTimeout(() => setGuardado(prev => sinClave(prev, fecha)), 2000)
@@ -715,33 +791,86 @@ export default function GymScreen({ t, screen }) {
     }
   }
 
-  const abrirEditor = (dia) => {
-    setDiaEditor(dia)
-    setEditorKey(k => k + 1)
-    setEditorDia(dia)
+  // ── Semana: asignar e intercambiar paquetes completos ─────────────────────
+  // Cambia el plan al instante y lo confirma con el servidor; si falla, vuelve.
+  const cambiarPlan = async (cambios, { deshacer } = {}) => {
+    const anterior = plan
+    setPlan(prev => ({ ...prev, ...cambios }))
+    haptic(10)
+    try {
+      await asignarSemana(cambios)
+      if (deshacer) toast(deshacer.texto, { action: { label: 'Deshacer', onClick: () => cambiarPlan(deshacer.cambios) } })
+    } catch (e) {
+      setPlan(anterior)
+      toast.error(e.mensaje || 'No se pudo cambiar tu semana.')
+    }
   }
 
-  const handleSaveRutina = async (dayOfWeek, { nombre, ejercicios, emoji: newEmoji }) => {
-    const rutinaActual = rutinas[dayOfWeek]
-    setRutinas(prev => ({
-      ...prev,
-      [dayOfWeek]: { ...prev[dayOfWeek], nombre, ejercicios, emoji: newEmoji ?? prev[dayOfWeek].emoji },
-    }))
-    setEditorDia(null)
+  const asignarRutina = (dow, id) => {
+    if (plan[dow] === id) return
+    const nombre = id == null ? 'descanso' : lib[id]?.nombre
+    cambiarPlan({ [dow]: id }, {
+      deshacer: { texto: `El ${NOMBRES_DIA[dow]} ahora es ${nombre}`, cambios: { [dow]: plan[dow] } },
+    })
+    setCambiarAbierto(false)
+  }
 
+  const intercambiarDias = (a, b) => {
+    cambiarPlan({ [a]: plan[b], [b]: plan[a] }, {
+      deshacer: { texto: `Intercambiaste ${NOMBRES_DIA[a]} y ${NOMBRES_DIA[b]}`, cambios: { [a]: plan[a], [b]: plan[b] } },
+    })
+    setCambiarAbierto(false)
+  }
+
+  // ── Editor de rutina ──────────────────────────────────────────────────────
+  const abrirEditor = (rutina, dia = null) => {
+    setEditor({ rutina, dia })
+    setEditorKey(k => k + 1)
+    setEditorAbierto(true)
+  }
+
+  const nuevaRutina = (dia) => {
+    const usados = new Set(Object.values(lib).map(r => r.color))
+    abrirEditor({ id: null, nombre: '', emoji: '💪', color: PALETA.find(c => !usados.has(c)) ?? PALETA[0], ejercicios: [] }, dia)
+  }
+
+  const handleSaveRutina = async (datos) => {
+    const { rutina, dia } = editor
+    setEditorAbierto(false)
+    setCambiarAbierto(false)
+
+    if (rutina.id == null) {
+      try {
+        const creada = await crearRutina(datos)
+        setLib(prev => ({ ...prev, [creada.id]: creada }))
+        if (dia != null) await cambiarPlan({ [dia]: creada.id })
+        toast.success(dia != null ? `${creada.nombre} ahora es la rutina del ${NOMBRES_DIA[dia]}` : 'Rutina creada')
+      } catch (e) {
+        toast.error(e.mensaje || 'No se pudo crear la rutina.')
+      }
+      return
+    }
+
+    setLib(prev => ({ ...prev, [rutina.id]: { ...prev[rutina.id], ...datos } }))
     try {
-      await guardarRutinaDia({
-        dia_semana: dayOfWeek,
-        nombre,
-        rutina_id: rutinaActual.id,
-        emoji: newEmoji ?? rutinaActual.emoji,
-        ejercicios,
-      })
+      await editarRutina(rutina.id, datos)
       toast.success('Rutina guardada')
     } catch (e) {
-      console.error('Error guardando rutina en el servidor:', e)
-      setRutinas(prev => ({ ...prev, [dayOfWeek]: rutinaActual }))
-      toast.error('No se pudo guardar la rutina.')
+      setLib(prev => ({ ...prev, [rutina.id]: rutina }))
+      toast.error(e.mensaje || 'No se pudo guardar la rutina.')
+    }
+  }
+
+  const handleEliminarRutina = async () => {
+    const { rutina } = editor
+    setEditorAbierto(false)
+    try {
+      const datos = await eliminarRutina(rutina.id)
+      setLib(Object.fromEntries(datos.rutinas.map(r => [r.id, r])))
+      setPlan(Object.fromEntries(Object.entries(datos.semana).map(([d, id]) => [Number(d), id])))
+      toast(`Eliminaste ${rutina.nombre}`)
+    } catch (e) {
+      toast.error(e.mensaje || 'No se pudo eliminar la rutina.')
     }
   }
 
@@ -762,26 +891,29 @@ export default function GymScreen({ t, screen }) {
     }
   }
 
+  const cargandoPlan             = plan === null
   const diaSeleccionado          = semana.find(d => d.fecha === selectedFecha)
-  const rutinaSeleccionada       = diaSeleccionado ? rutinas[diaSeleccionado.dayOfWeek] : null
-  const colores                  = rutinaSeleccionada ? COLORES_RUTINA[rutinaSeleccionada.id] ?? COLORES_RUTINA.A : null
+  const rutinaSeleccionada       = diaSeleccionado && !cargandoPlan ? rutinaDe(selectedFecha, diaSeleccionado.dayOfWeek) : null
+  const colores                  = coloresDe(rutinaSeleccionada)
   const completadosSeleccionados = completados[selectedFecha] ?? []
   const totalEjerciciosDia       = rutinaSeleccionada?.ejercicios?.length ?? 0
   const sesionCompleta           = totalEjerciciosDia > 0 && completadosSeleccionados.length === totalEjerciciosDia
-  const diasAbr                  = ['L', 'M', 'X', 'J', 'V', 'S', 'D']
+  // Si ese día ya tiene sesión guardada con otra rutina, cambiar el plan no la toca
+  const diaConSesionFija         = Boolean(refPorFecha[selectedFecha]) && selectedFecha !== hoy
 
   return (
     <div style={{ padding: 'calc(var(--safe-top) + 20px) 16px 0' }}>
 
-      {diaEditor !== null && (
+      {editor !== null && (
         <RutinaEditor
           key={editorKey}
-          open={editorDia !== null}
-          rutina={rutinas[diaEditor]}
-          colores={COLORES_RUTINA[rutinas[diaEditor].id] ?? COLORES_RUTINA.A}
+          open={editorAbierto}
+          rutina={editor.rutina}
+          diasUso={editor.rutina.id != null ? diasDeRutina(editor.rutina.id) : []}
           pool={pool}
-          onSave={(data) => handleSaveRutina(diaEditor, data)}
-          onClose={() => setEditorDia(null)}
+          onSave={handleSaveRutina}
+          onEliminar={handleEliminarRutina}
+          onClose={() => setEditorAbierto(false)}
           onCrearEjercicio={handleCrearEjercicioPersonalizado}
         />
       )}
@@ -792,13 +924,22 @@ export default function GymScreen({ t, screen }) {
         <p className='nf-subhead'>{t?.weeklyPlan ?? 'Tu plan semanal'}</p>
       </header>
 
-      <ResumenSemanal semana={semana} completados={completados} rutinas={rutinas} pool={pool} />
+      {cargandoPlan ? (
+        <div aria-busy='true'>
+          <div className='nf-skeleton' style={{ height: '72px', borderRadius: 'var(--r-lg)', marginBottom: '16px' }} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '6px', marginBottom: '20px' }}>
+            {DIAS_ABR.map(d => <div key={d} className='nf-skeleton' style={{ height: '84px', borderRadius: '16px' }} />)}
+          </div>
+          <div className='nf-skeleton' style={{ height: '320px', borderRadius: 'var(--r-lg)' }} />
+        </div>
+      ) : (<>
+      <ResumenSemanal semana={semana} completados={completados} rutinaDe={rutinaDe} pool={pool} />
 
       {/* Semana: 7 días caben en el ancho, sin scroll lateral */}
       <div role='tablist' aria-label='Días de la semana' style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '6px', marginBottom: '20px' }}>
         {semana.map(({ fecha, dayOfWeek, d }) => {
-          const rutina          = rutinas[dayOfWeek]
-          const coloresDia      = COLORES_RUTINA[rutina.id] ?? COLORES_RUTINA.A
+          const rutina          = rutinaDe(fecha, dayOfWeek)
+          const coloresDia      = coloresDe(rutina)
           const esSeleccionado  = fecha === selectedFecha
           const esHoy           = fecha === hoy
           const hechos          = (completados[fecha] || []).length
@@ -812,7 +953,7 @@ export default function GymScreen({ t, screen }) {
               role='tab'
               aria-selected={esSeleccionado}
               aria-label={`${d.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric' })}: ${rutina.nombre}${terminado ? ', completado' : ''}`}
-              onClick={() => setSelectedFecha(fecha)}
+              onClick={() => { setSelectedFecha(fecha); setCambiarAbierto(false) }}
               style={{
                 height: '84px', borderRadius: '16px', position: 'relative', overflow: 'hidden',
                 background: esSeleccionado ? 'var(--surface-2)' : 'transparent',
@@ -821,16 +962,17 @@ export default function GymScreen({ t, screen }) {
                   : esHoy ? `inset 0 0 0 1px ${coloresDia.text}66` : 'inset 0 0 0 0.5px var(--separator)',
                 display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '3px',
                 padding: 0,
+                transition: 'box-shadow 200ms ease, background-color 200ms ease',
               }}
             >
               {/* Progreso del día: se llena desde abajo */}
               <span aria-hidden='true' style={{
                 position: 'absolute', inset: 0, background: coloresDia.bg,
                 transform: `scaleY(${pct})`, transformOrigin: 'bottom',
-                transition: 'transform 400ms var(--ease-out)',
+                transition: 'transform 400ms var(--ease-out), background-color 200ms ease',
               }} />
               <span style={{ position: 'relative', fontSize: '12px', fontWeight: 600, color: esHoy ? coloresDia.text : 'var(--label-3)' }}>
-                {diasAbr[dayOfWeek]}
+                {DIAS_ABR[dayOfWeek]}
               </span>
               <span className='nf-num' style={{ position: 'relative', fontSize: '17px', fontWeight: 700, color: esSeleccionado ? coloresDia.text : 'var(--label)' }}>
                 {d.getDate()}
@@ -858,6 +1000,7 @@ export default function GymScreen({ t, screen }) {
             background: colores.bg,
             padding: '14px 12px 14px 16px',
             display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px',
+            transition: 'background-color 200ms ease',
           }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
@@ -870,10 +1013,33 @@ export default function GymScreen({ t, screen }) {
                 </p>
               )}
             </div>
-            <button onClick={() => abrirEditor(diaSeleccionado.dayOfWeek)} className='nf-btn nf-btn--sm nf-btn--tinted' style={{ '--tint': colores.text }}>
-              <IconPencil size={15} /> Editar
-            </button>
+            <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+              <button
+                onClick={() => setCambiarAbierto(a => !a)}
+                aria-expanded={cambiarAbierto}
+                className='nf-btn nf-btn--sm nf-btn--tinted'
+                style={{ '--tint': colores.text }}
+              >
+                {cambiarAbierto ? <IconX size={15} /> : <IconReplace size={15} />} {cambiarAbierto ? 'Cerrar' : 'Cambiar'}
+              </button>
+              {rutinaSeleccionada.id != null && (
+                <button onClick={() => abrirEditor(rutinaSeleccionada)} className='nf-btn nf-btn--sm nf-btn--tinted' style={{ '--tint': colores.text }} aria-label={`Editar ${rutinaSeleccionada.nombre}`}>
+                  <IconPencil size={15} /> Editar
+                </button>
+              )}
+            </div>
           </div>
+
+          <PanelCambiar
+            abierto={cambiarAbierto}
+            dow={diaSeleccionado.dayOfWeek}
+            plan={plan}
+            lib={lib}
+            sesionFija={diaConSesionFija}
+            onAsignar={asignarRutina}
+            onIntercambiar={intercambiarDias}
+            onNueva={nuevaRutina}
+          />
 
           {rutinaSeleccionada.ejercicios.length > 0 ? (
             <>
@@ -1035,11 +1201,12 @@ export default function GymScreen({ t, screen }) {
             <div style={{ padding: '32px 16px', textAlign: 'center' }}>
               <p style={{ fontSize: '34px', marginBottom: '8px' }}>🛌</p>
               <p className='nf-headline' style={{ marginBottom: '4px' }}>Día de descanso</p>
-              <p className='nf-footnote'>Recuperar también es entrenar. Toca "Editar" si quieres agregar algo.</p>
+              <p className='nf-footnote'>Recuperar también es entrenar. Toca "Cambiar" si quieres ponerle una rutina.</p>
             </div>
           )}
         </section>
       )}
+      </>)}
     </div>
   )
 }

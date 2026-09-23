@@ -67,43 +67,26 @@ const get  = (path) =>
     return r.json()
   })
 
-const post = (path, body) =>
+// Envío con cuerpo. Si falla, el error trae status y el mensaje del backend
+// (pensado para mostrarse, ej. límite de la IA o un dato inválido).
+const enviar = (method) => (path, body) =>
   apiFetch(`${BASE}${path}`, {
-    method: 'POST',
-    body: body instanceof FormData ? body : JSON.stringify(body),
+    method,
+    body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body),
   }).then(async (r) => {
     if (!r.ok) {
-      const error = new Error(`POST ${path} → ${r.status}`)
+      const error = new Error(`${method} ${path} → ${r.status}`)
       error.status = r.status
-      // El backend manda mensajes pensados para mostrarse (ej. límite de la IA)
       try { error.mensaje = (await r.json()).error } catch { /* sin cuerpo JSON */ }
       throw error
     }
-    return r.json()
+    return r.status === 204 ? null : r.json()
   })
 
-const patch = (path, body) =>
-  apiFetch(`${BASE}${path}`, {
-    method: 'PATCH',
-    body: body instanceof FormData ? body : JSON.stringify(body),
-  }).then((r) => {
-    if (!r.ok) throw new Error(`PATCH ${path} → ${r.status}`)
-    return r.json()
-  })
-
-const put = (path, body) =>
-  apiFetch(`${BASE}${path}`, {
-    method: 'PUT',
-    body: body instanceof FormData ? body : JSON.stringify(body),
-  }).then((r) => {
-    if (!r.ok) throw new Error(`PUT ${path} → ${r.status}`)
-    return r.json()
-  })
-
-const del_ = (path) =>
-  apiFetch(`${BASE}${path}`, { method: 'DELETE' }).then((r) => {
-    if (!r.ok && r.status !== 204) throw new Error(`DELETE ${path} → ${r.status}`)
-  })
+const post  = enviar('POST')
+const patch = enviar('PATCH')
+const put   = enviar('PUT')
+const del_  = (path) => enviar('DELETE')(path)
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -207,9 +190,12 @@ export const enviarMensajeBruce    = (id, msg) => post(`/chat/${id}/mensaje/`, {
 // sesionDeHoy ya existe en tu api.js
 export const getHistorialEjercicios = () => get('/ejercicios/historial/')
 
-// ── Rutinas personalizadas por día ───────────────────────────────────────
-export const getRutinasDia    = ()     => get('/rutinas-dia/')
-export const guardarRutinaDia = (data) => put('/rutinas-dia/', data)
+// ── Rutinas (paquetes) y la semana que las asigna ────────────────────────
+export const getRutinas       = ()         => get('/rutinas/')
+export const crearRutina      = (data)     => post('/rutinas/', data)
+export const editarRutina     = (id, data) => patch(`/rutinas/${id}/`, data)
+export const eliminarRutina   = (id)       => del_(`/rutinas/${id}/`)
+export const asignarSemana    = (semana)   => put('/rutinas/semana/', { semana })
 
 // ── Ejercicios personalizados del pool ───────────────────────────────────
 export const getEjerciciosPersonalizados   = ()     => get('/ejercicios-personalizados/')

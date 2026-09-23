@@ -712,3 +712,27 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
   }
   .nf-glass { background: var(--surface-2); }
 }
+
+/* ── Muestra de color (rutinas) ───────────────────────────────────────── */
+
+.nf-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--swatch);
+  /* anillo exterior separado por un hueco del color del fondo, como en iOS */
+  box-shadow: 0 0 0 0 var(--surface-2), 0 0 0 0 var(--swatch);
+  transition: box-shadow 160ms var(--ease-out), transform 160ms var(--ease-out);
+  flex-shrink: 0;
+  position: relative;
+}
+.nf-swatch::before {
+  /* área táctil de 44px sin agrandar el círculo */
+  content: '';
+  position: absolute;
+  inset: -6px;
+}
+.nf-swatch[data-activo="true"] {
+  box-shadow: 0 0 0 2.5px var(--surface-2), 0 0 0 4.5px var(--swatch);
+}
+.nf-swatch:active { transform: scale(0.9); }

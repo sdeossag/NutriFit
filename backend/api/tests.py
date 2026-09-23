@@ -8,7 +8,7 @@ from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIClient
 
 from . import estadisticas
-from .models import Comida, EjercicioLog, PesoCorporal, RutinaDia, SesionGym
+from .models import Comida, EjercicioLog, PesoCorporal, Rutina, RutinaDia, SesionGym
 
 User = get_user_model()
 
@@ -92,7 +92,7 @@ class RachaTests(Base):
         self.assertEqual(estadisticas.racha_gym(self.user, HOY), 1)
 
     def test_descanso_personalizado(self):
-        RutinaDia.objects.create(usuario=self.user, dia_semana=0, nombre='Libre', rutina_id='R')
+        RutinaDia.objects.create(usuario=self.user, dia_semana=0, rutina=None)
         self.sesion(HOY - timedelta(days=3))  # sábado; lunes libre y domingo libre
         self.assertEqual(estadisticas.racha_gym(self.user, HOY), 1)
 
@@ -125,7 +125,7 @@ class ValidacionTests(Base):
         self.assertEqual(self.api.get('/api/comidas/?fecha=mañana').status_code, 400)
 
     def test_rutina_dia_invalida(self):
-        for datos in ({'dia_semana': 9}, {'dia_semana': 1, 'rutina_id': 'XYZ'}, {'dia_semana': 1, 'ejercicios': [{}]}):
+        for datos in ({'dia_semana': 9}, {'dia_semana': 1, 'ejercicios': 'x'}, {'dia_semana': 1, 'ejercicios': [{}]}):
             self.assertEqual(self.api.put('/api/rutinas-dia/', datos, format='json').status_code, 400, datos)
 
     def test_agua_invalida(self):
@@ -167,3 +167,56 @@ class ProgresoTests(Base):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.data['dias'][-1]['calorias'], 500)
         self.assertLess(len(q), 15)
+
+
+class RutinasTests(Base):
+    def test_cuenta_nueva_recibe_la_semana_por_defecto(self):
+        r = self.api.get('/api/rutinas/')
+        self.assertEqual(r.status_code, 200)
+        nombres = {x['nombre'] for x in r.data['rutinas']}
+        self.assertEqual(nombres, {'Pecho/Hombros', 'Natación', 'Espalda/Brazos'})
+        semana = r.data['semana']
+        self.assertIsNone(semana['6'])                      # domingo de descanso
+        self.assertEqual(semana['1'], semana['3'])           # la natación es el mismo paquete
+        # Pedirla otra vez no duplica nada
+        self.api.get('/api/rutinas/')
+        self.assertEqual(Rutina.objects.count(), 3)
+
+    def test_mover_una_rutina_completa_de_martes_a_jueves(self):
+        brazo = self.api.post('/api/rutinas/', {'nombre': 'Brazo', 'color': '#f472b6', 'ejercicios': [{'nombre': 'Curl'}]}, format='json').data
+        self.api.put('/api/rutinas/semana/', {'semana': {'1': brazo['id']}}, format='json')
+        r = self.api.put('/api/rutinas/semana/', {'semana': {'1': None, '3': brazo['id']}}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertIsNone(r.data['semana']['1'])
+        self.assertEqual(r.data['semana']['3'], brazo['id'])
+        self.assertEqual(RutinaDia.objects.get(usuario=self.user, dia_semana=3).rutina.ejercicios[0]['nombre'], 'Curl')
+
+    def test_cambiar_color_y_validaciones(self):
+        rid = self.api.post('/api/rutinas/', {'nombre': 'Pierna', 'ejercicios': []}, format='json').data['id']
+        r = self.api.patch(f'/api/rutinas/{rid}/', {'color': '#F472B6'}, format='json')
+        self.assertEqual(r.data['color'], '#f472b6')
+        self.assertEqual(self.api.patch(f'/api/rutinas/{rid}/', {'color': 'rosa'}, format='json').status_code, 400)
+        self.assertEqual(self.api.patch(f'/api/rutinas/{rid}/', {'nombre': '  '}, format='json').status_code, 400)
+        self.assertEqual(self.api.post('/api/rutinas/', {'nombre': 'X', 'ejercicios': [{'series': 2}]}, format='json').status_code, 400)
+
+    def test_no_se_puede_usar_la_rutina_de_otra_persona(self):
+        otro = User.objects.create_user('beto', 'b@test.com', 'x')
+        ajena = Rutina.objects.create(usuario=otro, nombre='Ajena')
+        self.assertEqual(self.api.put('/api/rutinas/semana/', {'semana': {'0': ajena.id}}, format='json').status_code, 400)
+        self.assertEqual(self.api.patch(f'/api/rutinas/{ajena.id}/', {'nombre': 'Mía'}, format='json').status_code, 404)
+
+    def test_borrar_rutina_deja_los_dias_de_descanso(self):
+        semana = self.api.get('/api/rutinas/').data['semana']
+        natacion = semana['1']
+        r = self.api.delete(f'/api/rutinas/{natacion}/')
+        self.assertEqual(r.status_code, 200)
+        self.assertIsNone(r.data['semana']['1'])
+        self.assertIn(1, estadisticas.dias_descanso(self.user))
+
+    def test_sesion_recuerda_su_rutina_aunque_se_mueva(self):
+        semana = self.api.get('/api/rutinas/').data['semana']
+        pecho = semana['0']
+        self.api.post('/api/sesiones/registrar/', {'fecha': '2026-09-21', 'rutina_ref': pecho,
+                                                   'ejercicios': [{'nombre': 'Pec fly'}]}, format='json')
+        self.api.put('/api/rutinas/semana/', {'semana': {'0': None}}, format='json')
+        self.assertEqual(SesionGym.objects.get().rutina_ref_id, pecho)
