@@ -151,6 +151,7 @@ export const actualizarPerfil = (datos) => {
 }
 
 export const actualizarMetas    = (metas) => patch('/auth/perfil/metas/', metas)
+export const actualizarPreferencias = (datos) => patch('/auth/perfil/preferencias/', datos)
 export const actualizarObjetivo = (data)  => patch('/auth/perfil/objetivo/', data)
 
 // ── Onboarding ────────────────────────────────────────────────────────────────
@@ -218,7 +219,8 @@ export const marcarLogrosVistos  = () => post('/logros/vistos/', {})
 export const getPlan             = (fecha)         => get(`/plan/?fecha=${fecha}`)
 export const generarPlan         = (fecha)         => post('/plan/', { fecha })
 export const cambiarComidaPlan   = (fecha, indice) => post('/plan/cambiar/', { fecha, indice })
-export const registrarComidaPlan = (fecha, indice) => post('/plan/registrar/', { fecha, indice })
+export const registrarComidaPlan = (fecha, indice, ajuste) => post('/plan/registrar/', { fecha, indice, ajuste })
+export const fotoComidaPlan      = (fecha, indice, imagen) => post('/plan/foto/', { fecha, indice, imagen })
 
 // ── Ejercicios personalizados del pool ───────────────────────────────────
 export const getEjerciciosPersonalizados   = ()     => get('/ejercicios-personalizados/')

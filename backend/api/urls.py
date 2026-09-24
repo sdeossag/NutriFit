@@ -15,6 +15,7 @@ urlpatterns = [
     path('auth/perfil/',                views.mi_perfil,            name='perfil'),
     path('auth/perfil/update/',         views.actualizar_perfil,    name='perfil-update'),
     path('auth/perfil/metas/',          views.actualizar_metas,     name='perfil-metas'),
+    path('auth/perfil/preferencias/',   views.actualizar_preferencias, name='perfil-preferencias'),
     path('auth/perfil/objetivo/',       views.actualizar_objetivo,  name='perfil-objetivo'),
 
     # ────────────────────── ONBOARDING ──────────────────────
@@ -50,6 +51,7 @@ urlpatterns = [
     path('plan/',                       plan.plan,                    name='plan-dia'),
     path('plan/cambiar/',               plan.cambiar,                 name='plan-cambiar'),
     path('plan/registrar/',             plan.registrar,               name='plan-registrar'),
+    path('plan/foto/',                  plan.foto,                    name='plan-foto'),
     path('ejercicios-personalizados/',  views.ejercicios_personalizados, name='ejercicios-personalizados'),
 
     # ─────────────────────── PROGRESS ───────────────────────

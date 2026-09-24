@@ -397,3 +397,108 @@ class PlanDiaTests(Base):
         obj = objetivos_por_momento({'calorias': 2000, 'proteina': 150, 'carbos': 200, 'grasas': 60}, ['cena'], {'calorias': 2000})
         self.assertEqual(obj['cena']['calorias'], 900)   # 2000 × (30% + 15%)
         self.assertEqual(obj['cena']['proteina'], 68)    # proporcional al recorte
+
+
+class PreferenciasTests(Base):
+    def test_actualizar_y_validar_preferencias(self):
+        r = self.api.patch('/api/auth/perfil/preferencias/', {
+            'alimentos_gustados': ['Maní', 'Pollo', 'pollo', ' '], 'alergias': ['maní'],
+            'restricciones_dieta': ['sin_vegetales'],
+        }, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        # Sin repetidos ni vacíos, y lo que es alergia sale de "me gusta"
+        self.assertEqual(r.data['alimentos_gustados'], ['Pollo'])
+        self.assertEqual(r.data['restricciones_dieta'], ['sin_vegetales'])
+        mala = self.api.patch('/api/auth/perfil/preferencias/', {'restricciones_dieta': ['keto']}, format='json')
+        self.assertEqual(mala.status_code, 400)
+
+
+class VerificacionTests(Base):
+    def verificar(self, restricciones=(), alergias=(), no_gustan=(), nombre='Plato', ingredientes=(), preparacion=()):
+        from .plan import violaciones
+        comida = {'nombre': nombre, 'ingredientes': [{'nombre': i} for i in ingredientes], 'preparacion': list(preparacion)}
+        return violaciones(comida, {'restricciones': list(restricciones), 'alergias': list(alergias), 'no_gustan': list(no_gustan)})
+
+    def test_sin_vegetales(self):
+        r = ['sin_vegetales']
+        self.assertTrue(self.verificar(r, nombre='Ensalada César'))
+        self.assertTrue(self.verificar(r, ingredientes=['brócoli al vapor']))
+        self.assertTrue(self.verificar(r, ingredientes=['verduras salteadas']))
+        # Frutas, legumbres y verduras escondidas sí
+        self.assertEqual(self.verificar(r, nombre='Sopa de lentejas', ingredientes=['lentejas', 'zanahoria', 'cebolla']), [])
+        self.assertEqual(self.verificar(r, nombre='Crema de ahuyama', ingredientes=['crema de espinaca licuada']), [])
+        self.assertEqual(self.verificar(r, nombre='Fríjoles con arroz', ingredientes=['fríjoles', 'hogao', 'tomate']), [])
+        self.assertEqual(self.verificar(r, nombre='Bowl de frutas', ingredientes=['mango', 'fresas', 'banano']), [])
+
+    def test_alergia_no_tiene_excepciones(self):
+        # "Mantequilla de maní" pasa para sin lácteos, pero nunca para alergia al maní
+        self.assertEqual(self.verificar(['sin_lacteos'], ingredientes=['mantequilla de maní']), [])
+        self.assertTrue(self.verificar(alergias=['Maní'], ingredientes=['mantequilla de maní']))
+        self.assertTrue(self.verificar(alergias=['Mariscos'], ingredientes=['arroz con camarones']))
+        # También en la preparación
+        self.assertTrue(self.verificar(alergias=['Ajonjolí'], preparacion=['Espolvorear ajonjolí tostado']))
+
+    def test_vegetal_ya_no_salta_otras_restricciones(self):
+        # Antes "vegetal" era excepción global: "pollo con vegetales" se colaba en vegetariano
+        self.assertTrue(self.verificar(['vegetariano'], ingredientes=['pollo con vegetales']))
+
+
+class FotoPlanTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.plan = PlanDia.objects.create(usuario=self.user, fecha=HOY, comidas=[{
+            'momento': 'almuerzo', 'nombre': 'Arroz con huevo', 'porcion': '1 plato',
+            'ingredientes': [
+                {'nombre': 'Arroz', 'cantidad': '150 g', 'calorias': 195, 'proteina': 4, 'carbos': 42, 'grasas': 0.5},
+                {'nombre': 'Huevo', 'cantidad': '2 unidades', 'calorias': 140, 'proteina': 12, 'carbos': 1, 'grasas': 10},
+            ],
+            'calorias': 335, 'proteina': 16, 'carbos': 43, 'grasas': 10.5, 'registrada': False,
+        }])
+
+    def test_la_foto_ajusta_la_porcion_y_luego_se_registra(self):
+        ia = {'coincide': True, 'observacion': 'Más arroz, un solo huevo',
+              'factores': [{'nombre': 'Arroz', 'factor': 1.5}, {'nombre': 'huevo', 'factor': 0.5}],
+              'extras': [{'nombre': 'Aguacate', 'cantidad': '50 g', 'calorias': 80, 'proteina': 1, 'carbos': 4, 'grasas': 7}]}
+        with en(HOY), mock.patch('api.plan._analizar_foto_ia', return_value=ia):
+            r = self.api.post('/api/plan/foto/', {'fecha': HOY.isoformat(), 'indice': 0, 'imagen': 'xxx'}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        # arroz 4×1.5 + huevo 12×0.5 + aguacate 1
+        self.assertEqual(r.data['proteina'], 13.0)
+        self.assertEqual(r.data['antes']['calorias'], 335)
+        self.assertFalse(PlanDia.objects.get().comidas[0]['registrada'])  # la foto no guarda nada
+
+        with en(HOY):
+            reg = self.api.post('/api/plan/registrar/', {'fecha': HOY.isoformat(), 'indice': 0, 'ajuste': {
+                'calorias': r.data['calorias'], 'proteina': r.data['proteina'], 'carbos': r.data['carbos'],
+                'grasas': r.data['grasas'], 'nota': 'más arroz, un huevo'}}, format='json')
+        self.assertEqual(reg.status_code, 201, reg.data)
+        comida = Comida.objects.get(usuario=self.user)
+        self.assertEqual(comida.proteina, 13.0)
+        self.assertIn('más arroz', comida.descripcion)
+
+    def test_foto_de_otro_plato(self):
+        with en(HOY), mock.patch('api.plan._analizar_foto_ia', return_value={'coincide': False, 'observacion': 'Es una pizza'}):
+            r = self.api.post('/api/plan/foto/', {'fecha': HOY.isoformat(), 'indice': 0, 'imagen': 'xxx'}, format='json')
+        self.assertFalse(r.data['coincide'])
+
+    def test_conflicto_si_cambian_las_preferencias(self):
+        self.user.alergias = ['huevo']
+        self.user.save()
+        with en(HOY):
+            r = self.api.get(f'/api/plan/?fecha={HOY.isoformat()}')
+        self.assertEqual(r.data['conflictos'], ['Arroz con huevo'])
+
+    def test_mismo_plato_aunque_la_ia_sea_muy_estricta(self):
+        # Falta un ingrediente menor (huevo) pero el arroz, lo principal, está
+        ia = {'coincide': False, 'factores': [{'nombre': 'Arroz', 'factor': 1}, {'nombre': 'Huevo', 'factor': 0}]}
+        with en(HOY), mock.patch('api.plan._analizar_foto_ia', return_value=ia):
+            r = self.api.post('/api/plan/foto/', {'fecha': HOY.isoformat(), 'indice': 0, 'imagen': 'xxx'}, format='json')
+        self.assertTrue(r.data['coincide'])
+
+    def test_no_se_registra_lo_de_manana(self):
+        PlanDia.objects.create(usuario=self.user, fecha=HOY + timedelta(days=1), comidas=self.plan.comidas)
+        with en(HOY):
+            r = self.api.post('/api/plan/registrar/', {'fecha': (HOY + timedelta(days=1)).isoformat(), 'indice': 0}, format='json')
+            f = self.api.post('/api/plan/foto/', {'fecha': (HOY + timedelta(days=1)).isoformat(), 'indice': 0, 'imagen': 'x'}, format='json')
+        self.assertEqual((r.status_code, f.status_code), (400, 400))
+        self.assertFalse(Comida.objects.exists())

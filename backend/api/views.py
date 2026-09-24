@@ -30,7 +30,7 @@ from .models import (
 from .serializers import (
     ComidaSerializer, SesionGymSerializer,
     EjercicioLogSerializer, PesoCorporalSerializer,
-    UsuarioSerializer, MetasSerializer, PerfilUpdateSerializer, ObjetivoSerializer,
+    UsuarioSerializer, MetasSerializer, PerfilUpdateSerializer, ObjetivoSerializer, PreferenciasSerializer,
     AlimentoAlacenaSerializer, OnboardingSerializer, SesionChatSerializer, MensajeChatSerializer
 )
 
@@ -303,6 +303,17 @@ def actualizar_objetivo(request):
 
 @api_view(['PATCH'])
 @permission_classes([IsAuthenticated])
+def actualizar_preferencias(request):
+    serializer = PreferenciasSerializer(request.user, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(UsuarioSerializer(request.user).data)
+    return Response({'error': ' '.join(str(e) for errs in serializer.errors.values() for e in errs)},
+                    status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
 def actualizar_metas(request):
     serializer = MetasSerializer(request.user, data=request.data, partial=True)
     if serializer.is_valid():
@@ -392,6 +403,7 @@ PREFERENCIAS:
 - Le gustan: {gustados}
 - NO le gustan (EXCLUIR): {no_gustados}
 - Restricciones: {restricciones}
+- ALERGIAS (nunca, ni como ingrediente menor): {', '.join(user.alergias or []) or 'ninguna'}
 
 INSTRUCCIONES ALIMENTOS:
 1. Genera entre 18 y 22 alimentos o preparaciones concretas, variadas y reales.
@@ -898,6 +910,7 @@ NUNCA usas emojis. NUNCA predicas ni repites consejos genéricos.
 
 OBJETIVO DEL USUARIO: {objetivo_texto}
 RESTRICCIONES DE DIETA (nunca sugieras algo que las viole): {', '.join(request.user.restricciones_dieta or []) or 'ninguna'}
+ALERGIAS (peligroso, jamás las sugieras): {', '.join(request.user.alergias or []) or 'ninguna'}
 NO LE GUSTA (no lo sugieras): {', '.join(request.user.alimentos_no_gustados or []) or 'nada en particular'}
 
 SITUACIÓN REAL DE HOY ({momento}, {hora}h):
@@ -914,7 +927,7 @@ REGLAS ABSOLUTAS:
 4. Varía el inicio: no siempre empieces igual.
 5. Si cumplió todo: celebra con actitud pero sin exagerar.
 6. Si le falta proteína más que calorías: menciona eso específicamente.
-7. Si sugieres un alimento, que respete sus restricciones (vegetariano: nada de carne, pollo ni pescado; vegano: además nada de huevo, lácteos ni whey de leche).
+7. Si sugieres un alimento, que respete sus restricciones y alergias (vegetariano: nada de carne, pollo ni pescado; vegano: además nada de huevo, lácteos ni whey de leche; sin_vegetales: nada de ensaladas ni verduras a la vista).
 
 Solo la frase. Sin comillas. Sin explicaciones."""
 
@@ -1383,6 +1396,7 @@ def bruce_chat(request, pk):
 • Alimentos que le gustan: {gustados}
 • Alimentos que NO le gustan: {no_gustados}
 • Restricciones dieta: {restricciones}
+• ALERGIAS (peligroso: nunca, ni como ingrediente menor): {', '.join(user.alergias or []) or 'ninguna'}
 • Metas: {metas['calorias']} kcal | {metas['proteina']}g prot | {metas['carbos']}g carbos | {metas['grasas']}g grasas
 
 HOY ({hoy.strftime('%A %d de %B')}):
@@ -1429,7 +1443,7 @@ CONOCIMIENTO:
 - Si te preguntan algo fuera de fitness/nutrición: redirige con humor ("Eso no lo sé, soy perro entrenador, no abogado").
 
 SEGURIDAD:
-- Sus restricciones de dieta y lo que no le gusta se respetan siempre, sin excepción.
+- Sus alergias, restricciones de dieta y lo que no le gusta se respetan siempre, sin excepción. Sin vegetales significa: nada de ensaladas ni verduras a la vista; sí frutas, legumbres y verduras escondidas en sopas, guisos o cremas.
 - Si pregunta qué comer, propón comidas concretas con cantidades que cuadren con lo que le falta HOY; también puede pedirle el "Plan de Bruce" en la pestaña Comidas.
 - Nada de diagnósticos ni dietas extremas: si menciona dolor, lesión, mareos o algo médico, recomiéndale ir a un profesional.
 

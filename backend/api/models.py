@@ -65,6 +65,8 @@ class Usuario(AbstractUser):
     alimentos_gustados     = models.JSONField(default=list, blank=True)
     alimentos_no_gustados  = models.JSONField(default=list, blank=True)
     restricciones_dieta    = models.JSONField(default=list, blank=True)
+    # Alergias: el filtro más estricto (ni como ingrediente menor ni en la preparación)
+    alergias               = models.JSONField(default=list, blank=True)
     # ej: ["vegetariano", "sin_gluten", "sin_lacteos", "sin_cerdo", "halal"]
 
     # ── Control de flujo ──────────────────────────────────────────────────────

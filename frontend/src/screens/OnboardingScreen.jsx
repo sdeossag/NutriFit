@@ -2,35 +2,14 @@ import { useState, useEffect, useRef } from 'react'
 import { IconChevronLeft, IconCheck } from '@tabler/icons-react'
 import { completarOnboarding, generarPlanGroq, agregarAAlacena } from '../api'
 import { haptic, prefersReducedMotion } from '../lib/motion'
+import { ALIMENTOS_OPCIONES, NO_GUSTADOS_OPCIONES, RESTRICCIONES_OPCIONES } from '../constants/alimentacion'
 import bruceTuxedo from '../assets/bruce-tuxedo.webp'
 import bruceMuyfeliz from '../assets/bruce-tuxedo-muyfeliz.webp'
 
 // ── Opciones ──────────────────────────────────────────────────────────────────
 
-const ALIMENTOS_OPCIONES = [
-  'Pollo', 'Res', 'Cerdo', 'Pescado', 'Atún', 'Huevos', 'Tofu',
-  'Arroz', 'Papa', 'Pasta', 'Plátano', 'Yuca', 'Quinoa', 'Avena',
-  'Brócoli', 'Espinaca', 'Zanahoria', 'Aguacate', 'Tomate',
-  'Frijoles', 'Lentejas', 'Garbanzo',
-  'Leche', 'Queso', 'Yogur', 'Whey protein',
-  'Mango', 'Banano', 'Fresas', 'Naranja',
-]
-
-const NO_GUSTADOS_OPCIONES = [
-  'Hígado', 'Sardinas', 'Coliflor', 'Remolacha', 'Cebolla cruda',
-  'Ají picante', 'Cilantro', 'Tofu', 'Brócoli', 'Espinaca',
-  'Pepino', 'Rábano', 'Berenjenas', 'Champiñones', 'Acelga',
-]
-
-const RESTRICCIONES_OPCIONES = [
-  { id: 'ninguna',     label: 'Ninguna',     emoji: '✅' },
-  { id: 'vegetariano', label: 'Vegetariano', emoji: '🥦' },
-  { id: 'vegano',      label: 'Vegano',      emoji: '🌱' },
-  { id: 'sin_gluten',  label: 'Sin gluten',  emoji: '🌾' },
-  { id: 'sin_lacteos', label: 'Sin lácteos', emoji: '🥛' },
-  { id: 'sin_cerdo',   label: 'Sin cerdo',   emoji: '🐷' },
-  { id: 'halal',       label: 'Halal',       emoji: '☪️' },
-]
+// En el onboarding "Ninguna" es una opción más para poder avanzar sin elegir
+const RESTRICCIONES_ONBOARDING = [{ id: 'ninguna', label: 'Ninguna', emoji: '✅' }, ...RESTRICCIONES_OPCIONES]
 
 const TOTAL_PASOS = 10
 const PASO_VELOCIDAD = 6
@@ -517,7 +496,7 @@ export default function OnboardingScreen({ usuario, onComplete }) {
         return (
           <>
             <Titulo sub='Dietas especiales o alimentos que evitas por salud o creencias'>¿Tienes alguna restricción?</Titulo>
-            {RESTRICCIONES_OPCIONES.map(({ id, label, emoji }) => (
+            {RESTRICCIONES_ONBOARDING.map(({ id, label, emoji }) => (
               <Opcion
                 key={id}
                 activa={datos.restricciones_dieta.includes(id)}

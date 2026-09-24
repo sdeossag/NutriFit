@@ -747,3 +747,11 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 @media (prefers-reduced-motion: reduce) {
   .nf-logro-nuevo { animation: nf-fade-in 200ms ease both; }
 }
+
+/* Páginas dentro de una hoja (Ajustes → Alimentación): entran desde la
+   derecha y vuelven por el mismo camino */
+.nf-pagina-push { animation: nf-push-in 320ms var(--ease-out) both; }
+.nf-pagina-pop  { animation: nf-pop-back 320ms var(--ease-out) both; }
+@media (prefers-reduced-motion: reduce) {
+  .nf-pagina-push, .nf-pagina-pop { animation: nf-fade-in 200ms ease both; }
+}

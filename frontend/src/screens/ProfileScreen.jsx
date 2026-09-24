@@ -5,12 +5,13 @@ import {
   IconCheck, IconLogout, IconCamera, IconLoader2,
   IconTarget, IconRuler, IconWeight, IconBell, IconLanguage,
 } from '@tabler/icons-react'
-import { getMiPerfil, actualizarPerfil, actualizarMetas, actualizarObjetivo, logout as apiLogout } from '../api'
+import { getMiPerfil, actualizarPerfil, actualizarMetas, actualizarObjetivo, actualizarPreferencias, logout as apiLogout } from '../api'
 import { soportaNotificaciones, permisoActual, estasSuscrito, suscribir, desuscribir } from '../utils/notificaciones'
 import { toast } from '../lib/toast'
 import { haptic } from '../lib/motion'
 import Segmented from '../components/Segmented'
 import UserAvatar from '../components/UserAvatar'
+import { FilaPreferencia, PaginaPreferencia } from '../components/Preferencias'
 import { fotoAJpeg } from '../lib/imagen'
 
 // ── helpers UI ────────────────────────────────────────────────────────────
@@ -126,6 +127,10 @@ export default function ProfileScreen({ setUsuario, onLogout, lang, setLang }) {
   })
 
   const [suscrito,     setSuscrito]     = useState(false)
+  // Ajustes → Alimentación: página abierta y si se está volviendo (para animar hacia atrás)
+  const [pagina,       setPagina]       = useState(null)
+  const [volviendo,    setVolviendo]    = useState(false)
+  const raizRef = useRef(null)
   const [cargandoBell, setCargandoBell] = useState(false)
 
   const fileRef = useRef(null)
@@ -238,6 +243,27 @@ export default function ProfileScreen({ setUsuario, onLogout, lang, setLang }) {
 
   const handleLogout = async () => { await apiLogout(); onLogout?.() }
 
+  const irA = (campo) => {
+    setVolviendo(!campo)
+    setPagina(campo)
+    // Cada página empieza arriba, como en iOS
+    raizRef.current?.closest('.nf-sheet-body')?.scrollTo({ top: 0 })
+  }
+
+  // Se guarda al instante; si el servidor falla, vuelve lo que había
+  const cambiarPreferencia = async (campo, valores) => {
+    const anterior = perfil
+    setPerfil(prev => ({ ...prev, [campo]: valores }))
+    try {
+      const updated = await actualizarPreferencias({ [campo]: valores })
+      setPerfil(updated)
+      setUsuario?.(prev => ({ ...prev, ...updated }))
+    } catch (e) {
+      setPerfil(anterior)
+      toast.error(e.mensaje || 'No se pudo guardar. Intenta de nuevo.')
+    }
+  }
+
   if (cargando) return (
     <div style={{ padding: '8px 16px' }} aria-busy='true'>
       <div className='nf-skeleton' style={{ height: '96px', borderRadius: 'var(--r-lg)', marginTop: '28px' }} />
@@ -252,7 +278,17 @@ export default function ProfileScreen({ setUsuario, onLogout, lang, setLang }) {
   const objColor  = OBJETIVO_COLOR[objetivo.objetivo] ?? 'var(--green)'
 
   return (
-    <div style={{ padding: '0 16px calc(var(--safe-bottom) + 32px)' }}>
+    pagina ? (
+      <div ref={raizRef} style={{ padding: '0 16px calc(var(--safe-bottom) + 32px)' }}>
+        <PaginaPreferencia
+          campo={pagina}
+          valores={perfil?.[pagina] ?? []}
+          onCambiar={(v) => cambiarPreferencia(pagina, v)}
+          onVolver={() => irA(null)}
+        />
+      </div>
+    ) :
+    <div ref={raizRef} className={volviendo ? 'nf-pagina-pop' : undefined} style={{ padding: '0 16px calc(var(--safe-bottom) + 32px)' }}>
 
       {/* ── Cuenta ── */}
       <Section label='Cuenta'>
@@ -431,6 +467,12 @@ export default function ProfileScreen({ setUsuario, onLogout, lang, setLang }) {
       </div>
 
       {/* ── Preferencias ── */}
+      <Section label='Alimentación' footer='Bruce usa esto en tu plan del día, el chat y las recetas.'>
+        {['alimentos_gustados', 'alimentos_no_gustados', 'alergias', 'restricciones_dieta'].map(campo => (
+          <FilaPreferencia key={campo} campo={campo} valores={perfil?.[campo] ?? []} onAbrir={() => irA(campo)} />
+        ))}
+      </Section>
+
       <Section
         label='Preferencias'
         footer={suscrito ? 'Bruce te enviará un mensaje motivacional cada día.' : 'Activa para que Bruce te escriba cada día.'}

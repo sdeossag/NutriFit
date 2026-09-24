@@ -31,7 +31,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
             # Objetivo
             'objetivo', 'velocidad_objetivo', 'nivel_actividad',
             # Preferencias
-            'alimentos_gustados', 'alimentos_no_gustados', 'restricciones_dieta',
+            'alimentos_gustados', 'alimentos_no_gustados', 'restricciones_dieta', 'alergias',
             # Control
             'onboarding_completo',
             'date_joined',
@@ -74,6 +74,52 @@ class PerfilUpdateSerializer(serializers.ModelSerializer):
         if foto is not None:
             instance.avatar_data = _avatar_a_data_url(foto)
         return super().update(instance, validated_data)
+
+
+RESTRICCIONES_VALIDAS = {'vegetariano', 'vegano', 'sin_gluten', 'sin_lacteos', 'sin_cerdo', 'halal', 'sin_vegetales'}
+
+
+def _lista_de_alimentos(valor):
+    """Lista de textos cortos, sin vacíos ni repetidos (sin importar mayúsculas)."""
+    if not isinstance(valor, list) or len(valor) > 60:
+        raise serializers.ValidationError('Debe ser una lista de máximo 60 alimentos.')
+    limpios, vistos = [], set()
+    for item in valor:
+        texto = str(item).strip()[:40]
+        if texto and texto.lower() not in vistos:
+            vistos.add(texto.lower())
+            limpios.append(texto)
+    return limpios
+
+
+class PreferenciasSerializer(serializers.ModelSerializer):
+    """Gustos, lo que no le gusta, restricciones y alergias (Ajustes → Alimentación)."""
+    class Meta:
+        model  = User
+        fields = ['alimentos_gustados', 'alimentos_no_gustados', 'restricciones_dieta', 'alergias']
+
+    def validate_alimentos_gustados(self, v):
+        return _lista_de_alimentos(v)
+
+    def validate_alimentos_no_gustados(self, v):
+        return _lista_de_alimentos(v)
+
+    def validate_alergias(self, v):
+        return _lista_de_alimentos(v)
+
+    def validate_restricciones_dieta(self, v):
+        if not isinstance(v, list) or any(r not in RESTRICCIONES_VALIDAS for r in v):
+            raise serializers.ValidationError('Restricción no válida.')
+        return list(dict.fromkeys(v))
+
+    def validate(self, datos):
+        # Lo que se marca como alergia o "no me gusta" no puede quedar en "me gusta"
+        gustos = datos.get('alimentos_gustados', self.instance.alimentos_gustados or [])
+        evitar = {x.lower() for x in datos.get('alimentos_no_gustados', self.instance.alimentos_no_gustados or [])}
+        evitar |= {x.lower() for x in datos.get('alergias', self.instance.alergias or [])}
+        if any(g.lower() in evitar for g in gustos):
+            datos['alimentos_gustados'] = [g for g in gustos if g.lower() not in evitar]
+        return datos
 
 
 class ObjetivoSerializer(serializers.ModelSerializer):
