@@ -94,7 +94,10 @@ GOOGLE_CLIENT_IDS = [
 APPLE_BUNDLE_ID = os.getenv('APPLE_BUNDLE_ID', 'com.tuapp.nutrifit')
 GROQ_API_KEY    = os.getenv('GROQ_API_KEY', '')
 # Groq retira modelos seguido: se puede cambiar desde el entorno sin tocar código
-GROQ_MODEL      = os.getenv('GROQ_MODEL', 'qwen/qwen3.8-27b')
+GROQ_MODEL      = os.getenv('GROQ_MODEL', 'qwen/qwen3.8-27b')           # con visión: fotos y etiquetas
+# Solo texto (chat, plan, frases). qwen en el plan gratis permite apenas 1.000
+# tokens de salida por minuto: un plan de comidas o el plan inicial no caben.
+GROQ_MODEL_TEXTO = os.getenv('GROQ_MODEL_TEXTO', 'openai/gpt-oss-120b')
 
 # VAPID keys para Web Push (genera con: python manage.py generate_vapid_keys)
 VAPID_PUBLIC_KEY   = os.getenv('VAPID_PUBLIC_KEY', '')

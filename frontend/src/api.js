@@ -17,9 +17,19 @@ export const limpiarTokens = () => {
 export const getAccessToken  = () => localStorage.getItem('access_token')
 export const getRefreshToken = () => localStorage.getItem('refresh_token')
 
-export const refrescarToken = async () => {
+// El servidor rota el refresh token en cada uso e invalida el anterior: hay que
+// guardar el nuevo, y si varias peticiones vencen a la vez, renovar una sola vez
+// (si no, la segunda usa un token ya invalidado y cierra la sesión).
+let renovando = null
+
+export const refrescarToken = () => {
+  renovando ??= renovar().finally(() => { renovando = null })
+  return renovando
+}
+
+const renovar = async () => {
   const refresh = getRefreshToken()
-  if (!refresh) throw new Error('Sin refresh token')
+  if (!refresh) throw Object.assign(new Error('Sin refresh token'), { sesionExpirada: true })
   const res = await fetch(`${BASE}/auth/token/refresh/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -35,6 +45,7 @@ export const refrescarToken = async () => {
   }
   const data = await res.json()
   localStorage.setItem('access_token', data.access)
+  if (data.refresh) localStorage.setItem('refresh_token', data.refresh)
   return data.access
 }
 
@@ -202,6 +213,12 @@ export const asignarSemana    = (semana)   => put('/rutinas/semana/', { semana }
 // ── Logros ───────────────────────────────────────────────────────────────
 export const getLogros           = () => get('/logros/')
 export const marcarLogrosVistos  = () => post('/logros/vistos/', {})
+
+// ── Plan del día (Bruce) ─────────────────────────────────────────────────
+export const getPlan             = (fecha)         => get(`/plan/?fecha=${fecha}`)
+export const generarPlan         = (fecha)         => post('/plan/', { fecha })
+export const cambiarComidaPlan   = (fecha, indice) => post('/plan/cambiar/', { fecha, indice })
+export const registrarComidaPlan = (fecha, indice) => post('/plan/registrar/', { fecha, indice })
 
 // ── Ejercicios personalizados del pool ───────────────────────────────────
 export const getEjerciciosPersonalizados   = ()     => get('/ejercicios-personalizados/')

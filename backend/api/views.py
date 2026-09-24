@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import logging
 import re
 import requests
 from datetime import timedelta
@@ -23,7 +24,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from . import estadisticas
 from .models import (
     Comida, SesionGym, EjercicioLog, PesoCorporal, AlimentoAlacena,
-    MensajeChat, SesionChat, Rutina, EjercicioPersonalizado, PushSubscription,
+    MensajeChat, SesionChat, Rutina, RutinaDia, EjercicioPersonalizado, PushSubscription,
     RegistroAgua,
 )
 from .serializers import (
@@ -34,6 +35,7 @@ from .serializers import (
 )
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 # ──────────────────────────────────────────────
@@ -115,9 +117,23 @@ def _extraer_json(contenido):
     return json.loads(texto)
 
 
+def _adaptar_payload(payload):
+    """Los modelos gpt-oss piden el razonamiento distinto que qwen: no aceptan
+    "none" ni reasoning_format. Se traduce aquí para que cada vista no tenga que saberlo."""
+    if not str(payload.get('model', '')).startswith('openai/gpt-oss'):
+        return payload
+    payload = dict(payload)
+    esfuerzo = payload.pop('reasoning_effort', None)
+    payload['reasoning_effort'] = {'none': 'low', 'default': 'medium'}.get(esfuerzo, esfuerzo or 'low')
+    payload.pop('reasoning_format', None)
+    payload['include_reasoning'] = False
+    return payload
+
+
 def _groq_chat(payload, timeout=30):
     """POST genérico a Groq chat completions. Devuelve el texto crudo del mensaje."""
     groq_url = 'https://api.groq.com/openai/v1/chat/completions'
+    payload = _adaptar_payload(payload)
     headers = {
         'Authorization': f'Bearer {settings.GROQ_API_KEY}',
         'Content-Type': 'application/json',
@@ -415,7 +431,7 @@ Responde ÚNICAMENTE con este JSON válido, sin texto adicional:
 }}"""
 
     payload = {
-        'model': settings.GROQ_MODEL,
+        'model': settings.GROQ_MODEL_TEXTO,
         'messages': [
             {'role': 'system', 'content': system_msg},
             {'role': 'user',   'content': prompt},
@@ -430,7 +446,7 @@ Responde ÚNICAMENTE con este JSON válido, sin texto adicional:
         data = _extraer_json(contenido)
         return Response(data)
     except requests.RequestException as e:
-        return Response({'error': f'Error Groq API: {str(e)}'}, status=status.HTTP_502_BAD_GATEWAY)
+        return _respuesta_error_groq(e, 'Bruce está armando muchos planes. Intenta de nuevo en un minuto.')
     except json.JSONDecodeError:
         return Response({'error': 'Groq no devolvió JSON válido'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -881,6 +897,8 @@ Usas vocabulario de fitness natural ("macros", "déficit", "proteína", "racha")
 NUNCA usas emojis. NUNCA predicas ni repites consejos genéricos.
 
 OBJETIVO DEL USUARIO: {objetivo_texto}
+RESTRICCIONES DE DIETA (nunca sugieras algo que las viole): {', '.join(request.user.restricciones_dieta or []) or 'ninguna'}
+NO LE GUSTA (no lo sugieras): {', '.join(request.user.alimentos_no_gustados or []) or 'nada en particular'}
 
 SITUACIÓN REAL DE HOY ({momento}, {hora}h):
 - Calorías: {calorias_hoy}/{meta_calorias} kcal ({pct_calorias}%)
@@ -896,13 +914,14 @@ REGLAS ABSOLUTAS:
 4. Varía el inicio: no siempre empieces igual.
 5. Si cumplió todo: celebra con actitud pero sin exagerar.
 6. Si le falta proteína más que calorías: menciona eso específicamente.
+7. Si sugieres un alimento, que respete sus restricciones (vegetariano: nada de carne, pollo ni pescado; vegano: además nada de huevo, lácteos ni whey de leche).
 
 Solo la frase. Sin comillas. Sin explicaciones."""
 
     payload = {
-        'model':            settings.GROQ_MODEL,
+        'model':            settings.GROQ_MODEL_TEXTO,
         'messages':         [{'role': 'user', 'content': prompt}],
-        'max_tokens':       110,
+        'max_tokens':       400,  # gpt-oss gasta parte en razonar
         'temperature':      0.9,
         'reasoning_effort': 'none',
     }
@@ -927,7 +946,7 @@ Solo la frase. Sin comillas. Sin explicaciones."""
 def _buscar_info_nutricional(nombre_alimento):
     """Estima información nutricional de un alimento usando conocimiento del modelo."""
     payload = {
-        'model': settings.GROQ_MODEL,
+        'model': settings.GROQ_MODEL_TEXTO,
         'messages': [
             {
                 'role': 'system',
@@ -959,7 +978,7 @@ Responde ÚNICAMENTE con JSON válido:
 Si es un alimento completamente desconocido o imposible de estimar, usa encontrado: false.""",
             },
         ],
-        'max_tokens':       300,
+        'max_tokens':       700,  # gpt-oss gasta parte en razonar
         'temperature':      0.1,
         'reasoning_effort': 'none',
     }
@@ -995,15 +1014,14 @@ def _preparar_imagen(imagen_b64, lado_max=768):
     return f'data:image/jpeg;base64,{datos}'
 
 
-def _respuesta_error_groq(e):
-    """Traduce errores de Groq a algo que la app pueda mostrar."""
+def _respuesta_error_groq(e, ocupado='Bruce está atendiendo muchas fotos. Intenta de nuevo en un minuto.'):
+    """Traduce errores de Groq a algo que la app pueda mostrar. El detalle
+    técnico va al log del servidor, no a la pantalla."""
     codigo = getattr(getattr(e, 'response', None), 'status_code', None)
     if codigo == 429:
-        return Response(
-            {'error': 'Bruce está atendiendo muchas fotos. Intenta de nuevo en un minuto.'},
-            status=status.HTTP_429_TOO_MANY_REQUESTS,
-        )
-    return Response({'error': f'Error Groq: {str(e)}'}, status=status.HTTP_502_BAD_GATEWAY)
+        return Response({'error': ocupado}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+    logger.warning('Error de Groq (%s): %s', codigo, e)
+    return Response({'error': 'Bruce no pudo responder ahora. Intenta de nuevo.'}, status=status.HTTP_502_BAD_GATEWAY)
 
 
 def _sumar_alimentos(data):
@@ -1227,12 +1245,52 @@ Usa confianza "baja" si la etiqueta está muy borrosa o incompleta. Nunca uses 0
         data = _extraer_json(contenido)
         return Response(data)
     except requests.RequestException as e:
-        return Response({'error': f'Error Groq: {str(e)}'}, status=status.HTTP_502_BAD_GATEWAY)
+        return _respuesta_error_groq(e, 'Bruce está leyendo muchas etiquetas. Intenta de nuevo en un minuto.')
     except json.JSONDecodeError:
         return Response({'error': 'Groq no devolvió JSON válido'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 # ── Chat con Bruce ────────────────────────────────────────────────────────
+
+def _contexto_semana(user, hoy):
+    """Lo que Bruce necesita para hablar de patrones y no solo del día."""
+    from .models import PlanDia
+    desde = hoy - timedelta(days=6)
+    totales = estadisticas.totales_por_dia(user, desde, hoy - timedelta(days=1))
+    lineas = ['ÚLTIMOS 7 DÍAS (sin contar hoy):']
+    if totales:
+        n = len(totales)
+        prom_cal  = round(sum(t['calorias'] for t in totales.values()) / n)
+        prom_prot = round(sum(t['proteina'] for t in totales.values()) / n)
+        dias_prot = sum(1 for t in totales.values() if user.meta_proteina and t['proteina'] >= user.meta_proteina * 0.9)
+        lineas.append(f'• Registró comida {n} de 6 días. Promedio: {prom_cal} kcal y {prom_prot} g proteína por día. '
+                      f'Cumplió la proteína {dias_prot} de {n} días.')
+    else:
+        lineas.append('• No registró comidas.')
+    dias_gym = estadisticas.dias_con_gym(user, desde, hoy - timedelta(days=1))
+    lineas.append(f'• Fue al gym {len(dias_gym)} días.')
+
+    recientes = (
+        Comida.objects.filter(usuario=user, fecha__gte=hoy - timedelta(days=2))
+        .order_by('-fecha', '-creado_en').values_list('fecha', 'nombre')[:12]
+    )
+    if recientes:
+        lineas.append('• Comió hace poco: ' + '; '.join(f'{n} ({"hoy" if f == hoy else f.strftime("%a")})' for f, n in recientes))
+
+    pesos = list(PesoCorporal.objects.filter(usuario=user, fecha__gte=hoy - timedelta(days=21)).order_by('fecha').values_list('peso_kg', flat=True))
+    if len(pesos) >= 2:
+        lineas.append(f'• Peso últimas 3 semanas: de {pesos[0]} a {pesos[-1]} kg ({pesos[-1] - pesos[0]:+.1f} kg).')
+
+    rutinas_hoy = list(RutinaDia.objects.filter(usuario=user, dia_semana=hoy.weekday()).values_list('rutina__nombre', flat=True))
+    lineas.append(f'• Rutina de hoy: {", ".join(rutinas_hoy) if rutinas_hoy else "descanso"}.')
+
+    plan = PlanDia.objects.filter(usuario=user, fecha=hoy).first()
+    if plan and plan.comidas:
+        pendientes = [f'{c["momento"]}: {c["nombre"]} ({c["calorias"]} kcal, {c["proteina"]} g prot)' for c in plan.comidas if not c.get('registrada')]
+        if pendientes:
+            lineas.append('• Plan de hoy pendiente: ' + '; '.join(pendientes))
+    return '\n'.join(lineas)
+
 
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
@@ -1331,8 +1389,11 @@ HOY ({hoy.strftime('%A %d de %B')}):
 • Calorías: {totales['calorias']}/{metas['calorias']} kcal ({pct_cal}%)
 • Proteína: {totales['proteina']}g/{metas['proteina']}g ({pct_prot}%)
 • Carbos: {totales['carbos']}g/{metas['carbos']}g | Grasas: {totales['grasas']}g/{metas['grasas']}g
+• FALTA HOY (ya calculado, úsalo tal cual): {max(metas['calorias'] - totales['calorias'], 0)} kcal y {max(round(metas['proteina'] - totales['proteina']), 0)} g de proteína
 • Gym hoy: {'completó la sesión' if fue_al_gym else 'no fue'}
-• Racha gym: {racha_gym} días | Racha registro comida: {racha_comida} días"""
+• Racha gym: {racha_gym} días | Racha registro comida: {racha_comida} días
+
+{_contexto_semana(user, hoy)}"""
 
     # Historial de la sesión (últimos 20 mensajes)
     historial = MensajeChat.objects.filter(sesion=sesion).order_by('-creado_en')[:20]
@@ -1351,6 +1412,8 @@ PERSONALIDAD:
 - Hablas en español colombiano casual. Nada de formal.
 - NUNCA usas emojis. NUNCA.
 - No repites consejos genéricos — siempre basas tu respuesta en los números reales del usuario.
+- Mira la semana, no solo hoy: si ves un patrón (poca proteína varios días, se salta el gym, el peso no se mueve), dilo con el número concreto.
+- Usa los números del contexto tal como vienen; no recalcules porcentajes ni totales de la semana.
 
 ESTILO DE RESPUESTA:
 - Máximo 3-4 oraciones salvo que pidan más detalle, un plan o una receta.
@@ -1365,6 +1428,11 @@ CONOCIMIENTO:
 - Recetas colombianas saludables adaptadas a los macros del usuario.
 - Si te preguntan algo fuera de fitness/nutrición: redirige con humor ("Eso no lo sé, soy perro entrenador, no abogado").
 
+SEGURIDAD:
+- Sus restricciones de dieta y lo que no le gusta se respetan siempre, sin excepción.
+- Si pregunta qué comer, propón comidas concretas con cantidades que cuadren con lo que le falta HOY; también puede pedirle el "Plan de Bruce" en la pestaña Comidas.
+- Nada de diagnósticos ni dietas extremas: si menciona dolor, lesión, mareos o algo médico, recomiéndale ir a un profesional.
+
 {contexto_dia}"""
 
     messages = [{'role': 'system', 'content': system_prompt}]
@@ -1372,9 +1440,9 @@ CONOCIMIENTO:
     messages.append({'role': 'user', 'content': mensaje_usuario})
 
     payload = {
-        'model':            settings.GROQ_MODEL,
+        'model':            settings.GROQ_MODEL_TEXTO,
         'messages':         messages,
-        'max_tokens':       800,
+        'max_tokens':       1500,
         'temperature':      0.8,
         'reasoning_format': 'hidden',
     }
@@ -1727,9 +1795,9 @@ def push_check(request):
 
     try:
         frase = _groq_chat({
-            'model': settings.GROQ_MODEL,
+            'model': settings.GROQ_MODEL_TEXTO,
             'messages': [{'role': 'user', 'content': prompt}],
-            'max_tokens': 60,
+            'max_tokens': 300,  # gpt-oss gasta parte en razonar
             'temperature': 0.9,
             'reasoning_effort': 'none',
         }, timeout=12)
@@ -1873,9 +1941,9 @@ def cron_notificaciones(request):
 
         try:
             frase = _groq_chat({
-                'model': settings.GROQ_MODEL,
+                'model': settings.GROQ_MODEL_TEXTO,
                 'messages': [{'role': 'user', 'content': prompt}],
-                'max_tokens': 60,
+                'max_tokens': 300,  # gpt-oss gasta parte en razonar
                 'temperature': 0.9,
                 'reasoning_effort': 'none',
                 'reasoning_format': 'hidden',

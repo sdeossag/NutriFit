@@ -423,3 +423,28 @@ class LogroUsuario(models.Model):
 
     def __str__(self):
         return f"{self.usuario} — {self.clave} nivel {self.nivel}"
+
+
+# ──────────────────────────────────────────────
+#  PLAN DEL DÍA (Bruce)
+# ──────────────────────────────────────────────
+
+class PlanDia(models.Model):
+    """Comidas que Bruce propone para un día, según lo que falta de las metas.
+
+    comidas: [{ momento, nombre, porcion, ingredientes: [{nombre, cantidad}],
+                preparacion: [pasos], minutos, calorias, proteina, carbos,
+                grasas, registrada }]
+    """
+    usuario       = models.ForeignKey('Usuario', on_delete=models.CASCADE, related_name='planes')
+    fecha         = models.DateField()
+    comidas       = models.JSONField(default=list)
+    consejo       = models.TextField(blank=True)
+    generaciones  = models.PositiveSmallIntegerField(default=0)  # límite diario de llamadas a la IA
+    actualizado   = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['usuario', 'fecha'], name='plan_unico_por_dia')]
+
+    def __str__(self):
+        return f"Plan {self.usuario} — {self.fecha}"

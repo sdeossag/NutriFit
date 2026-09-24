@@ -8,7 +8,7 @@ from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIClient
 
 from . import estadisticas
-from .models import Comida, EjercicioLog, PesoCorporal, Rutina, RutinaDia, SesionGym
+from .models import Comida, EjercicioLog, PesoCorporal, PlanDia, Rutina, RutinaDia, SesionGym
 
 User = get_user_model()
 
@@ -306,3 +306,94 @@ class LogrosTests(Base):
     def test_singular_cuando_la_meta_es_uno(self):
         l = self.logro('records')[0]
         self.assertEqual((l['descripcion'], l['unidad']), ('1 récord personal', 'récord'))
+
+
+class PlanDiaTests(Base):
+    def setUp(self):
+        super().setUp()
+        u = self.user
+        u.meta_calorias, u.meta_proteina, u.meta_carbos, u.meta_grasas = 2000, 150, 200, 60
+        u.restricciones_dieta, u.alimentos_no_gustados = ['vegetariano'], ['Brócoli']
+        u.save()
+
+    def comida_ia(self, momento, nombre, ingredientes, cal=500, p=30, c=60, g=15):
+        return {'momento': momento, 'nombre': nombre, 'ingredientes': [{'nombre': i, 'cantidad': '100 g'} for i in ingredientes],
+                'preparacion': ['Cocinar'], 'minutos': 10, 'calorias': cal, 'proteina': p, 'carbos': c, 'grasas': g}
+
+    def test_verificacion_de_restricciones(self):
+        from .plan import violaciones
+        perfil = {'restricciones': ['vegetariano', 'sin_lacteos', 'sin_gluten'], 'no_gustan': ['Brócoli']}
+        self.assertTrue(violaciones(self.comida_ia('cena', 'Arroz con pollo', ['arroz']), perfil))
+        self.assertTrue(violaciones(self.comida_ia('cena', 'Tortilla', ['huevos', 'queso campesino']), perfil))
+        self.assertTrue(violaciones(self.comida_ia('cena', 'Bowl', ['brocoli al vapor']), perfil))
+        self.assertTrue(violaciones(self.comida_ia('cena', 'Tostadas', ['pan integral']), perfil))
+        self.assertEqual(violaciones(self.comida_ia('desayuno', 'Avena', ['leche de almendras', 'panela', 'fresas']), perfil), [])
+
+    def test_genera_y_reintenta_si_se_cuela_algo_prohibido(self):
+        respuestas = iter([
+            {'comidas': [self.comida_ia('almuerzo', 'Pollo asado', ['pechuga de pollo']),
+                         self.comida_ia('cena', 'Lentejas', ['lentejas', 'arroz'])], 'consejo': 'Dale.'},
+            {'comidas': [self.comida_ia('almuerzo', 'Garbanzos guisados', ['garbanzos', 'papa'], cal=999)]},
+            {'comidas': []},  # segunda pasada de ajuste: sin cambios
+        ])
+        with en(HOY), mock.patch('api.plan.momentos_restantes', return_value=['almuerzo', 'cena']), \
+                mock.patch('api.plan._pedir_a_la_ia', side_effect=lambda prompt: next(respuestas)) as ia:
+            r = self.api.post('/api/plan/', {'fecha': HOY.isoformat()}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(ia.call_count, 3)
+        nombres = [c['nombre'] for c in r.data['plan']['comidas']]
+        self.assertEqual(nombres, ['Garbanzos guisados', 'Lentejas'])        # en orden del día
+        self.assertEqual(r.data['plan']['comidas'][0]['calorias'], 495)     # 4·30 + 4·60 + 9·15, no 999
+        self.assertIn('Pechuga de pollo', ia.call_args_list[1].args[0].replace('pechuga', 'Pechuga'))
+
+    def test_reparto_segun_lo_que_falta(self):
+        from .plan import objetivos_por_momento
+        Comida.objects.create(usuario=self.user, nombre='x', calorias=800, proteina=50, fecha=HOY)
+        from .plan import restante_del_dia
+        restante = restante_del_dia(self.user, HOY)
+        self.assertEqual((restante['calorias'], restante['proteina']), (1200, 100))
+        obj = objetivos_por_momento(restante, ['almuerzo', 'cena'])
+        self.assertAlmostEqual(sum(o['calorias'] for o in obj.values()), 1200, delta=2)
+        self.assertGreater(obj['almuerzo']['calorias'], obj['cena']['calorias'])
+
+    def test_registrar_una_comida_del_plan(self):
+        PlanDia.objects.create(usuario=self.user, fecha=HOY, comidas=[
+            {'momento': 'cena', 'nombre': 'Lentejas', 'porcion': '1 plato', 'calorias': 495,
+             'proteina': 30, 'carbos': 60, 'grasas': 15, 'registrada': False},
+        ])
+        with en(HOY):
+            r = self.api.post('/api/plan/registrar/', {'fecha': HOY.isoformat(), 'indice': 0}, format='json')
+            self.assertEqual(r.status_code, 201, r.data)
+            self.assertTrue(r.data['plan']['comidas'][0]['registrada'])
+            self.assertEqual(Comida.objects.get(usuario=self.user).calorias, 495)
+            again = self.api.post('/api/plan/registrar/', {'fecha': HOY.isoformat(), 'indice': 0}, format='json')
+        self.assertEqual(again.status_code, 400)
+
+    def test_tarde_en_la_noche_sugiere_planear_manana(self):
+        with en(HOY), mock.patch('api.plan.momentos_restantes', return_value=[]):
+            r = self.api.post('/api/plan/', {'fecha': HOY.isoformat()}, format='json')
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('mañana', r.data['error'])
+
+    def test_no_se_planea_el_pasado(self):
+        with en(HOY):
+            r = self.api.get('/api/plan/?fecha=2026-01-01')
+        self.assertEqual(r.status_code, 400)
+
+    def test_segunda_pasada_ajusta_comidas_cortas_de_proteina(self):
+        def ing(nombre, cal, p):
+            return {'nombre': nombre, 'cantidad': '100 g', 'calorias': cal, 'proteina': p, 'carbos': 10, 'grasas': 5}
+        corta   = {'momento': 'cena', 'nombre': 'Arepa con queso', 'ingredientes': [ing('arepa', 250, 5)], 'preparacion': []}
+        mejor   = {'momento': 'cena', 'nombre': 'Arepa con huevos', 'ingredientes': [ing('arepa', 250, 5), ing('huevos', 300, 30)], 'preparacion': []}
+        respuestas = iter([{'comidas': [corta]}, {'comidas': [mejor]}])
+        with en(HOY), mock.patch('api.plan.momentos_restantes', return_value=['cena']),                 mock.patch('api.plan._pedir_a_la_ia', side_effect=lambda prompt: next(respuestas)) as ia:
+            r = self.api.post('/api/plan/', {'fecha': HOY.isoformat()}, format='json')
+        self.assertEqual(ia.call_count, 2)
+        cena = r.data['plan']['comidas'][0]
+        self.assertEqual((cena['nombre'], cena['proteina'], cena['calorias']), ('Arepa con huevos', 35.0, 310))  # calorías según macros
+
+    def test_de_noche_la_cena_tiene_tope_realista(self):
+        from .plan import objetivos_por_momento
+        obj = objetivos_por_momento({'calorias': 2000, 'proteina': 150, 'carbos': 200, 'grasas': 60}, ['cena'], {'calorias': 2000})
+        self.assertEqual(obj['cena']['calorias'], 900)   # 2000 × (30% + 15%)
+        self.assertEqual(obj['cena']['proteina'], 68)    # proporcional al recorte

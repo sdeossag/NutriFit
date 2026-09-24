@@ -1,6 +1,6 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
-from . import logros, rutinas, views
+from . import logros, plan, rutinas, views
 
 urlpatterns = [
     # ───────────────────────── AUTH ─────────────────────────
@@ -47,6 +47,9 @@ urlpatterns = [
     path('rutinas/<int:pk>/',           rutinas.rutina_detalle,       name='rutina-detalle'),
     path('logros/',                     logros.logros,                name='logros'),
     path('logros/vistos/',              logros.logros_vistos,         name='logros-vistos'),
+    path('plan/',                       plan.plan,                    name='plan-dia'),
+    path('plan/cambiar/',               plan.cambiar,                 name='plan-cambiar'),
+    path('plan/registrar/',             plan.registrar,               name='plan-registrar'),
     path('ejercicios-personalizados/',  views.ejercicios_personalizados, name='ejercicios-personalizados'),
 
     # ─────────────────────── PROGRESS ───────────────────────

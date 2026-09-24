@@ -11,6 +11,7 @@ import {
 } from '../api'
 import { toast } from '../lib/toast'
 import Sheet, { SheetHeader } from '../components/Sheet'
+import PlanBruce from '../components/PlanBruce'
 import { haptic, useEntrada } from '../lib/motion'
 import { fotoABase64 } from '../lib/imagen'
 import bruceFace from '../assets/bruce-face.webp'
@@ -562,6 +563,8 @@ export default function FoodScreen({ screen }) {
           onDescartar={() => setResultado(null)}
         />
       )}
+
+      <PlanBruce visible={screen === 'food'} onRegistrada={cargarComidas} />
 
       {/* ── Hoy ── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', margin: '0 4px 10px' }}>
