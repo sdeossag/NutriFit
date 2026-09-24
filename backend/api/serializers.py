@@ -229,7 +229,7 @@ class AlimentoAlacenaSerializer(serializers.ModelSerializer):
 class MensajeChatSerializer(serializers.ModelSerializer):
     class Meta:
         model  = MensajeChat
-        fields = ['id', 'rol', 'contenido', 'creado_en']
+        fields = ['id', 'rol', 'contenido', 'acciones', 'creado_en']
 
 class SesionChatSerializer(serializers.ModelSerializer):
     mensajes = MensajeChatSerializer(many=True, read_only=True)

@@ -150,11 +150,24 @@ function BruceCard({ resumen, entrar, onOpenChat, usuario }) {
         background: 'linear-gradient(135deg, #0b1c12 0%, #0f2a1b 100%)',
         borderRadius: 'var(--r-xl)',
         boxShadow: 'inset 0 0 0 0.5px rgba(74,222,128,0.16)',
-        padding: '16px',
-        display: 'flex', alignItems: 'flex-end', gap: '12px',
+        padding: '14px 16px 16px',
         marginTop: '12px',
       }}
     >
+      {/* Encabezado a todo el ancho: nombre y estado a la izquierda, acción a la derecha */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+          <span style={{ fontSize: '16px', fontWeight: 700, color: 'var(--green)' }}>Bruce</span>
+          <span className='nf-badge' style={{ whiteSpace: 'nowrap' }}>
+            {esNoche ? 'Modo noche' : descanso ? 'Descanso' : 'Tu coach'}
+          </span>
+        </div>
+        <button onClick={onOpenChat} className='nf-btn nf-btn--sm nf-btn--tinted' style={{ flexShrink: 0 }} aria-label='Abrir chat con Bruce'>
+          <IconMessageCircle size={15} strokeWidth={2} /> Chat
+        </button>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: '12px' }}>
       <button
         onClick={tocarBruce}
         aria-label='Hablar con Bruce'
@@ -179,18 +192,6 @@ function BruceCard({ resumen, entrar, onOpenChat, usuario }) {
       </button>
 
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', gap: '8px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-            <span style={{ fontSize: '16px', fontWeight: 700, color: 'var(--green)' }}>Bruce</span>
-            <span className='nf-badge'>
-              {esNoche ? 'Modo noche' : descanso ? 'Descanso' : 'Tu coach'}
-            </span>
-          </div>
-          <button onClick={onOpenChat} className='nf-btn nf-btn--sm nf-btn--tinted' aria-label='Abrir chat con Bruce'>
-            <IconMessageCircle size={15} strokeWidth={2} /> Chat
-          </button>
-        </div>
-
         <div style={{
           background: 'rgba(0,0,0,0.28)',
           borderRadius: '14px',
@@ -210,6 +211,7 @@ function BruceCard({ resumen, entrar, onOpenChat, usuario }) {
             </p>
           )}
         </div>
+      </div>
       </div>
     </section>
   )

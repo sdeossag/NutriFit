@@ -99,7 +99,7 @@ const get   = (path) => enviar('GET')(path)
 const post  = enviar('POST')
 const patch = enviar('PATCH')
 const put   = enviar('PUT')
-const del_  = (path) => enviar('DELETE')(path)
+const del_  = (path, body) => enviar('DELETE')(path, body)
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -219,12 +219,25 @@ export const marcarLogrosVistos  = () => post('/logros/vistos/', {})
 export const getPlan             = (fecha)         => get(`/plan/?fecha=${fecha}`)
 export const generarPlan         = (fecha)         => post('/plan/', { fecha })
 export const cambiarComidaPlan   = (fecha, indice) => post('/plan/cambiar/', { fecha, indice })
-export const registrarComidaPlan = (fecha, indice, ajuste) => post('/plan/registrar/', { fecha, indice, ajuste })
+export const deshacerComidaPlan  = (fecha, indice) => post('/plan/deshacer/', { fecha, indice })
+export const registrarComidaPlan =(fecha, indice, ajuste) => post('/plan/registrar/', { fecha, indice, ajuste })
 export const fotoComidaPlan      = (fecha, indice, imagen) => post('/plan/foto/', { fecha, indice, imagen })
 
+// ── Notificaciones ───────────────────────────────────────────────────────
+export const registrarPush        = (sub)      => post('/push/subscribe/', sub)
+export const quitarPush           = (endpoint) => del_(`/push/unsubscribe/`, { endpoint })
+export const estadoPush           = (endpoint) => get(`/push/estado/?endpoint=${encodeURIComponent(endpoint)}`)
+export const getAjustesNotif      = ()         => get('/notificaciones/ajustes/')
+export const guardarAjustesNotif  = (datos)    => patch('/notificaciones/ajustes/', datos)
+export const probarNotificacion   = ()         => post('/notificaciones/prueba/', {})
+
 // ── Ejercicios personalizados del pool ───────────────────────────────────
-export const getEjerciciosPersonalizados   = ()     => get('/ejercicios-personalizados/')
-export const crearEjercicioPersonalizado   = (data) => post('/ejercicios-personalizados/', data)
+// Biblioteca de ejercicios (la base + los propios; todo editable)
+export const getEjercicios     = ()         => get('/ejercicios/')
+export const crearEjercicio    = (data)     => post('/ejercicios/', data)
+export const editarEjercicio   = (id, data) => patch(`/ejercicios/${id}/`, data)
+export const eliminarEjercicio = (id)       => del_(`/ejercicios/${id}/`)
+export const generarRutina     = (datos)    => post('/rutinas/generar/', datos)
 
 // ── Agua ──────────────────────────────────────────────────────────────────────
 export const getAgua       = (fecha) => get(`/agua/?fecha=${fecha}`)

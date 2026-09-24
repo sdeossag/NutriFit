@@ -2,16 +2,18 @@ import { useState, useEffect, useRef } from 'react'
 import {
   IconCheck, IconChevronRight, IconChevronUp, IconChevronDown, IconPlus, IconX,
   IconClock, IconPencil, IconTrash, IconSearch, IconPalette, IconBarbell,
-  IconReplace, IconArrowsExchange,
+  IconReplace, IconArrowsExchange, IconSparkles, IconBooks,
 } from '@tabler/icons-react'
 import {
   registrarSesion, getSesionesSemana,
   getRutinas, crearRutina, editarRutina, eliminarRutina, asignarSemana,
-  getEjerciciosPersonalizados, crearEjercicioPersonalizado,
+  getEjercicios, crearEjercicio,
 } from '../api'
 import Sheet, { SheetHeader } from '../components/Sheet'
 import { toast } from '../lib/toast'
 import { haptic, useEntrada } from '../lib/motion'
+import { BibliotecaSheet, GenerarSheet } from '../components/GymExtras'
+import bruceGym from '../assets/bruce-tuxedo-determinado.webp'
 
 // Fecha local (no UTC): en Colombia, después de las 7 pm toISOString ya da mañana
 const fechaLocal = (d = new Date()) => d.toLocaleDateString('en-CA')
@@ -24,44 +26,6 @@ const sinClave = (obj, clave) => {
 
 // ─── DATOS BASE ────────────────────────────────────────────────────────────────
 
-const POOL_DEFAULT = [
-  { nombre: 'Sentadilla',             musculo: 'Piernas',   series: 4, reps: '8',   peso: '60 kg'    },
-  { nombre: 'Prensa de pierna',       musculo: 'Piernas',   series: 4, reps: '12',  peso: '120 kg'   },
-  { nombre: 'Zancadas',               musculo: 'Piernas',   series: 3, reps: '10',  peso: '16 kg'    },
-  { nombre: 'Curl femoral',           musculo: 'Piernas',   series: 4, reps: '10',  peso: '38–45 kg' },
-  { nombre: 'Extensión cuádricep',    musculo: 'Piernas',   series: 4, reps: '10',  peso: '52–58 kg' },
-  { nombre: 'Aductor/abductor',       musculo: 'Piernas',   series: 3, reps: '12',  peso: '66 kg'    },
-  { nombre: 'Pantorrilla',            musculo: 'Piernas',   series: 3, reps: '20',  peso: '20 kg'    },
-  { nombre: 'Pantorrilla unipodal',   musculo: 'Piernas',   series: 3, reps: '18',  peso: '20 kg'    },
-  { nombre: 'Step-up',                musculo: 'Piernas',   series: 3, reps: '10',  peso: '18–20 kg' },
-  { nombre: 'Peso muerto unipodal',   musculo: 'Piernas',   series: 3, reps: '10',  peso: '14 kg'    },
-  { nombre: 'Chest press máquina',    musculo: 'Pecho',     series: 3, reps: '10',  peso: '29–36 kg' },
-  { nombre: 'Press banca inclinado',  musculo: 'Pecho',     series: 4, reps: '10',  peso: '7.5–10 kg'},
-  { nombre: 'Press banca plano',      musculo: 'Pecho',     series: 4, reps: '8',   peso: '40 kg'    },
-  { nombre: 'Pec fly',                musculo: 'Pecho',     series: 3, reps: '12',  peso: '25–30 kg' },
-  { nombre: 'Fondos en paralelas',    musculo: 'Pecho',     series: 3, reps: '10',  peso: '—'        },
-  { nombre: 'Press militar',          musculo: 'Hombros',   series: 3, reps: '10',  peso: '8–10 kg'  },
-  { nombre: 'Elevaciones laterales',  musculo: 'Hombros',   series: 3, reps: '15',  peso: '5–6 kg'   },
-  { nombre: 'Elevaciones frontales',  musculo: 'Hombros',   series: 3, reps: '12',  peso: '5 kg'     },
-  { nombre: 'Jalón al pecho',         musculo: 'Espalda',   series: 4, reps: '10',  peso: '32–40 kg' },
-  { nombre: 'Remo mancuerna',         musculo: 'Espalda',   series: 4, reps: '10',  peso: '14–16 kg' },
-  { nombre: 'Remo máquina',           musculo: 'Espalda',   series: 3, reps: '12',  peso: 'explorar' },
-  { nombre: 'Pull-up',                musculo: 'Espalda',   series: 4, reps: '6',   peso: '—'        },
-  { nombre: 'Remo con barra',         musculo: 'Espalda',   series: 4, reps: '8',   peso: '40 kg'    },
-  { nombre: 'Curl bíceps',            musculo: 'Brazos',    series: 4, reps: '12',  peso: '8–12 kg'  },
-  { nombre: 'Curl martillo',          musculo: 'Brazos',    series: 3, reps: '12',  peso: '8–10 kg'  },
-  { nombre: 'Tríceps polea',          musculo: 'Brazos',    series: 3, reps: '12',  peso: '14–18 kg' },
-  { nombre: 'Tríceps francés',        musculo: 'Brazos',    series: 3, reps: '12',  peso: '10 kg'    },
-  { nombre: 'Plancha',                musculo: 'Core',      series: 4, reps: '45s', peso: '—'        },
-  { nombre: 'Plancha lateral',        musculo: 'Core',      series: 3, reps: '20s', peso: '—'        },
-  { nombre: 'Plancha + rotación',     musculo: 'Core',      series: 3, reps: '30s', peso: '—'        },
-  { nombre: 'Crunch en polea',        musculo: 'Core',      series: 3, reps: '15',  peso: 'ligero'   },
-  { nombre: 'Crunch bicicleta',       musculo: 'Core',      series: 3, reps: '20',  peso: '—'        },
-  { nombre: 'Elevación de piernas',   musculo: 'Core',      series: 3, reps: '12',  peso: '—'        },
-  { nombre: 'Caminadora 20 min',      musculo: 'Cardio',    series: 1, reps: '20m', peso: 'incl 15'  },
-  { nombre: 'Bicicleta 15 min',       musculo: 'Cardio',    series: 1, reps: '15m', peso: '—'        },
-  { nombre: 'Remo ergómetro',         musculo: 'Cardio',    series: 1, reps: '10m', peso: '—'        },
-]
 
 // Colores para las rutinas: los mismos tonos del sistema de diseño, pensados para fondo oscuro
 const PALETA = ['#4ade80', '#60a5fa', '#a78bfa', '#f472b6', '#f87171', '#fb923c', '#fbbf24', '#2dd4bf', '#22d3ee', '#a3a3a3']
@@ -922,7 +886,9 @@ export default function GymScreen({ t, screen }) {
   const [lib, setLib]                   = useState({})
   const [plan, setPlan]                 = useState(null)
   const [hechasPorFecha, setHechasPorFecha] = useState({})  // rutinas con sesión guardada en esa fecha
-  const [pool, setPool]                 = useState(POOL_DEFAULT)
+  const [pool, setPool]                 = useState([])
+  const [bibliotecaAbierta, setBibliotecaAbierta] = useState(false)
+  const [generarAbierto, setGenerarAbierto]       = useState(false)
   const [selectedFecha, setSelectedFecha] = useState(() => fechaLocal())
   // Claves por sesión: `${fecha}|${rutinaId}`
   const [completados, setCompletados]   = useState({})
@@ -962,15 +928,15 @@ export default function GymScreen({ t, screen }) {
     Promise.all([
       getRutinas(),
       getSesionesSemana().catch(() => []),
-      getEjerciciosPersonalizados().catch(() => []),
+      getEjercicios().catch(() => []),
     ])
-      .then(([datos, sesiones, custom]) => {
+      .then(([datos, sesiones, biblioteca]) => {
         if (cancelado) return
         const nuevaLib  = Object.fromEntries(datos.rutinas.map(r => [r.id, r]))
         const nuevoPlan = Object.fromEntries(Object.entries(datos.semana).map(([d, ids]) => [Number(d), ids ?? []]))
         setLib(nuevaLib)
         setPlan(nuevoPlan)
-        if (Array.isArray(custom) && custom.length > 0) setPool([...POOL_DEFAULT, ...custom])
+        setPool(Array.isArray(biblioteca) ? biblioteca : [])
 
         // Marca lo que ya se registró esta semana, sesión por sesión
         const hechas = {}, marcados = {}, logs = {}
@@ -1173,10 +1139,24 @@ export default function GymScreen({ t, screen }) {
     }
   }
 
+  const aplicarRutinas = (datos) => {
+    setLib(Object.fromEntries(datos.rutinas.map(r => [r.id, r])))
+    setPlan(Object.fromEntries(Object.entries(datos.semana).map(([d, ids]) => [Number(d), ids ?? []])))
+  }
+  const recargarRutinas = () => getRutinas().then(aplicarRutinas).catch(() => {})
+
+  const semanaLista = (datos) => {
+    aplicarRutinas(datos)
+    setGenerarAbierto(false)
+    getEjercicios().then(setPool).catch(() => {})
+    toast.success(datos.explicacion || 'Tu semana está lista')
+  }
+
   const handleCrearEjercicioPersonalizado = async (ejercicio) => {
-    setPool(prev => [...prev, ejercicio])
+    const temporal = { ...ejercicio, id: `nuevo-${Date.now()}` }
+    setPool(prev => [...prev, temporal])
     try {
-      await crearEjercicioPersonalizado({
+      const creado = await crearEjercicio({
         nombre: ejercicio.nombre,
         musculo: ejercicio.musculo,
         series: ejercicio.series,
@@ -1184,9 +1164,10 @@ export default function GymScreen({ t, screen }) {
         peso: ejercicio.peso,
         color: ejercicio.color,
       })
+      setPool(prev => prev.map(e => e.id === temporal.id ? creado : e))
     } catch (e) {
-      console.error('Error guardando ejercicio personalizado en el servidor:', e)
-      toast.error('El ejercicio no se guardó en tu cuenta.')
+      setPool(prev => prev.filter(x => x.id !== temporal.id))
+      toast.error(e.mensaje || 'El ejercicio no se guardó en tu cuenta.')
     }
   }
 
@@ -1215,10 +1196,37 @@ export default function GymScreen({ t, screen }) {
       )}
 
       {/* Header */}
-      <header className={entrar ? 'nf-enter' : undefined} style={{ padding: '0 4px', marginBottom: '20px' }}>
-        <h1 className='nf-large-title'>{t?.gym ?? 'Gym'}</h1>
-        <p className='nf-subhead'>{t?.weeklyPlan ?? 'Tu plan semanal'}</p>
+      <header className={entrar ? 'nf-enter' : undefined} style={{ padding: '0 4px', marginBottom: '20px', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '8px' }}>
+        <div>
+          <h1 className='nf-large-title'>{t?.gym ?? 'Gym'}</h1>
+          <p className='nf-subhead'>{t?.weeklyPlan ?? 'Tu plan semanal'}</p>
+        </div>
+        {!cargandoPlan && (
+          <div style={{ display: 'flex', gap: '4px', marginBottom: '2px' }}>
+            <button onClick={() => setGenerarAbierto(true)} className='nf-icon-btn' aria-label='Que Bruce arme mi semana' style={{ color: 'var(--green)' }}>
+              <IconSparkles size={22} />
+            </button>
+            <button onClick={() => setBibliotecaAbierta(true)} className='nf-icon-btn' aria-label='Mis ejercicios' style={{ color: 'var(--green)' }}>
+              <IconBooks size={22} />
+            </button>
+          </div>
+        )}
       </header>
+
+      <BibliotecaSheet
+        open={bibliotecaAbierta}
+        onClose={() => setBibliotecaAbierta(false)}
+        pool={pool}
+        setPool={setPool}
+        colorMusculo={(m) => COLORES_MUSCULO[m]?.text ?? 'var(--label-2)'}
+        onCambioRutinas={recargarRutinas}
+      />
+      <GenerarSheet
+        open={generarAbierto}
+        onClose={() => setGenerarAbierto(false)}
+        tieneSemana={Object.values(plan ?? {}).some(ids => ids.length)}
+        onListo={semanaLista}
+      />
 
       {cargandoPlan ? (
         <div aria-busy='true'>
@@ -1227,6 +1235,20 @@ export default function GymScreen({ t, screen }) {
             {DIAS_ABR.map(d => <div key={d} className='nf-skeleton' style={{ height: '84px', borderRadius: '16px' }} />)}
           </div>
           <div className='nf-skeleton' style={{ height: '320px', borderRadius: 'var(--r-lg)' }} />
+        </div>
+      ) : Object.keys(lib).length === 0 ? (
+        <div className='nf-card nf-enter' style={{ padding: '28px 20px', textAlign: 'center' }}>
+          <img src={bruceGym} alt='' width={96} height={96} style={{ margin: '0 auto 12px', display: 'block', objectFit: 'contain' }} />
+          <p className='nf-title-3' style={{ marginBottom: '6px' }}>Arma tu semana</p>
+          <p className='nf-footnote' style={{ marginBottom: '20px' }}>
+            Dime qué días entrenas y cuánto tiempo tienes, y te armo las rutinas según tu objetivo. O créalas tú desde cero.
+          </p>
+          <button onClick={() => setGenerarAbierto(true)} className='nf-btn nf-btn--primary nf-btn--block nf-btn--lg' style={{ marginBottom: '10px' }}>
+            <IconSparkles size={18} /> Que Bruce arme mi semana
+          </button>
+          <button onClick={() => nuevaRutina(diaSeleccionado?.dayOfWeek ?? null)} className='nf-btn nf-btn--tinted nf-btn--block'>
+            <IconPlus size={18} /> Crear mi propia rutina
+          </button>
         </div>
       ) : (<>
         <ResumenSemanal semana={semana} completados={completados} rutinasDe={rutinasDe} clave={clave} pool={pool} />

@@ -67,12 +67,16 @@ class Usuario(AbstractUser):
     restricciones_dieta    = models.JSONField(default=list, blank=True)
     # Alergias: el filtro más estricto (ni como ingrediente menor ni en la preparación)
     alergias               = models.JSONField(default=list, blank=True)
+    # Qué notificaciones recibe y a qué hora (se combina con los valores por defecto)
+    ajustes_notif          = models.JSONField(default=dict, blank=True)
     # ej: ["vegetariano", "sin_gluten", "sin_lacteos", "sin_cerdo", "halal"]
 
     # ── Control de flujo ──────────────────────────────────────────────────────
     onboarding_completo = models.BooleanField(default=False)
     # La semana de rutinas ya se creó (una semana toda de descanso no tiene filas)
     semana_creada       = models.BooleanField(default=False)
+    # La biblioteca de ejercicios ya recibió la lista base
+    biblioteca_creada   = models.BooleanField(default=False)
 
     class Meta:
         verbose_name        = 'Usuario'
@@ -303,6 +307,8 @@ class MensajeChat(models.Model):
     sesion    = models.ForeignKey(SesionChat, on_delete=models.CASCADE, related_name='mensajes')
     rol       = models.CharField(max_length=10, choices=ROL_CHOICES)
     contenido = models.TextField()
+    # Lo que Bruce hizo en la app al responder (cambiar una comida, armar el plan…)
+    acciones  = models.JSONField(default=list, blank=True)
     creado_en = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -355,14 +361,16 @@ class RutinaDia(models.Model):
 
 
 class EjercicioPersonalizado(models.Model):
-    """Ejercicios creados por el usuario para el pool, con color libre."""
+    """Biblioteca de ejercicios de cada persona: la lista base (copiada al
+    empezar) más los que crea. Todo se puede editar o borrar."""
     usuario  = models.ForeignKey('Usuario', on_delete=models.CASCADE, related_name='ejercicios_personalizados')
     nombre   = models.CharField(max_length=200)
     musculo  = models.CharField(max_length=100, default='Personalizado')
     series   = models.IntegerField(default=3)
     reps     = models.CharField(max_length=50, default='10')
     peso     = models.CharField(max_length=50, default='—')
-    color    = models.CharField(max_length=7, default='#4ade80')  # hex
+    color    = models.CharField(max_length=7, blank=True, default='')  # hex; vacío = color del músculo
+    custom   = models.BooleanField(default=True)   # False = vino en la lista base
 
     class Meta:
         ordering = ['nombre']
@@ -396,9 +404,6 @@ class PushSubscription(models.Model):
     endpoint       = models.TextField(unique=True)
     p256dh         = models.TextField()
     auth           = models.TextField()
-    ultima_notif   = models.DateField(null=True, blank=True)
-    slots_enviados = models.JSONField(default=list)   # ['manana', 'mediodia', 'tarde', 'noche']
-    slots_fecha    = models.DateField(null=True, blank=True)
     creado_en      = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -450,3 +455,18 @@ class PlanDia(models.Model):
 
     def __str__(self):
         return f"Plan {self.usuario} — {self.fecha}"
+
+
+class NotificacionEnviada(models.Model):
+    """Registro de lo enviado: evita repetir, cuenta el máximo diario y le
+    muestra a la IA sus últimos mensajes para que no se repita."""
+    usuario   = models.ForeignKey('Usuario', on_delete=models.CASCADE, related_name='notificaciones')
+    clave     = models.CharField(max_length=80)   # ej. "comida:almuerzo:2026-09-24"
+    tipo      = models.CharField(max_length=20)
+    titulo    = models.CharField(max_length=120)
+    cuerpo    = models.CharField(max_length=300)
+    enviada   = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering    = ['-enviada']
+        constraints = [models.UniqueConstraint(fields=['usuario', 'clave'], name='notificacion_unica')]

@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import re
+import time
 import requests
 from datetime import timedelta
 
@@ -21,10 +22,10 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from . import estadisticas
+from . import chat_plan, estadisticas
 from .models import (
     Comida, SesionGym, EjercicioLog, PesoCorporal, AlimentoAlacena,
-    MensajeChat, SesionChat, Rutina, RutinaDia, EjercicioPersonalizado, PushSubscription,
+    MensajeChat, SesionChat, Rutina, RutinaDia, EjercicioPersonalizado,
     RegistroAgua,
 )
 from .serializers import (
@@ -141,6 +142,28 @@ def _groq_chat(payload, timeout=30):
     resp = requests.post(groq_url, headers=headers, json=payload, timeout=timeout)
     resp.raise_for_status()
     return resp.json()['choices'][0]['message']['content'].strip()
+
+
+def _groq_mensaje(payload, timeout=25):
+    """Como _groq_chat pero devuelve el mensaje entero (con tool_calls si los hay)."""
+    payload = _adaptar_payload(payload)
+    headers = {
+        'Authorization': f'Bearer {settings.GROQ_API_KEY}',
+        'Content-Type': 'application/json',
+    }
+    url = 'https://api.groq.com/openai/v1/chat/completions'
+    resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+    # Tras armar un plan (varias llamadas seguidas) Groq a veces pide esperar unos segundos
+    if resp.status_code == 429:
+        try:
+            espera = float(resp.headers.get('retry-after', 3))
+        except ValueError:
+            espera = 3
+        if espera <= 8:
+            time.sleep(espera)
+            resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+    resp.raise_for_status()
+    return resp.json()['choices'][0]['message']
 
 
 # ──────────────────────────────────────────────
@@ -1413,9 +1436,15 @@ HOY ({hoy.strftime('%A %d de %B')}):
     historial = MensajeChat.objects.filter(sesion=sesion).order_by('-creado_en')[:20]
     historial_groq = []
     for m in reversed(list(historial)):
+        contenido = m.contenido
+        for a in (m.acciones or []):
+            if a.get('tipo') == 'comida_cambiada':
+                contenido += f"\n[Cambié {a['antes']} por {a['comida']['nombre']} en el plan de {a['dia']}]"
+            elif a.get('tipo') == 'plan_armado':
+                contenido += f"\n[Armé el plan de {a['dia']}: {', '.join(c['nombre'] for c in a['comidas'])}]"
         historial_groq.append({
             'role':    'user'      if m.rol == 'user' else 'assistant',
-            'content': m.contenido,
+            'content': contenido,
         })
 
     system_prompt = f"""Eres Bruce, el coach personal de {nombre}. Eres un dachshund salchicha con más disciplina que cualquier humano.
@@ -1432,6 +1461,7 @@ PERSONALIDAD:
 ESTILO DE RESPUESTA:
 - Máximo 3-4 oraciones salvo que pidan más detalle, un plan o una receta.
 - Sin preámbulos del tipo "Claro!" o "Buena pregunta!" — ve directo al punto.
+- Texto plano: nada de markdown (sin ** ni #). Para listas usa guiones o números.
 - Si te preguntan calorías, da número exacto con porción ("100g pechuga cocida = ~165 kcal, 31g prot").
 - Si piden plan de comidas o entrenamiento: dalo completo y estructurado.
 - Si piden una RECETA: da nombre, ingredientes con cantidades, pasos numerados cortos y macros totales al final. Usa SIEMPRE los alimentos que le gustan al usuario y respeta sus restricciones.
@@ -1447,30 +1477,32 @@ SEGURIDAD:
 - Si pregunta qué comer, propón comidas concretas con cantidades que cuadren con lo que le falta HOY; también puede pedirle el "Plan de Bruce" en la pestaña Comidas.
 - Nada de diagnósticos ni dietas extremas: si menciona dolor, lesión, mareos o algo médico, recomiéndale ir a un profesional.
 
+PLAN DEL DÍA (tienes herramientas):
+- Si pide cambiar una comida del plan, armarle el plan de hoy o mañana, o pregunta qué le toca comer, USA las herramientas en vez de inventar un plan en texto. Se aplican de una vez y la persona puede deshacer.
+- Después de usarlas, cuenta en 1-2 oraciones qué quedó y por qué sirve (ej. "lista en 10 minutos"). No repitas nombres largos ni la receta: la ve en una tarjeta debajo de tu mensaje. No digas si está registrada.
+- Si una herramienta devuelve error, explícalo con tus palabras y ofrece otra salida.
+
 {contexto_dia}"""
 
     messages = [{'role': 'system', 'content': system_prompt}]
     messages += historial_groq
     messages.append({'role': 'user', 'content': mensaje_usuario})
 
-    payload = {
-        'model':            settings.GROQ_MODEL_TEXTO,
-        'messages':         messages,
-        'max_tokens':       1500,
-        'temperature':      0.8,
-        'reasoning_format': 'hidden',
-    }
-
+    acciones = []
     try:
-        respuesta_bruce = _groq_chat(payload, timeout=20)
+        respuesta_bruce, _ = chat_plan.conversar(user, messages, _groq_mensaje, acciones)
         # Red de seguridad por si igual se cuela un bloque <think>
-        respuesta_bruce = _THINK_RE.sub('', respuesta_bruce).strip()
-    except Exception:
-        respuesta_bruce = 'Parcero, tuve un problema técnico. Intenta de nuevo.'
+        respuesta_bruce = _THINK_RE.sub('', respuesta_bruce).replace('**', '').strip()
+        if not respuesta_bruce:
+            respuesta_bruce = chat_plan.resumen(acciones) if acciones else 'Parcero, me quedé en blanco. Pregúntame otra vez.'
+    except Exception as e:
+        logger.warning('bruce_chat_fail: %s', str(e)[:200])
+        respuesta_bruce = (chat_plan.resumen(acciones) if acciones
+                           else 'Parcero, tuve un problema técnico. Intenta de nuevo.')
 
     # Guardar ambos mensajes
     msg_user  = MensajeChat.objects.create(sesion=sesion, rol='user',  contenido=mensaje_usuario)
-    msg_bruce = MensajeChat.objects.create(sesion=sesion, rol='bruce', contenido=respuesta_bruce)
+    msg_bruce = MensajeChat.objects.create(sesion=sesion, rol='bruce', contenido=respuesta_bruce, acciones=acciones)
 
     # Generar título de la sesión con el primer mensaje
     if not sesion.titulo:
@@ -1691,304 +1723,6 @@ def ejercicios_personalizados(request):
         'series': ejercicio.series, 'reps': ejercicio.reps, 'peso': ejercicio.peso,
         'color': ejercicio.color, 'custom': True,
     }, status=status.HTTP_201_CREATED)
-
-# ──────────────────────────────────────────────
-#  PUSH NOTIFICATIONS
-# ──────────────────────────────────────────────
-
-def _get_vapid_private_key():
-    """Devuelve la clave VAPID en formato base64url que pywebpush entiende."""
-    return settings.VAPID_PRIVATE_KEY
-
-
-def _send_push(sub, titulo, cuerpo):
-    """Envía un Web Push a una suscripción. Elimina la sub si caducó (410)."""
-    import logging
-    logger = logging.getLogger(__name__)
-    try:
-        from pywebpush import webpush
-        webpush(
-            subscription_info={
-                'endpoint': sub.endpoint,
-                'keys': {'p256dh': sub.p256dh, 'auth': sub.auth},
-            },
-            data=json.dumps({'title': titulo, 'body': cuerpo}, ensure_ascii=False),
-            vapid_private_key=_get_vapid_private_key(),
-            vapid_claims={'sub': f'mailto:{settings.VAPID_CLAIM_EMAIL}'},
-        )
-        return True, None
-    except Exception as exc:
-        resp = getattr(exc, 'response', None)
-        status_code = resp.status_code if resp is not None else None
-        error_body  = resp.text[:200] if resp is not None else str(exc)[:200]
-        logger.error('push_fail sub=%s status=%s err=%s', sub.id, status_code, error_body)
-        print(f'[push_fail] sub={sub.id} status={status_code} err={error_body}')
-        if status_code == 410:
-            sub.delete()
-        return False, f'{status_code}: {error_body}'
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def push_suscribir(request):
-    endpoint = request.data.get('endpoint', '').strip()
-    p256dh   = request.data.get('p256dh', '').strip()
-    auth     = request.data.get('auth', '').strip()
-
-    if not all([endpoint, p256dh, auth]):
-        return Response({'error': 'Faltan campos'}, status=status.HTTP_400_BAD_REQUEST)
-
-    sub, created = PushSubscription.objects.update_or_create(
-        endpoint=endpoint,
-        defaults={'usuario': request.user, 'p256dh': p256dh, 'auth': auth},
-    )
-    return Response({'status': 'ok', 'nuevo': created})
-
-
-@api_view(['DELETE'])
-@permission_classes([IsAuthenticated])
-def push_desuscribir(request):
-    PushSubscription.objects.filter(usuario=request.user).delete()
-    return Response({'status': 'ok'})
-
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def push_estado(request):
-    suscrito = PushSubscription.objects.filter(usuario=request.user).exists()
-    return Response({'suscrito': suscrito})
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def push_check(request):
-    """
-    Llama al arrancar la app. Si el usuario tiene push activo y aún no recibió
-    notificación hoy, genera la frase de Bruce y la envía.
-    """
-    hoy  = timezone.localdate()
-    subs = PushSubscription.objects.filter(usuario=request.user).exclude(ultima_notif=hoy)
-
-    if not subs.exists():
-        return Response({'enviado': False})
-
-    user = request.user
-    hora = timezone.localtime().hour
-    comidas_hoy  = Comida.objects.filter(usuario=user, fecha=hoy)
-    calorias_hoy = sum(c.calorias for c in comidas_hoy)
-    proteina_hoy = round(sum(c.proteina for c in comidas_hoy), 1)
-    meta_cal     = user.meta_calorias or 1900
-    meta_prot    = user.meta_proteina or 140
-    pct_cal      = round((calorias_hoy / meta_cal) * 100) if meta_cal else 0
-
-    if hora < 12:
-        momento = 'mañana'
-    elif hora < 18:
-        momento = 'tarde'
-    else:
-        momento = 'noche'
-
-    sesion = SesionGym.objects.filter(usuario=user, fecha=hoy).first()
-    fue_gym = sesion.completada if sesion else False
-    descanso = hoy.weekday() >= 5
-
-    nombre = user.first_name or user.email.split('@')[0]
-    objetivo_txt = {'perder': 'perder grasa', 'ganar': 'ganar músculo'}.get(
-        getattr(user, 'objetivo', 'mantener'), 'mantener peso'
-    )
-
-    prompt = (
-        f"Eres Bruce, un dachshund coach directo y sin rodeos. "
-        f"Escríbele a {nombre} una notificación push de máximo 90 caracteres. "
-        f"Sin emojis. Sin comillas. Solo el texto.\n\n"
-        f"Contexto: son las {hora}h ({momento}), objetivo: {objetivo_txt}, "
-        f"calorías hoy: {calorias_hoy}/{meta_cal} ({pct_cal}%), "
-        f"proteína: {proteina_hoy}g/{meta_prot}g, "
-        f"gym hoy: {'sí' if fue_gym else 'no' if not descanso else 'día de descanso'}."
-    )
-
-    try:
-        frase = _groq_chat({
-            'model': settings.GROQ_MODEL_TEXTO,
-            'messages': [{'role': 'user', 'content': prompt}],
-            'max_tokens': 300,  # gpt-oss gasta parte en razonar
-            'temperature': 0.9,
-            'reasoning_effort': 'none',
-        }, timeout=12)
-        frase = _THINK_RE.sub('', frase).strip().strip('"').strip("'")
-    except Exception:
-        frase = 'Registra tus comidas hoy. La constancia manda.'
-
-    enviados = 0
-    for sub in subs:
-        ok, _ = _send_push(sub, 'Bruce dice:', frase)
-        if ok:
-            sub.ultima_notif = hoy
-            sub.save(update_fields=['ultima_notif'])
-            enviados += 1
-
-    return Response({'enviado': enviados > 0, 'frase': frase})
-
-
-# ─── Slots para el cron ────────────────────────────────────────────────────
-# Cada slot define la hora de inicio (Colombia UTC-5) en la que aplica.
-# GitHub Actions llama al endpoint exactamente en esas horas.
-_SLOTS = {
-    'manana':   8,   # 8 AM  → siempre envía
-    'mediodia': 12,  # 12 PM → envía si usuario va rezagado
-    'tarde':    17,  # 5 PM  → segunda alerta si sigue rezagado
-    'noche':    20,  # 8 PM  → accountability final del día
-}
-
-
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def push_purge(request):
-    """Borra todas las suscripciones push (para resetear tras cambiar claves VAPID)."""
-    secret = request.GET.get('key', '')
-    if getattr(settings, 'CRON_SECRET', '') and secret != settings.CRON_SECRET:
-        return Response({'error': 'forbidden'}, status=403)
-    count, _ = PushSubscription.objects.all().delete()
-    return Response({'eliminadas': count})
-
-
-@api_view(['GET', 'POST'])
-@permission_classes([AllowAny])
-def cron_notificaciones(request):
-    """
-    Endpoint llamado por GitHub Actions 4 veces al día.
-    Evalúa el estado de cada usuario y envía una notificación contextual si aplica.
-    """
-    from zoneinfo import ZoneInfo
-
-    secret = request.GET.get('key', '') or request.headers.get('X-Cron-Key', '')
-    cron_secret = getattr(settings, 'CRON_SECRET', '')
-    if cron_secret and secret != cron_secret:
-        return Response({'error': 'forbidden'}, status=403)
-
-    bogota    = ZoneInfo('America/Bogota')
-    ahora     = timezone.now().astimezone(bogota)
-    hoy       = ahora.date()
-    hora      = ahora.hour
-
-    # Parámetro ?slot= para forzar un slot específico (útil para probar manualmente)
-    slot_forzado = request.GET.get('slot', '')
-    if slot_forzado in _SLOTS:
-        slot_actual = slot_forzado
-    else:
-        slot_actual = None
-        for nombre_slot, hora_slot in _SLOTS.items():
-            if hora_slot <= hora < hora_slot + 2:
-                slot_actual = nombre_slot
-                break
-
-    if not slot_actual:
-        return Response({'ok': True, 'skipped': f'no slot for hour {hora} (Colombia)'})
-
-    subs    = PushSubscription.objects.select_related('usuario').all()
-    totales  = 0
-    enviados = 0
-    errores  = []
-
-    for sub in subs:
-        totales += 1
-        user = sub.usuario
-
-        # Resetear tracking si es un día nuevo o si se pide reset manual
-        if sub.slots_fecha != hoy or request.GET.get('reset') == '1':
-            sub.slots_enviados = []
-            sub.slots_fecha    = hoy
-
-        # Ya se envió en este slot hoy
-        if slot_actual in sub.slots_enviados:
-            continue
-
-        # Datos del usuario para evaluar condición
-        comidas_hoy  = Comida.objects.filter(usuario=user, fecha=hoy)
-        calorias_hoy = sum(c.calorias for c in comidas_hoy)
-        proteina_hoy = round(sum(c.proteina for c in comidas_hoy), 1)
-        meta_cal     = user.meta_calorias or 1900
-        meta_prot    = user.meta_proteina or 140
-        pct_cal      = (calorias_hoy / meta_cal) if meta_cal else 0
-
-        sesion      = SesionGym.objects.filter(usuario=user, fecha=hoy).first()
-        fue_gym     = sesion.completada if sesion else False
-        es_descanso = hoy.weekday() >= 5  # sábado/domingo
-
-        # Condición para enviar según el slot
-        if slot_actual == 'manana':
-            debe_enviar = True
-        elif slot_actual == 'mediodia':
-            gym_pendiente = sesion and not fue_gym and not es_descanso
-            debe_enviar   = pct_cal < 0.35 or gym_pendiente
-        elif slot_actual == 'tarde':
-            gym_pendiente = sesion and not fue_gym and not es_descanso
-            debe_enviar   = pct_cal < 0.60 or gym_pendiente
-        else:  # noche
-            gym_perdido = sesion and not fue_gym and not es_descanso
-            debe_enviar = pct_cal < 0.80 or gym_perdido
-
-        if not debe_enviar:
-            continue
-
-        nombre        = user.first_name or user.email.split('@')[0]
-        objetivo_txt  = {'perder': 'perder grasa', 'ganar': 'ganar músculo'}.get(
-            getattr(user, 'objetivo', 'mantener'), 'mantener peso'
-        )
-        gym_estado = 'sí' if fue_gym else ('día de descanso' if es_descanso else 'no ha ido')
-
-        tono = {
-            'manana':   'energético y motivador para arrancar el día',
-            'mediodia': 'directo y práctico, como recordatorio',
-            'tarde':    'urgente pero sin regañar',
-            'noche':    'accountability final del día, corto y contundente',
-        }[slot_actual]
-        prompt = (
-            f"Eres Bruce, un perro salchicha coach de fitness. Hablas español colombiano informal. "
-            f"Usa tildes y ñ correctamente (mañana, calorías, proteína, etc). "
-            f"Escríbele a {nombre} un mensaje push de máximo 80 caracteres. "
-            f"Tono: {tono}. Sin emojis. Sin comillas. Sin prefijos como 'Bruce:'. Solo el texto directo.\n\n"
-            f"Datos: {hora}h Colombia, objetivo={objetivo_txt}, "
-            f"calorías={calorias_hoy}/{meta_cal} ({round(pct_cal*100)}%), "
-            f"proteína={proteina_hoy}g/{meta_prot}g, gym={gym_estado}."
-        )
-
-        try:
-            frase = _groq_chat({
-                'model': settings.GROQ_MODEL_TEXTO,
-                'messages': [{'role': 'user', 'content': prompt}],
-                'max_tokens': 300,  # gpt-oss gasta parte en razonar
-                'temperature': 0.9,
-                'reasoning_effort': 'none',
-                'reasoning_format': 'hidden',
-            }, timeout=12)
-            frase = _THINK_RE.sub('', frase).strip().strip('"').strip("'")
-        except Exception:
-            mensajes_fallback = {
-                'manana':   'Empieza el día registrando tu desayuno.',
-                'mediodia': 'Revisa cómo vas con tus calorías hoy.',
-                'tarde':    'Aún estás a tiempo de cumplir tu meta de hoy.',
-                'noche':    'Cierra el día con tus registros al día.',
-            }
-            frase = mensajes_fallback[slot_actual]
-
-        ok, err = _send_push(sub, 'Bruce dice:', frase)
-        if ok:
-            sub.slots_enviados = list(sub.slots_enviados) + [slot_actual]
-            sub.save(update_fields=['slots_enviados', 'slots_fecha'])
-            enviados += 1
-        else:
-            errores.append({'sub': sub.id, 'error': err})
-
-    return Response({
-        'ok':       True,
-        'slot':     slot_actual,
-        'hora_co':  hora,
-        'enviados': enviados,
-        'totales':  totales,
-        'errores':  errores,
-    })
-
 
 # ──────────────────────────────────────────────
 #  AGUA

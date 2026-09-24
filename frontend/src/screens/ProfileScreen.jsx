@@ -3,15 +3,15 @@ import {
   IconFlame, IconMeat, IconWheat, IconDroplet,
   IconTrophy, IconCalendar, IconScale, IconEdit,
   IconCheck, IconLogout, IconCamera, IconLoader2,
-  IconTarget, IconRuler, IconWeight, IconBell, IconLanguage,
+  IconTarget, IconRuler, IconWeight, IconLanguage,
 } from '@tabler/icons-react'
 import { getMiPerfil, actualizarPerfil, actualizarMetas, actualizarObjetivo, actualizarPreferencias, logout as apiLogout } from '../api'
-import { soportaNotificaciones, permisoActual, estasSuscrito, suscribir, desuscribir } from '../utils/notificaciones'
 import { toast } from '../lib/toast'
 import { haptic } from '../lib/motion'
 import Segmented from '../components/Segmented'
 import UserAvatar from '../components/UserAvatar'
 import { FilaPreferencia, PaginaPreferencia } from '../components/Preferencias'
+import { FilaNotificaciones, PaginaNotificaciones } from '../components/Notificaciones'
 import { fotoAJpeg } from '../lib/imagen'
 
 // ── helpers UI ────────────────────────────────────────────────────────────
@@ -126,18 +126,15 @@ export default function ProfileScreen({ setUsuario, onLogout, lang, setLang }) {
     estatura_cm: null, peso_inicial_kg: null, peso_objetivo_kg: null,
   })
 
-  const [suscrito,     setSuscrito]     = useState(false)
   // Ajustes → Alimentación: página abierta y si se está volviendo (para animar hacia atrás)
   const [pagina,       setPagina]       = useState(null)
   const [volviendo,    setVolviendo]    = useState(false)
   const raizRef = useRef(null)
-  const [cargandoBell, setCargandoBell] = useState(false)
 
   const fileRef = useRef(null)
 
   useEffect(() => {
     cargarPerfil()
-    estasSuscrito().then(setSuscrito)
   }, [])
 
   const cargarPerfil = async () => {
@@ -230,17 +227,6 @@ export default function ProfileScreen({ setUsuario, onLogout, lang, setLang }) {
     }
   }
 
-  const toggleNotificaciones = async () => {
-    if (!soportaNotificaciones()) { toast.error('Tu navegador no soporta notificaciones push.'); return }
-    if (permisoActual() === 'denied') { toast.error('Las notificaciones están bloqueadas en la configuración del navegador.'); return }
-    setCargandoBell(true)
-    try {
-      if (suscrito) { await desuscribir(); setSuscrito(false) }
-      else          { await suscribir();   setSuscrito(true)  }
-    } catch (e) { console.error(e); toast.error('No se pudieron cambiar las notificaciones.') }
-    finally { setCargandoBell(false) }
-  }
-
   const handleLogout = async () => { await apiLogout(); onLogout?.() }
 
   const irA = (campo) => {
@@ -280,12 +266,16 @@ export default function ProfileScreen({ setUsuario, onLogout, lang, setLang }) {
   return (
     pagina ? (
       <div ref={raizRef} style={{ padding: '0 16px calc(var(--safe-bottom) + 32px)' }}>
-        <PaginaPreferencia
-          campo={pagina}
-          valores={perfil?.[pagina] ?? []}
-          onCambiar={(v) => cambiarPreferencia(pagina, v)}
-          onVolver={() => irA(null)}
-        />
+        {pagina === 'notificaciones' ? (
+          <PaginaNotificaciones onVolver={() => irA(null)} />
+        ) : (
+          <PaginaPreferencia
+            campo={pagina}
+            valores={perfil?.[pagina] ?? []}
+            onCambiar={(v) => cambiarPreferencia(pagina, v)}
+            onVolver={() => irA(null)}
+          />
+        )}
       </div>
     ) :
     <div ref={raizRef} className={volviendo ? 'nf-pagina-pop' : undefined} style={{ padding: '0 16px calc(var(--safe-bottom) + 32px)' }}>
@@ -475,19 +465,8 @@ export default function ProfileScreen({ setUsuario, onLogout, lang, setLang }) {
 
       <Section
         label='Preferencias'
-        footer={suscrito ? 'Bruce te enviará un mensaje motivacional cada día.' : 'Activa para que Bruce te escriba cada día.'}
       >
-        <Row icon={<IconBell size={18} />} tint='var(--green)' label='Mensajes de Bruce'>
-          <button
-            role='switch'
-            aria-checked={suscrito}
-            aria-label='Mensajes de Bruce'
-            className='nf-switch'
-            onClick={toggleNotificaciones}
-            disabled={cargandoBell}
-            style={{ opacity: cargandoBell ? 0.6 : 1 }}
-          />
-        </Row>
+        <FilaNotificaciones onAbrir={() => irA('notificaciones')} />
         <Row icon={<IconLanguage size={18} />} tint='var(--blue)' label='Idioma'>
           <Segmented
             label='Idioma'

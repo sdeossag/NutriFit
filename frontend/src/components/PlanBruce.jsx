@@ -263,6 +263,13 @@ export default function PlanBruce({ visible, onRegistrada }) {
   const datos = planes[fecha]
   const guardar = (f, d) => setPlanes(prev => ({ ...prev, [f]: d }))
 
+  // Una notificación de comida o Bruce desde el chat pueden abrir la hoja
+  useEffect(() => {
+    const abrir = (e) => { setDia(e.detail?.dia ?? 'hoy'); setAbierto(true) }
+    window.addEventListener('nf:abrir-plan', abrir)
+    return () => window.removeEventListener('nf:abrir-plan', abrir)
+  }, [])
+
   // La tarjeta muestra hoy; la hoja, el día elegido
   useEffect(() => {
     if (!visible) return

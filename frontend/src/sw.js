@@ -4,39 +4,43 @@ import { precacheAndRoute } from 'workbox-precaching'
 precacheAndRoute(self.__WB_MANIFEST)
 
 self.addEventListener('install', () => self.skipWaiting())
-self.addEventListener('activate', e => e.waitUntil(clients.claim()))
+self.addEventListener('activate', e => e.waitUntil(self.clients.claim()))
 
 // ── Push handler ─────────────────────────────────────────────────────────
+// Cada tipo (comida, gym, agua…) trae su propia etiqueta: una nueva del mismo
+// tipo reemplaza a la anterior, pero de tipos distintos conviven y todas suenan.
 self.addEventListener('push', event => {
   if (!event.data) return
 
-  let data = {}
+  let data
   try { data = event.data.json() } catch { data = { title: 'NutriFit', body: event.data.text() } }
 
-  const title   = data.title ?? 'NutriFit'
   const options = {
     body:     data.body ?? '',
     icon:     '/pwa-192x192.png',
     badge:    '/pwa-192x192.png',
-    vibrate:  [200, 100, 200],
-    tag:      'bruce-daily',
-    renotify: false,
+    vibrate:  [120, 60, 120],
+    tag:      data.tag ?? 'nf-bruce',
+    renotify: true,
+    data:     { destino: data.destino ?? 'inicio' },
   }
 
-  event.waitUntil(self.registration.showNotification(title, options))
+  event.waitUntil(self.registration.showNotification(data.title ?? 'NutriFit', options))
 })
 
-// ── Notification click → abrir / enfocar la app ───────────────────────────
+// ── Tocar la notificación → abrir la app en la pantalla que corresponde ────
 self.addEventListener('notificationclick', event => {
   event.notification.close()
+  const destino = event.notification.data?.destino ?? 'inicio'
   event.waitUntil(
-    clients
-      .matchAll({ type: 'window', includeUncontrolled: true })
-      .then(clientList => {
-        for (const client of clientList) {
-          if ('focus' in client) return client.focus()
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(lista => {
+      for (const client of lista) {
+        if ('focus' in client) {
+          client.postMessage({ tipo: 'nf:navegar', destino })
+          return client.focus()
         }
-        if (clients.openWindow) return clients.openWindow('/')
-      })
+      }
+      return self.clients.openWindow?.(`/?abrir=${encodeURIComponent(destino)}`)
+    })
   )
 })

@@ -119,29 +119,12 @@ def _semana_dict(user):
     return semana
 
 
-@transaction.atomic
 def asegurar_semana(user):
-    """La primera vez, la cuenta recibe la semana por defecto como paquetes
-    propios que puede editar. Después nunca se vuelve a tocar."""
-    if user.semana_creada:
-        return
-    user = type(user).objects.select_for_update().get(pk=user.pk)
-    if user.semana_creada:
-        return
-    if not RutinaDia.objects.filter(usuario=user).exists():
-        creadas = {}
-        for dia, clave in enumerate(SEMANA_POR_DEFECTO):
-            if clave is None:
-                continue
-            if clave not in creadas:
-                base = next(r for r in RUTINAS_POR_DEFECTO if r['clave'] == clave)
-                creadas[clave] = Rutina.objects.filter(usuario=user, nombre=base['nombre']).first() or Rutina.objects.create(
-                    usuario=user, nombre=base['nombre'], emoji=base['emoji'],
-                    color=base['color'], ejercicios=base['ejercicios'],
-                )
-            RutinaDia.objects.create(usuario=user, dia_semana=dia, rutina=creadas[clave])
-    user.semana_creada = True
-    user.save(update_fields=['semana_creada'])
+    """Las cuentas nuevas empiezan con la semana vacía: la arman ellas o se la
+    arma Bruce (POST /rutinas/generar/). RUTINAS_POR_DEFECTO queda solo para
+    la migración 0014, que completó las semanas de cuentas anteriores."""
+    if not user.semana_creada:
+        type(user).objects.filter(pk=user.pk).update(semana_creada=True)
 
 
 def _respuesta_completa(user):
@@ -262,3 +245,123 @@ def rutinas_dia(request):
                 setattr(r, k, v)
             r.save()
     return Response({'nombre': r.nombre, 'rutina_id': 'A', 'emoji': r.emoji, 'ejercicios': r.ejercicios})
+
+
+# ── Bruce arma la rutina ───────────────────────────────────────────────────
+
+MUSCULOS = ['Piernas', 'Pecho', 'Hombros', 'Espalda', 'Brazos', 'Core', 'Cardio']
+EJERCICIOS_POR_TIEMPO = {30: 4, 45: 5, 60: 6, 90: 8}
+PALETA = ['#4ade80', '#60a5fa', '#a78bfa', '#f472b6', '#fb923c', '#fbbf24', '#2dd4bf']
+NOMBRE_DIA = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo']
+
+
+def _prompt_rutina(user, dias, minutos, lugar, nivel, biblioteca):
+    edad = user.get_edad()
+    peso = user.peso_actual()
+    objetivo = {'perder': 'perder grasa', 'ganar': 'ganar músculo'}.get(user.objetivo, 'mantener y estar en forma')
+    donde = 'un gimnasio' if lugar == 'gym' else 'casa, con peso corporal y mancuernas'
+    return f"""Eres un entrenador personal. Arma la rutina semanal de esta persona.
+
+Persona: objetivo {objetivo}; nivel {nivel}; {f'{edad} años; ' if edad else ''}{f'{peso} kg; ' if peso else ''}sexo {user.sexo or 'no indicado'}.
+Entrena: {', '.join(NOMBRE_DIA[d] for d in dias)} ({len(dias)} días), unos {minutos} minutos por sesión, en {donde}.
+Su biblioteca de ejercicios (úsalos con estos nombres exactos siempre que puedas): {', '.join(biblioteca)}.
+
+Reglas:
+- Elige la división que mejor encaje con los días (cuerpo completo, torso/pierna, empuje/jalón/pierna...). Puedes repetir una rutina en varios días.
+- Unos {EJERCICIOS_POR_TIEMPO[minutos]} ejercicios por sesión. Series y repeticiones según el nivel y el objetivo.
+- Cuando sea posible, deja un día entre dos sesiones que trabajen los mismos músculos.
+- "musculo" debe ser uno de: {', '.join(MUSCULOS)}. "peso" es una guía corta ("moderado", "peso corporal", "—"), nunca kilos exactos.
+- Nombres de rutina cortos en español (máximo 3 palabras) y un emoji para cada una.
+- En "semana", la clave es el número de día (0 = lunes ... 6 = domingo) y el valor la clave de la rutina.
+
+Responde solo con JSON:
+{{"rutinas": [{{"clave": "A", "nombre": "Torso", "emoji": "💪", "ejercicios": [{{"nombre": "...", "musculo": "Pecho", "series": 3, "reps": "10", "peso": "moderado"}}]}}],
+ "semana": {{"0": "A", "2": "B"}},
+ "explicacion": "una o dos frases de Bruce (directo, colombiano, sin emojis) explicando por qué armó la semana así"}}"""
+
+
+def _pedir_rutina_ia(prompt):
+    from django.conf import settings
+    from .views import _extraer_json, _groq_chat  # evita importación circular
+    return _extraer_json(_groq_chat({
+        'model': settings.GROQ_MODEL_TEXTO,
+        'messages': [{'role': 'user', 'content': prompt}],
+        'max_tokens': 3500, 'temperature': 0.5, 'reasoning_effort': 'low',
+        'response_format': {'type': 'json_object'},
+    }, timeout=60))
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def generar(request):
+    """Bruce arma rutinas y las asigna a los días elegidos (los demás, descanso).
+    Body: { dias: [0, 2, 4], minutos: 30|45|60|90, lugar: gym|casa, nivel }"""
+    import json
+    import requests
+    from .ejercicios import asegurar_biblioteca
+    from .models import EjercicioPersonalizado
+    from .views import _respuesta_error_groq
+
+    dias = request.data.get('dias')
+    if not isinstance(dias, list) or not dias or any(d not in range(7) for d in dias):
+        return Response({'error': 'Elige al menos un día'}, status=status.HTTP_400_BAD_REQUEST)
+    dias = sorted(set(dias))
+    minutos = request.data.get('minutos', 60)
+    lugar = request.data.get('lugar', 'gym')
+    nivel = request.data.get('nivel', 'principiante')
+    if minutos not in EJERCICIOS_POR_TIEMPO or lugar not in ('gym', 'casa') or nivel not in ('principiante', 'intermedio', 'avanzado'):
+        return Response({'error': 'Datos inválidos'}, status=status.HTTP_400_BAD_REQUEST)
+    if Rutina.objects.filter(usuario=request.user).count() + len(dias) > MAX_RUTINAS:
+        return Response({'error': f'Máximo {MAX_RUTINAS} rutinas'}, status=status.HTTP_400_BAD_REQUEST)
+
+    asegurar_biblioteca(request.user)
+    biblioteca = {e.nombre.lower(): e for e in EjercicioPersonalizado.objects.filter(usuario=request.user)}
+    try:
+        datos = _pedir_rutina_ia(_prompt_rutina(request.user, dias, minutos, lugar, nivel, [e.nombre for e in biblioteca.values()]))
+    except requests.RequestException as e:
+        return _respuesta_error_groq(e, 'Bruce está armando muchas rutinas. Intenta de nuevo en un minuto.')
+    except (json.JSONDecodeError, ValueError):
+        return Response({'error': 'Bruce no pudo armar la rutina. Intenta de nuevo.'}, status=status.HTTP_502_BAD_GATEWAY)
+
+    # Validar lo que devolvió la IA antes de guardar nada
+    propuestas = {}
+    for r in (datos.get('rutinas') or [])[:len(dias)]:
+        if not isinstance(r, dict) or not r.get('clave'):
+            continue
+        ejercicios, error = limpiar_ejercicios(r.get('ejercicios') or [])
+        if error or not ejercicios:
+            continue
+        for e in ejercicios:
+            e['musculo'] = e['musculo'] if e['musculo'] in MUSCULOS else 'Core'
+            en_biblio = biblioteca.get(e['nombre'].lower())
+            if en_biblio:
+                e['nombre'] = en_biblio.nombre
+        propuestas[str(r['clave'])] = {
+            'nombre': _texto(r.get('nombre'), 100, 'Rutina'), 'emoji': _texto(r.get('emoji'), 10, '💪'),
+            'ejercicios': ejercicios,
+        }
+    semana = {int(d): str(c) for d, c in (datos.get('semana') or {}).items()
+              if str(d).isdigit() and int(d) in dias and str(c) in propuestas}
+    if not propuestas or not semana:
+        return Response({'error': 'Bruce no pudo armar una rutina válida. Intenta de nuevo.'}, status=status.HTTP_502_BAD_GATEWAY)
+
+    with transaction.atomic():
+        creadas = {}
+        for i, (clave, p) in enumerate(propuestas.items()):
+            if clave in semana.values():
+                creadas[clave] = Rutina.objects.create(usuario=request.user, color=PALETA[i % len(PALETA)], **p)
+        # Lo que Bruce propuso y no está en la biblioteca, se agrega
+        nuevos = {}
+        for rutina in creadas.values():
+            for e in rutina.ejercicios:
+                n = e['nombre'].lower()
+                if n not in biblioteca and n not in nuevos:
+                    nuevos[n] = EjercicioPersonalizado(usuario=request.user, nombre=e['nombre'], musculo=e['musculo'],
+                                                       series=e['series'], reps=e['reps'], peso='—', color='', custom=True)
+        EjercicioPersonalizado.objects.bulk_create(nuevos.values())
+        # Días elegidos: su rutina. Los demás: descanso.
+        RutinaDia.objects.filter(usuario=request.user).delete()
+        RutinaDia.objects.bulk_create([
+            RutinaDia(usuario=request.user, dia_semana=d, rutina=creadas[c], orden=0) for d, c in semana.items()
+        ])
+    return Response({**_respuesta_completa(request.user), 'explicacion': _texto(datos.get('explicacion'), 300)})

@@ -1,6 +1,7 @@
-// Utilidades para Web Push — subscribe/unsubscribe/check
+// Web Push: activar, desactivar y saber si ESTE dispositivo recibe.
+// Las llamadas pasan por api.js, que renueva la sesión si el token venció.
+import { estadoPush, quitarPush, registrarPush } from '../api'
 
-const BASE            = import.meta.env.VITE_API_URL ?? 'http://localhost:8000/api'
 const VAPID_PUBLIC_KEY = (import.meta.env.VITE_VAPID_PUBLIC_KEY ?? '').replace(/^["']|["']$/g, '').trim()
 
 function urlBase64ToUint8Array(b64) {
@@ -10,47 +11,34 @@ function urlBase64ToUint8Array(b64) {
   return Uint8Array.from([...raw].map(c => c.charCodeAt(0)))
 }
 
-function getToken() {
-  return localStorage.getItem('access_token')
-}
-
 export function soportaNotificaciones() {
   return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window
 }
+
+// En iPhone solo funcionan con la app instalada en la pantalla de inicio
+export const esIOSSinInstalar = () =>
+  /iphone|ipad|ipod/i.test(navigator.userAgent) && window.navigator.standalone !== true
 
 export function permisoActual() {
   if (!('Notification' in window)) return 'denied'
   return Notification.permission
 }
 
-// Registra (o recupera) nuestro SW de push en /sw.js — independiente de VitePWA
-async function getPushSW() {
-  const existing = await navigator.serviceWorker.getRegistrations()
-  const found    = existing.find(r => r.scope === `${location.origin}/`)
-
-  // Si ya hay un SW activo en el scope raíz, lo reutilizamos
-  if (found?.active) return found
-
-  // Registrar el SW estático de public/sw.js
-  const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' })
-
-  // Esperar a que esté activo
-  if (reg.active) return reg
-  return new Promise(resolve => {
-    const sw = reg.installing || reg.waiting
-    if (!sw) { resolve(reg); return }
-    sw.addEventListener('statechange', () => {
-      if (sw.state === 'activated') resolve(reg)
-    })
-  })
+// El service worker de la app (el mismo que hace el caché offline)
+async function registro() {
+  const reg = await navigator.serviceWorker.getRegistration('/')
+  return reg ?? navigator.serviceWorker.register('/sw.js', { scope: '/' })
 }
 
+// Suscrito de verdad = el navegador tiene la suscripción Y el servidor la conoce.
+// Si el servidor la borró (el navegador la invalidó), se trata como apagado.
 export async function estasSuscrito() {
-  if (!soportaNotificaciones()) return false
+  if (!soportaNotificaciones() || permisoActual() !== 'granted') return false
   try {
-    const reg = await getPushSW()
-    const sub = await reg.pushManager.getSubscription()
-    return !!sub
+    const sub = await (await registro()).pushManager.getSubscription()
+    if (!sub) return false
+    const { suscrito } = await estadoPush(sub.endpoint)
+    return suscrito
   } catch {
     return false
   }
@@ -58,56 +46,33 @@ export async function estasSuscrito() {
 
 export async function suscribir() {
   if (!VAPID_PUBLIC_KEY) throw new Error('VITE_VAPID_PUBLIC_KEY no definida')
-
   const permiso = await Notification.requestPermission()
   if (permiso !== 'granted') throw new Error('Permiso denegado')
 
-  const reg = await getPushSW()
-
-  // Cancelar suscripción previa para evitar estado corrupto
-  const subExistente = await reg.pushManager.getSubscription()
-  if (subExistente) await subExistente.unsubscribe().catch(() => {})
+  await navigator.serviceWorker.ready
+  const reg = await registro()
+  // Una suscripción vieja puede tener claves que el servidor ya no reconoce
+  const anterior = await reg.pushManager.getSubscription()
+  if (anterior) await anterior.unsubscribe().catch(() => {})
 
   const sub = await reg.pushManager.subscribe({
     userVisibleOnly:      true,
     applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
   })
-
   const { endpoint, keys: { p256dh, auth } = {} } = sub.toJSON()
-
-  const res = await fetch(`${BASE}/push/subscribe/`, {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
-    body:    JSON.stringify({ endpoint, p256dh, auth }),
-  })
-  if (!res.ok) throw new Error('Error al registrar suscripción en el backend')
+  await registrarPush({ endpoint, p256dh, auth })
   return sub
 }
 
+// Solo este dispositivo: los demás siguen recibiendo
 export async function desuscribir() {
+  let endpoint = null
   try {
-    const reg = await getPushSW()
-    const sub = await reg.pushManager.getSubscription()
-    if (sub) await sub.unsubscribe()
-  } catch { /* ignore */ }
-
-  await fetch(`${BASE}/push/unsubscribe/`, {
-    method:  'DELETE',
-    headers: { Authorization: `Bearer ${getToken()}` },
-  })
-}
-
-export async function checkPushHoy() {
-  if (!soportaNotificaciones()) return null
-  const suscrito = await estasSuscrito()
-  if (!suscrito) return null
-  try {
-    const res = await fetch(`${BASE}/push/check/`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
-    })
-    return res.ok ? res.json() : null
-  } catch {
-    return null
-  }
+    const sub = await (await registro()).pushManager.getSubscription()
+    if (sub) {
+      endpoint = sub.endpoint
+      await sub.unsubscribe()
+    }
+  } catch { /* el navegador ya no la tenía */ }
+  if (endpoint) await quitarPush(endpoint)
 }

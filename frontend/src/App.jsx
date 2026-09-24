@@ -3,7 +3,6 @@ import { GoogleOAuthProvider } from '@react-oauth/google'
 
 import T from './constants/translations'
 import { getMiPerfil, limpiarTokens, getAccessToken } from './api'
-import { checkPushHoy } from './utils/notificaciones'
 import LoginScreen       from './screens/LoginScreen'
 import OnboardingScreen  from './screens/OnboardingScreen'
 import HomeScreen        from './screens/HomeScreen'
@@ -15,6 +14,8 @@ import BruceChatScreen   from './screens/BruceChatScreen'
 import TabBar            from './components/TabBar'
 import Sheet, { SheetHeader } from './components/Sheet'
 import { Toaster }       from './components/Toast'
+import Novedades         from './components/Novedades'
+import { marcarNovedadesVistas } from './utils/novedades'
 
 import bruceFace from './assets/bruce-face.webp'
 
@@ -76,7 +77,7 @@ export default function App() {
 
   const cargarSesion = () => {
     getMiPerfil()
-      .then(data => { setUsuario(data.usuario); setAuthChecked(true); checkPushHoy() })
+      .then(data => { setUsuario(data.usuario); setAuthChecked(true) })
       .catch(e => {
         // Token inválido: a iniciar sesión. Servidor caído o sin internet: se
         // conserva la sesión y se ofrece reintentar, en vez de sacar a la persona.
@@ -95,7 +96,8 @@ export default function App() {
 
   const handleLogin              = (d) => { setUsuario(d); setScreen('home') }
   const handleLogout             = ()  => { setPerfilAbierto(false); setUsuario(null); setScreen('home') }
-  const handleOnboardingComplete = (d) => setUsuario(d)
+  // Una cuenta recién creada no necesita ver qué cambió: para ella todo es nuevo
+  const handleOnboardingComplete = (d) => { marcarNovedadesVistas(); setUsuario(d) }
 
   // Cada pestaña recuerda su scroll (como iOS). Tocar la pestaña activa sube al inicio.
   const cambiarPantalla = useCallback((id) => {
@@ -114,6 +116,34 @@ export default function App() {
   }, [screen])
 
   const cerrarPerfil = useCallback(() => setPerfilAbierto(false), [])
+
+  // Tocar una notificación abre la pantalla que corresponde: llega por la URL
+  // (?abrir=…) si la app estaba cerrada, o como mensaje del service worker.
+  useEffect(() => {
+    const PANTALLA = { plan: 'food', comida: 'food', agua: 'food', gym: 'gym', progreso: 'progress', inicio: 'home' }
+    const navegar = (destino, dia) => {
+      if (!PANTALLA[destino]) return
+      setPerfilAbierto(false)
+      setScreen(PANTALLA[destino])
+      if (destino === 'plan') setTimeout(() => window.dispatchEvent(new CustomEvent('nf:abrir-plan', { detail: { dia } })), 350)
+    }
+    const url = new URL(window.location.href)
+    const abrir = url.searchParams.get('abrir')
+    if (abrir) {
+      url.searchParams.delete('abrir')
+      window.history.replaceState(null, '', url.pathname + url.search)
+      navegar(abrir)
+    }
+    const alMensaje = (e) => { if (e.data?.tipo === 'nf:navegar') navegar(e.data.destino) }
+    // Desde dentro de la app (p. ej. "Ver plan" en el chat de Bruce)
+    const alPedido = (e) => navegar(e.detail?.destino, e.detail?.dia)
+    navigator.serviceWorker?.addEventListener('message', alMensaje)
+    window.addEventListener('nf:navegar', alPedido)
+    return () => {
+      navigator.serviceWorker?.removeEventListener('message', alMensaje)
+      window.removeEventListener('nf:navegar', alPedido)
+    }
+  }, [])
 
   if (sinConexion) return <SinConexion onReintentar={() => { setSinConexion(false); cargarSesion() }} />
   if (!authChecked) return <Splash />
@@ -203,6 +233,7 @@ export default function App() {
         />
       </Sheet>
 
+      <Novedades />
       <Toaster low={tecladoAbierto} />
     </GoogleOAuthProvider>
   )

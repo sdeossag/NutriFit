@@ -17,6 +17,18 @@ services:
     expose:
       - "8000"
 
+  # Revisa cada 10 minutos qué notificaciones le tocan a cada persona.
+  # Misma imagen que la API; solo cambia el comando (no corre migraciones).
+  notificaciones:
+    build: ../../backend
+    restart: unless-stopped
+    env_file: api.env
+    environment:
+      DEBUG: "False"
+    depends_on:
+      - api
+    command: python manage.py enviar_notificaciones --cada 600
+
   caddy:
     image: caddy:2
     restart: unless-stopped

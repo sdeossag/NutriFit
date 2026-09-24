@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
-import { IconArrowUp, IconChevronLeft, IconTrash, IconEdit, IconChevronRight } from '@tabler/icons-react'
+import { IconArrowUp, IconChevronLeft, IconTrash, IconEdit, IconChevronRight, IconArrowBackUp, IconToolsKitchen2 } from '@tabler/icons-react'
 import {
   getSesionesChatBruce, crearSesionChat, getSesionChat,
-  eliminarSesionChat, enviarMensajeBruce,
+  eliminarSesionChat, enviarMensajeBruce, deshacerComidaPlan,
 } from '../api'
 import { toast } from '../lib/toast'
+import { haptic } from '../lib/motion'
 import bruceFace        from '../assets/bruce-face.webp'
 import bruceTuxedo      from '../assets/bruce-tuxedo.webp'
 import bruceMuyfeliz    from '../assets/bruce-tuxedo-muyfeliz.webp'
@@ -47,13 +48,78 @@ function Avatar({ size = 28 }) {
   )
 }
 
+// ── Lo que Bruce hizo en el plan ─────────────────────────────────────────
+const MOMENTO = { desayuno: 'Desayuno', almuerzo: 'Almuerzo', merienda: 'Merienda', cena: 'Cena' }
+const verPlan = (dia) => window.dispatchEvent(new CustomEvent('nf:navegar', { detail: { destino: 'plan', dia } }))
+
+function Accion({ accion }) {
+  const [estado, setEstado] = useState('hecho')   // hecho | deshaciendo | deshecho
+  const dia = accion.dia === 'manana' ? 'mañana' : 'hoy'
+
+  const deshacer = async () => {
+    setEstado('deshaciendo')
+    try {
+      await deshacerComidaPlan(accion.fecha, accion.indice)
+      haptic(15)
+      setEstado('deshecho')
+    } catch (e) {
+      setEstado('hecho')
+      toast.error(e.mensaje || 'No se pudo deshacer')
+    }
+  }
+
+  const cambiada = accion.tipo === 'comida_cambiada'
+  const deshecho = estado === 'deshecho'
+  return (
+    <div style={{
+      marginTop: '6px', marginLeft: '36px', borderRadius: '18px', padding: '12px 14px',
+      background: 'var(--surface-2)', boxShadow: 'inset 0 0 0 0.5px var(--separator)',
+    }}>
+      <p className='nf-caption' style={{ display: 'flex', alignItems: 'center', gap: '5px', color: 'var(--green)', fontWeight: 600, marginBottom: '4px' }}>
+        <IconToolsKitchen2 size={14} strokeWidth={2.2} />
+        {cambiada ? `${MOMENTO[accion.comida.momento]} de ${dia}` : `Plan de ${dia}`}
+      </p>
+
+      {cambiada ? (
+        <div style={{ transition: 'opacity 200ms var(--ease-out)', opacity: deshecho ? 0.55 : 1 }}>
+          <p className='nf-headline' style={{ textDecoration: deshecho ? 'line-through' : 'none' }}>{accion.comida.nombre}</p>
+          <p className='nf-footnote nf-num'>
+            {deshecho ? `Volvió: ${accion.antes}` : `${Math.round(accion.comida.calorias)} kcal · ${Math.round(accion.comida.proteina)} g proteína · antes: ${accion.antes}`}
+          </p>
+        </div>
+      ) : (
+        <>
+          {accion.comidas.map(c => (
+            <p key={c.momento} className='nf-footnote' style={{ display: 'flex', gap: '8px', padding: '2px 0' }}>
+              <span style={{ width: '72px', flexShrink: 0, color: 'var(--label-3)' }}>{MOMENTO[c.momento]}</span>
+              <span style={{ flex: 1, minWidth: 0, color: 'var(--label)' }}>{c.nombre}</span>
+            </p>
+          ))}
+          <p className='nf-caption nf-num' style={{ marginTop: '4px' }}>{Math.round(accion.calorias)} kcal en total</p>
+        </>
+      )}
+
+      <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+        <button onClick={() => verPlan(accion.dia)} className='nf-btn nf-btn--tinted nf-btn--sm'>Ver plan</button>
+        {cambiada && !deshecho && (
+          <button onClick={deshacer} disabled={estado === 'deshaciendo'} className='nf-btn nf-btn--plain nf-btn--sm' style={{ gap: '4px' }}>
+            <IconArrowBackUp size={16} /> {estado === 'deshaciendo' ? 'Deshaciendo…' : 'Deshacer'}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Burbuja ───────────────────────────────────────────────────────────────
 function Mensaje({ msg, agrupado, animar }) {
   const esBruce = msg.rol === 'bruce'
   return (
     <div
       className={animar ? 'nf-reveal' : undefined}
-      onAnimationEnd={e => e.currentTarget.classList.remove('nf-reveal')}
+      onAnimationEnd={e => { if (e.target === e.currentTarget) e.currentTarget.classList.remove('nf-reveal') }}
+    >
+    <div
       style={{
         display: 'flex',
         flexDirection: esBruce ? 'row' : 'row-reverse',
@@ -86,6 +152,8 @@ function Mensaje({ msg, agrupado, animar }) {
           {new Date(msg.creado_en).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
         </p>
       </div>
+    </div>
+    {esBruce && (msg.acciones ?? []).map((a, i) => <Accion key={i} accion={a} />)}
     </div>
   )
 }
@@ -305,7 +373,7 @@ function Conversacion({ sesionId, onVolver, tecladoAbierto }) {
               background: BURBUJA_BRUCE, borderRadius: '20px', padding: '12px 16px', maxWidth: '300px',
             }}>
               <p style={{ fontSize: '16px', lineHeight: 1.45 }}>
-                Qué más parcero, soy Bruce. Pregúntame lo que quieras: nutrición, gym, calorías de algún alimento, o cómo vas hoy.
+                Qué más parcero, soy Bruce. Pregúntame lo que quieras: nutrición, gym, calorías de algún alimento, o cómo vas hoy. También puedo armarte el plan de comidas o cambiarte una comida.
               </p>
             </div>
           </div>

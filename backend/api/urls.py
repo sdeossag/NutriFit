@@ -1,6 +1,6 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
-from . import logros, plan, rutinas, views
+from . import ejercicios, logros, notificaciones, plan, rutinas, views
 
 urlpatterns = [
     # ───────────────────────── AUTH ─────────────────────────
@@ -45,11 +45,15 @@ urlpatterns = [
     path('rutinas-dia/',                rutinas.rutinas_dia,          name='rutinas-dia'),   # app vieja
     path('rutinas/',                    rutinas.rutinas,              name='rutinas'),
     path('rutinas/semana/',             rutinas.semana,               name='rutinas-semana'),
+    path('rutinas/generar/',            rutinas.generar,              name='rutinas-generar'),
+    path('ejercicios/',                 ejercicios.ejercicios,        name='ejercicios'),
+    path('ejercicios/<int:pk>/',        ejercicios.ejercicio_detalle, name='ejercicio-detalle'),
     path('rutinas/<int:pk>/',           rutinas.rutina_detalle,       name='rutina-detalle'),
     path('logros/',                     logros.logros,                name='logros'),
     path('logros/vistos/',              logros.logros_vistos,         name='logros-vistos'),
     path('plan/',                       plan.plan,                    name='plan-dia'),
     path('plan/cambiar/',               plan.cambiar,                 name='plan-cambiar'),
+    path('plan/deshacer/',              plan.deshacer,                name='plan-deshacer'),
     path('plan/registrar/',             plan.registrar,               name='plan-registrar'),
     path('plan/foto/',                  plan.foto,                    name='plan-foto'),
     path('ejercicios-personalizados/',  views.ejercicios_personalizados, name='ejercicios-personalizados'),
@@ -73,12 +77,12 @@ urlpatterns = [
     path('agua/<int:pk>/',                 views.agua_detalle,       name='agua-detalle'),
 
     # ─────────────────── PUSH NOTIFICATIONS ─────────────────
-    path('push/subscribe/',             views.push_suscribir,       name='push-subscribe'),
-    path('push/unsubscribe/',           views.push_desuscribir,     name='push-unsubscribe'),
-    path('push/estado/',                views.push_estado,          name='push-estado'),
-    path('push/check/',                 views.push_check,           name='push-check'),
-    path('push/cron/',                  views.cron_notificaciones,  name='push-cron'),
-    path('push/purge/',                 views.push_purge,           name='push-purge'),
+    path('push/subscribe/',             notificaciones.suscribir,     name='push-subscribe'),
+    path('push/unsubscribe/',           notificaciones.desuscribir,   name='push-unsubscribe'),
+    path('push/estado/',                notificaciones.estado,        name='push-estado'),
+    path('push/cron/',                  notificaciones.cron,          name='push-cron'),
+    path('notificaciones/ajustes/',     notificaciones.ajustes,       name='notificaciones-ajustes'),
+    path('notificaciones/prueba/',      notificaciones.prueba,        name='notificaciones-prueba'),
 
     # ─────────────────── HEALTH CHECK ────────────────────────
     path('health/',                     views.health,               name='health'),

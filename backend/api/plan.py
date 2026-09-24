@@ -250,7 +250,7 @@ SIN_VEGETALES = (
 )
 
 
-def _prompt(perfil, objetivos, evitar=None, no_repetir=None):
+def _prompt(perfil, objetivos, evitar=None, no_repetir=None, pedido=None):
     lineas = '\n'.join(
         f'- {NOMBRE_MOMENTO[m]}: ~{o["calorias"]} kcal, {o["proteina"]} g proteína, {o["carbos"]} g carbos, {o["grasas"]} g grasas'
         for m, o in objetivos.items()
@@ -260,6 +260,8 @@ def _prompt(perfil, objetivos, evitar=None, no_repetir=None):
         extra += f'\nIMPORTANTE: la propuesta anterior tenía ingredientes prohibidos ({", ".join(evitar)}). No los uses.'
     if no_repetir:
         extra += f'\nNo repitas estas opciones: {", ".join(no_repetir)}.'
+    if pedido:
+        extra += f'\nLa persona pide: "{pedido[:200]}". Cúmplelo si no choca con sus alergias ni restricciones.'
     return f"""Eres un nutricionista colombiano práctico. Propón comidas reales para hoy.
 
 Persona:
@@ -328,13 +330,13 @@ Comidas actuales:
 Responde solo con JSON con la misma forma: {{"comidas": [...]}}"""
 
 
-def generar_comidas(perfil, objetivos, no_repetir=None):
+def generar_comidas(perfil, objetivos, no_repetir=None, pedido=None):
     """Pide las comidas a la IA y descarta lo que viole restricciones.
     Devuelve (comidas_por_momento, consejo)."""
     evitar, resultado, consejo = None, {}, ''
     for _ in range(2):  # un reintento si algo prohibido se coló
         datos = _pedir_a_la_ia(_prompt(perfil, {m: objetivos[m] for m in objetivos if m not in resultado},
-                                       evitar, no_repetir))
+                                       evitar, no_repetir, pedido))
         consejo = consejo or re.sub(r'^\s*bruce( dice)?\s*:\s*', '', str(datos.get('consejo') or ''), flags=re.I).strip()[:300]
         consejo = consejo[:1].upper() + consejo[1:]
         evitar = []
@@ -410,32 +412,69 @@ def plan(request):
     if request.method == 'GET':
         return Response(_respuesta(request.user, fecha, existente))
 
-    if existente and existente.generaciones >= MAX_GENERACIONES_DIA:
-        return Response({'error': 'Ya pediste muchos planes para este día. Mañana hay más.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
-
-    momentos = momentos_restantes(fecha, timezone.localtime())
-    restante = restante_del_dia(request.user, fecha) if fecha == timezone.localdate() else {
-        'calorias': request.user.meta_calorias, 'proteina': request.user.meta_proteina,
-        'carbos': request.user.meta_carbos, 'grasas': request.user.meta_grasas,
-    }
-    if not momentos or restante['calorias'] < 150:
-        return Response({'error': 'Por hoy ya cumpliste tus comidas. Puedes planear mañana.'}, status=status.HTTP_400_BAD_REQUEST)
-
-    metas = {'calorias': request.user.meta_calorias}
-    objetivos = objetivos_por_momento(restante, momentos, metas)
     try:
-        comidas, consejo = generar_comidas(_perfil(request.user), objetivos)
+        plan_dia = armar_plan(request.user, fecha, existente)
+    except ErrorPlan as e:
+        return Response({'error': e.mensaje}, status=e.codigo)
     except (requests.RequestException, json.JSONDecodeError, ValueError) as e:
         return _error_ia(e)
-    if not comidas:
-        return Response({'error': 'Bruce no encontró opciones que respeten tus restricciones. Intenta de nuevo.'}, status=status.HTTP_502_BAD_GATEWAY)
+    return Response(_respuesta(request.user, fecha, plan_dia))
 
-    plan_dia, _ = PlanDia.objects.get_or_create(usuario=request.user, fecha=fecha)
+
+def armar_plan(user, fecha, existente=None, pedido=None):
+    """Genera (o rehace) el plan del día. Lanza ErrorPlan o errores de la IA."""
+    if existente and existente.generaciones >= MAX_GENERACIONES_DIA:
+        raise ErrorPlan('Ya pediste muchos planes para este día. Mañana hay más.', status.HTTP_429_TOO_MANY_REQUESTS)
+    momentos = momentos_restantes(fecha, timezone.localtime())
+    restante = restante_del_dia(user, fecha) if fecha == timezone.localdate() else {
+        'calorias': user.meta_calorias, 'proteina': user.meta_proteina,
+        'carbos': user.meta_carbos, 'grasas': user.meta_grasas,
+    }
+    if not momentos or restante['calorias'] < 150:
+        raise ErrorPlan('Por hoy ya cumpliste tus comidas. Puedes planear mañana.')
+
+    objetivos = objetivos_por_momento(restante, momentos, {'calorias': user.meta_calorias})
+    comidas, consejo = generar_comidas(_perfil(user), objetivos, pedido=pedido)
+    if not comidas:
+        raise ErrorPlan('Bruce no encontró opciones que respeten tus restricciones. Intenta de nuevo.', status.HTTP_502_BAD_GATEWAY)
+
+    plan_dia, _ = PlanDia.objects.get_or_create(usuario=user, fecha=fecha)
     plan_dia.comidas = [comidas[m] for m in momentos if m in comidas]
     plan_dia.consejo = consejo
     plan_dia.generaciones += 1
     plan_dia.save()
-    return Response(_respuesta(request.user, fecha, plan_dia))
+    return plan_dia
+
+
+class ErrorPlan(Exception):
+    """Algo que se le puede decir a la persona tal cual."""
+    def __init__(self, mensaje, codigo=status.HTTP_400_BAD_REQUEST):
+        super().__init__(mensaje)
+        self.mensaje, self.codigo = mensaje, codigo
+
+
+def cambiar_comida(user, plan_dia, i, pedido=None):
+    """Reemplaza la comida i por otra con el mismo objetivo. Guarda la anterior
+    para poder deshacer. Lanza ErrorPlan o errores de la IA."""
+    try:
+        actual = plan_dia.comidas[i]
+    except (TypeError, IndexError):
+        raise ErrorPlan('Esa comida no está en el plan')
+    if actual.get('registrada'):
+        raise ErrorPlan('Esa comida ya la registraste')
+    if plan_dia.generaciones >= MAX_GENERACIONES_DIA:
+        raise ErrorPlan('Ya pediste muchos cambios para este día. Mañana hay más.', status.HTTP_429_TOO_MANY_REQUESTS)
+
+    objetivo = {actual['momento']: {k: round(actual[k]) for k in ('calorias', 'proteina', 'carbos', 'grasas')}}
+    nuevas, _ = generar_comidas(_perfil(user), objetivo, no_repetir=[actual['nombre']], pedido=pedido)
+    if actual['momento'] not in nuevas:
+        raise ErrorPlan('Bruce no encontró otra opción que respete tus restricciones.', status.HTTP_502_BAD_GATEWAY)
+    nueva = nuevas[actual['momento']]
+    nueva['anterior'] = {k: v for k, v in actual.items() if k != 'anterior'}
+    plan_dia.comidas[i] = nueva
+    plan_dia.generaciones += 1
+    plan_dia.save()
+    return nueva
 
 
 @api_view(['POST'])
@@ -444,27 +483,36 @@ def cambiar(request):
     """Otra opción para una sola comida, con el mismo objetivo nutricional."""
     fecha = _fecha(request)
     plan_dia = PlanDia.objects.filter(usuario=request.user, fecha=fecha).first() if fecha else None
+    if plan_dia is None:
+        return Response({'error': 'Esa comida no está en el plan'}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        cambiar_comida(request.user, plan_dia, int(request.data.get('indice')), request.data.get('pedido'))
+    except ErrorPlan as e:
+        return Response({'error': e.mensaje}, status=e.codigo)
+    except (TypeError, ValueError) as e:
+        if isinstance(e, json.JSONDecodeError):
+            return _error_ia(e)
+        return Response({'error': 'Esa comida no está en el plan'}, status=status.HTTP_400_BAD_REQUEST)
+    except requests.RequestException as e:
+        return _error_ia(e)
+    return Response(_respuesta(request.user, fecha, plan_dia))
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def deshacer(request):
+    """Vuelve a la comida que había antes del último cambio."""
+    fecha = _fecha(request)
+    plan_dia = PlanDia.objects.filter(usuario=request.user, fecha=fecha).first() if fecha else None
     try:
         i = int(request.data.get('indice'))
         actual = plan_dia.comidas[i]
     except (TypeError, ValueError, IndexError, AttributeError):
         return Response({'error': 'Esa comida no está en el plan'}, status=status.HTTP_400_BAD_REQUEST)
-    if actual.get('registrada'):
-        return Response({'error': 'Esa comida ya la registraste'}, status=status.HTTP_400_BAD_REQUEST)
-    if plan_dia.generaciones >= MAX_GENERACIONES_DIA:
-        return Response({'error': 'Ya pediste muchos cambios para este día. Mañana hay más.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
-
-    objetivo = {actual['momento']: {k: round(actual[k]) for k in ('calorias', 'proteina', 'carbos', 'grasas')}}
-    try:
-        nuevas, _ = generar_comidas(_perfil(request.user), objetivo, no_repetir=[actual['nombre']])
-    except (requests.RequestException, json.JSONDecodeError, ValueError) as e:
-        return _error_ia(e)
-    if actual['momento'] not in nuevas:
-        return Response({'error': 'Bruce no encontró otra opción que respete tus restricciones.'}, status=status.HTTP_502_BAD_GATEWAY)
-
-    plan_dia.comidas[i] = nuevas[actual['momento']]
-    plan_dia.generaciones += 1
-    plan_dia.save()
+    if actual.get('registrada') or not actual.get('anterior'):
+        return Response({'error': 'No hay nada que deshacer'}, status=status.HTTP_400_BAD_REQUEST)
+    plan_dia.comidas[i] = actual['anterior']
+    plan_dia.save(update_fields=['comidas', 'actualizado'])
     return Response(_respuesta(request.user, fecha, plan_dia))
 
 

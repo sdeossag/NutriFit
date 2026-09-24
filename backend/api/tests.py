@@ -30,6 +30,15 @@ class Base(TestCase):
     def sesion(self, fecha, completada=True):
         return SesionGym.objects.create(usuario=self.user, fecha=fecha, rutina='A', completada=completada)
 
+    def semana_de_prueba(self):
+        """Lunes a sábado con rutina (natación martes, jueves y sábado), domingo libre."""
+        from .rutinas import RUTINAS_POR_DEFECTO, SEMANA_POR_DEFECTO
+        ids = {}
+        for r in RUTINAS_POR_DEFECTO:
+            ids[r['clave']] = self.api.post('/api/rutinas/', {k: r[k] for k in ('nombre', 'emoji', 'color', 'ejercicios')}, format='json').data['id']
+        semana = {str(d): [ids[c]] if c else [] for d, c in enumerate(SEMANA_POR_DEFECTO)}
+        return self.api.put('/api/rutinas/semana/', {'semana': semana}, format='json').data['semana']
+
 
 class GuardarSesionTests(Base):
     def test_guardar_con_ejercicios_marca_completada(self):
@@ -175,17 +184,13 @@ class ProgresoTests(Base):
 
 
 class RutinasTests(Base):
-    def test_cuenta_nueva_recibe_la_semana_por_defecto(self):
+    def test_cuenta_nueva_empieza_con_la_semana_vacia(self):
         r = self.api.get('/api/rutinas/')
         self.assertEqual(r.status_code, 200)
-        nombres = {x['nombre'] for x in r.data['rutinas']}
-        self.assertEqual(nombres, {'Pecho/Hombros', 'Natación', 'Espalda/Brazos'})
-        semana = r.data['semana']
-        self.assertEqual(semana['6'], [])                    # domingo de descanso
-        self.assertEqual(semana['1'], semana['3'])           # la natación es el mismo paquete
-        # Pedirla otra vez no duplica nada
-        self.api.get('/api/rutinas/')
-        self.assertEqual(Rutina.objects.count(), 3)
+        self.assertEqual(r.data['rutinas'], [])
+        self.assertEqual(set(map(tuple, r.data['semana'].values())), {()})
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.semana_creada)
 
     def test_mover_una_rutina_completa_de_martes_a_jueves(self):
         brazo = self.api.post('/api/rutinas/', {'nombre': 'Brazo', 'color': '#f472b6', 'ejercicios': [{'nombre': 'Curl'}]}, format='json').data
@@ -211,7 +216,7 @@ class RutinasTests(Base):
         self.assertEqual(self.api.patch(f'/api/rutinas/{ajena.id}/', {'nombre': 'Mía'}, format='json').status_code, 404)
 
     def test_borrar_rutina_deja_los_dias_de_descanso(self):
-        semana = self.api.get('/api/rutinas/').data['semana']
+        semana = self.semana_de_prueba()
         natacion = semana['1'][0]
         r = self.api.delete(f'/api/rutinas/{natacion}/')
         self.assertEqual(r.status_code, 200)
@@ -219,7 +224,7 @@ class RutinasTests(Base):
         self.assertIn(1, estadisticas.dias_descanso(self.user))
 
     def test_sesion_recuerda_su_rutina_aunque_se_mueva(self):
-        semana = self.api.get('/api/rutinas/').data['semana']
+        semana = self.semana_de_prueba()
         pecho = semana['0'][0]
         self.api.post('/api/sesiones/registrar/', {'fecha': '2026-09-21', 'rutina_ref': pecho,
                                                    'ejercicios': [{'nombre': 'Pec fly'}]}, format='json')
@@ -228,7 +233,7 @@ class RutinasTests(Base):
 
     def test_resumen_sabe_si_hoy_es_descanso_segun_el_plan(self):
         with en(HOY):  # martes
-            self.api.get('/api/rutinas/')
+            self.semana_de_prueba()
             self.assertFalse(self.api.get('/api/resumen/').data['es_dia_descanso'])
             self.api.put('/api/rutinas/semana/', {'semana': {'1': None}}, format='json')
             self.assertTrue(self.api.get('/api/resumen/').data['es_dia_descanso'])
@@ -236,7 +241,7 @@ class RutinasTests(Base):
 
 class DobleEntrenoTests(Base):
     def test_dos_rutinas_el_mismo_dia_y_una_sesion_por_cada_una(self):
-        semana = self.api.get('/api/rutinas/').data['semana']
+        semana = self.semana_de_prueba()
         pecho, natacion = semana['0'][0], semana['1'][0]
         r = self.api.put('/api/rutinas/semana/', {'semana': {'0': [natacion, pecho]}}, format='json')
         self.assertEqual(r.data['semana']['0'], [natacion, pecho])  # respeta el orden
@@ -502,3 +507,222 @@ class FotoPlanTests(Base):
             f = self.api.post('/api/plan/foto/', {'fecha': (HOY + timedelta(days=1)).isoformat(), 'indice': 0, 'imagen': 'x'}, format='json')
         self.assertEqual((r.status_code, f.status_code), (400, 400))
         self.assertFalse(Comida.objects.exists())
+
+
+class NotificacionesTests(Base):
+    def setUp(self):
+        super().setUp()
+        from .models import PushSubscription
+        u = self.user
+        u.meta_calorias, u.meta_proteina = 2000, 150
+        u.save()
+        self.sub = PushSubscription.objects.create(usuario=u, endpoint='https://push.example/1', p256dh='k', auth='a')
+
+    def a_las(self, h, m=5, dia=HOY):
+        from datetime import datetime
+        from django.utils import timezone as tz
+        return tz.make_aware(datetime(dia.year, dia.month, dia.day, h, m))
+
+    def tipos(self, ahora):
+        from .notificaciones import pendientes
+        return [(t, titulo) for t, _, titulo, *_ in pendientes(self.user, ahora)]
+
+    def test_comida_con_el_plato_del_plan_y_no_si_ya_la_registro(self):
+        PlanDia.objects.create(usuario=self.user, fecha=HOY, comidas=[
+            {'momento': 'almuerzo', 'nombre': 'Guiso de lentejas', 'calorias': 670, 'proteina': 40, 'registrada': False}])
+        self.assertIn(('comida', 'Almuerzo · Guiso de lentejas'), self.tipos(self.a_las(12, 35)))
+        plan = PlanDia.objects.get()
+        plan.comidas[0]['registrada'] = True
+        plan.save()
+        self.assertNotIn('comida', [t for t, _ in self.tipos(self.a_las(12, 35))])
+
+    def test_no_recuerda_comer_si_ya_va_al_dia(self):
+        Comida.objects.create(usuario=self.user, nombre='x', calorias=1200, fecha=HOY)  # 60% > 55%
+        self.assertNotIn('comida', [t for t, _ in self.tipos(self.a_las(12, 35))])
+
+    def test_gym_solo_si_hay_rutina_y_no_ha_ido(self):
+        self.semana_de_prueba()                # martes: natación
+        self.assertIn(('gym', 'Hoy toca Natación'), self.tipos(self.a_las(18, 5)))
+        self.sesion(HOY)
+        self.assertNotIn('gym', [t for t, _ in self.tipos(self.a_las(18, 5))])
+        # Domingo es descanso: nada de gym
+        self.assertNotIn('gym', [t for t, _ in self.tipos(self.a_las(18, 5, HOY + timedelta(days=5)))])
+
+    def test_agua_solo_si_va_atrasado(self):
+        self.assertIn('agua', [t for t, _ in self.tipos(self.a_las(13, 5))])
+        from .models import RegistroAgua
+        RegistroAgua.objects.create(usuario=self.user, fecha=HOY, cantidad_ml=1200)
+        self.assertNotIn('agua', [t for t, _ in self.tipos(self.a_las(13, 5))])
+
+    def test_horario_silencioso_y_maximo_diario(self):
+        self.assertEqual(self.tipos(self.a_las(23, 0)), [])
+        self.user.ajustes_notif = {'maximo_dia': 1, 'agua': {'horas': ['12:30']}}
+        self.user.save()
+        self.assertEqual(len(self.tipos(self.a_las(12, 35))), 1)
+
+    def test_revision_no_repite_y_usa_respaldo_si_falla_la_ia(self):
+        from .notificaciones import revisar_todos
+        from .models import NotificacionEnviada
+        with mock.patch('api.notificaciones._send_push', return_value=True) as envio, \
+                mock.patch('api.views._groq_chat', side_effect=Exception('sin IA')):
+            primera = revisar_todos(self.a_las(13, 5))
+            segunda = revisar_todos(self.a_las(13, 10))
+        self.assertGreaterEqual(primera, 1)
+        self.assertEqual(segunda, 0)
+        carga = envio.call_args.args[1]
+        self.assertEqual((carga['tag'], carga['destino']), ('nf-agua', 'agua'))
+        self.assertIn('L', NotificacionEnviada.objects.get(tipo='agua').cuerpo)  # texto de respaldo útil
+
+    def test_ajustes_validados_y_combinados(self):
+        r = self.api.patch('/api/notificaciones/ajustes/', {'gym': {'hora': '19:15'}, 'agua': {'activo': False}}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual((r.data['gym']['hora'], r.data['gym']['activo'], r.data['agua']['activo']), ('19:15', True, False))
+        self.assertEqual(self.api.patch('/api/notificaciones/ajustes/', {'gym': {'hora': '25:00'}}, format='json').status_code, 400)
+
+    def test_desuscribir_solo_este_dispositivo(self):
+        from .models import PushSubscription
+        PushSubscription.objects.create(usuario=self.user, endpoint='https://push.example/2', p256dh='k', auth='a')
+        self.api.delete('/api/push/unsubscribe/', {'endpoint': 'https://push.example/1'}, format='json')
+        self.assertEqual(list(PushSubscription.objects.values_list('endpoint', flat=True)), ['https://push.example/2'])
+
+    def test_cron_manual_exige_la_clave_en_el_encabezado(self):
+        with self.settings(CRON_SECRET='s3creto'):
+            self.assertEqual(self.client.post('/api/push/cron/?key=s3creto').status_code, 403)
+            with mock.patch('api.notificaciones.revisar_todos', return_value=0):
+                self.assertEqual(self.client.post('/api/push/cron/', HTTP_X_CRON_KEY='s3creto').status_code, 200)
+
+
+class BibliotecaTests(Base):
+    def test_lista_base_sin_pesos_y_una_sola_vez(self):
+        r = self.api.get('/api/ejercicios/')
+        self.assertGreater(len(r.data), 30)
+        self.assertTrue(all(e['peso'] == '—' and not e['custom'] for e in r.data))
+        self.assertEqual(len(self.api.get('/api/ejercicios/').data), len(r.data))
+
+    def test_editar_actualiza_rutinas_e_historial(self):
+        self.api.get('/api/ejercicios/')
+        banca = next(e for e in self.api.get('/api/ejercicios/').data if e['nombre'] == 'Press banca plano')
+        # Una rutina lo usa con las series de la biblioteca y otra con series propias
+        a = self.api.post('/api/rutinas/', {'nombre': 'A', 'ejercicios': [{'nombre': 'Press banca plano', 'musculo': 'Pecho', 'series': 4, 'reps': '8'}]}, format='json').data
+        b = self.api.post('/api/rutinas/', {'nombre': 'B', 'ejercicios': [{'nombre': 'press banca plano', 'musculo': 'Pecho', 'series': 5, 'reps': '5'}]}, format='json').data
+        s = self.sesion(HOY)
+        EjercicioLog.objects.create(sesion=s, nombre='Press banca plano', reps='8', peso_kg=60)
+
+        r = self.api.patch(f"/api/ejercicios/{banca['id']}/", {'nombre': 'Press de banca', 'series': 3}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(sorted(r.data['rutinas_actualizadas']), ['A', 'B'])
+        ra, rb = Rutina.objects.get(id=a['id']).ejercicios[0], Rutina.objects.get(id=b['id']).ejercicios[0]
+        self.assertEqual((ra['nombre'], ra['series']), ('Press de banca', 3))   # tenía el valor de la biblioteca
+        self.assertEqual((rb['nombre'], rb['series']), ('Press de banca', 5))   # su ajuste propio se respeta
+        self.assertEqual(EjercicioLog.objects.get().nombre, 'Press de banca')   # el historial no se parte
+
+    def test_no_dos_con_el_mismo_nombre_y_borrar_avisa_donde_se_usa(self):
+        self.api.get('/api/ejercicios/')
+        self.assertEqual(self.api.post('/api/ejercicios/', {'nombre': 'sentadilla'}, format='json').status_code, 400)
+        nuevo = self.api.post('/api/ejercicios/', {'nombre': 'Hip thrust con banda', 'musculo': 'Piernas', 'color': '#f472b6'}, format='json').data
+        self.api.post('/api/rutinas/', {'nombre': 'Glúteo', 'ejercicios': [{'nombre': 'Hip thrust con banda'}]}, format='json')
+        r = self.api.delete(f"/api/ejercicios/{nuevo['id']}/")
+        self.assertEqual(r.data['usado_en'], ['Glúteo'])
+        self.assertEqual(Rutina.objects.get().ejercicios[0]['nombre'], 'Hip thrust con banda')  # la rutina lo conserva
+
+
+class GenerarRutinaTests(Base):
+    def test_bruce_arma_la_semana(self):
+        ia = {
+            'rutinas': [
+                {'clave': 'A', 'nombre': 'Torso', 'emoji': '💪', 'ejercicios': [
+                    {'nombre': 'press banca plano', 'musculo': 'Pecho', 'series': 4, 'reps': '8', 'peso': 'moderado'},
+                    {'nombre': 'Remo invertido', 'musculo': 'Espalda alta', 'series': 3, 'reps': '10'}]},
+                {'clave': 'B', 'nombre': 'Pierna', 'emoji': '🦵', 'ejercicios': [{'nombre': 'Sentadilla', 'musculo': 'Piernas', 'series': 4, 'reps': '8'}]},
+            ],
+            'semana': {'0': 'A', '2': 'B', '4': 'A', '5': 'Z'},
+            'explicacion': 'Torso y pierna alternados.',
+        }
+        with mock.patch('api.rutinas._pedir_rutina_ia', return_value=ia):
+            r = self.api.post('/api/rutinas/generar/', {'dias': [0, 2, 4], 'minutos': 45, 'lugar': 'gym', 'nivel': 'principiante'}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        semana = r.data['semana']
+        self.assertEqual(semana['0'], semana['4'])                 # la misma rutina A dos días
+        self.assertEqual(semana['1'], [])                          # lo no elegido queda de descanso
+        torso = next(x for x in r.data['rutinas'] if x['nombre'] == 'Torso')
+        self.assertEqual(torso['ejercicios'][0]['nombre'], 'Press banca plano')   # nombre exacto de la biblioteca
+        self.assertEqual(torso['ejercicios'][1]['musculo'], 'Core')               # músculo inválido corregido
+        nombres = {e['nombre'] for e in self.api.get('/api/ejercicios/').data}
+        self.assertIn('Remo invertido', nombres)                   # lo nuevo entra a la biblioteca
+        self.assertEqual(r.data['explicacion'], 'Torso y pierna alternados.')
+
+    def test_datos_invalidos(self):
+        self.assertEqual(self.api.post('/api/rutinas/generar/', {'dias': []}, format='json').status_code, 400)
+        self.assertEqual(self.api.post('/api/rutinas/generar/', {'dias': [1], 'minutos': 20}, format='json').status_code, 400)
+
+
+class ChatPlanTests(Base):
+    """Bruce cambia el plan desde el chat con las mismas reglas que la pantalla."""
+    comida_ia = PlanDiaTests.comida_ia
+
+    def setUp(self):
+        super().setUp()
+        self.user.meta_calorias, self.user.meta_proteina, self.user.meta_carbos, self.user.meta_grasas = 2000, 150, 200, 60
+        self.user.save()
+        from .models import SesionChat
+        self.chat = SesionChat.objects.create(usuario=self.user)
+        PlanDia.objects.create(usuario=self.user, fecha=HOY, comidas=[
+            {'momento': 'cena', 'nombre': 'Lentejas', 'porcion': '1 plato', 'calorias': 495,
+             'proteina': 30, 'carbos': 60, 'grasas': 15, 'registrada': False},
+        ])
+
+    def herramienta(self, nombre, args):
+        import json
+        return {'content': '', 'tool_calls': [{'id': 'c1', 'type': 'function',
+                'function': {'name': nombre, 'arguments': json.dumps(args)}}]}
+
+    def test_cambia_la_cena_desde_el_chat_y_se_puede_deshacer(self):
+        ia_chat = iter([self.herramienta('cambiar_comida', {'dia': 'hoy', 'momento': 'cena', 'pedido': 'algo con huevo'}),
+                        {'content': 'Listo: cena de huevos rancheros, 495 kcal.'}])
+        pedidos = []
+
+        def ia_plan(prompt):
+            pedidos.append(prompt)
+            return {'comidas': [self.comida_ia('cena', 'Huevos rancheros', ['huevos', 'frijoles'])]}
+
+        with en(HOY), mock.patch('api.views._groq_mensaje', side_effect=lambda payload: next(ia_chat)) as chat, \
+                mock.patch('api.plan._pedir_a_la_ia', side_effect=ia_plan):
+            r = self.api.post(f'/api/chat/{self.chat.id}/mensaje/', {'mensaje': 'cámbiame la cena por algo con huevo'}, format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data['mensaje_bruce']['contenido'], 'Listo: cena de huevos rancheros, 495 kcal.')
+        accion = r.data['mensaje_bruce']['acciones'][0]
+        self.assertEqual((accion['tipo'], accion['indice'], accion['antes']), ('comida_cambiada', 0, 'Lentejas'))
+        self.assertEqual(accion['comida']['nombre'], 'Huevos rancheros')
+        self.assertIn('algo con huevo', pedidos[0])
+        # La IA recibió el resultado de la herramienta en la segunda vuelta
+        self.assertEqual(chat.call_args_list[1].args[0]['messages'][-1]['role'], 'tool')
+
+        with en(HOY):
+            d = self.api.post('/api/plan/deshacer/', {'fecha': HOY.isoformat(), 'indice': 0}, format='json')
+            self.assertEqual(d.status_code, 200, d.data)
+            self.assertEqual(d.data['plan']['comidas'][0]['nombre'], 'Lentejas')
+            otra = self.api.post('/api/plan/deshacer/', {'fecha': HOY.isoformat(), 'indice': 0}, format='json')
+        self.assertEqual(otra.status_code, 400)
+
+    def test_error_de_la_herramienta_llega_a_la_ia_sin_accion(self):
+        ia_chat = iter([self.herramienta('cambiar_comida', {'dia': 'manana', 'momento': 'cena'}),
+                        {'content': 'Mañana no tienes plan todavía, ¿te lo armo?'}])
+        with en(HOY), mock.patch('api.views._groq_mensaje', side_effect=lambda payload: next(ia_chat)) as chat:
+            r = self.api.post(f'/api/chat/{self.chat.id}/mensaje/', {'mensaje': 'cambia la cena de mañana'}, format='json')
+        self.assertEqual(r.data['mensaje_bruce']['acciones'], [])
+        self.assertIn('No hay plan', chat.call_args_list[1].args[0]['messages'][-1]['content'])
+
+    def test_si_la_ia_se_cae_despues_del_cambio_igual_se_guarda_la_accion(self):
+        llamadas = iter([self.herramienta('cambiar_comida', {'dia': 'hoy', 'momento': 'cena'})])
+
+        def ia_chat(payload):
+            try:
+                return next(llamadas)
+            except StopIteration:
+                raise ConnectionError('se cayó')
+
+        with en(HOY), mock.patch('api.views._groq_mensaje', side_effect=ia_chat), \
+                mock.patch('api.plan._pedir_a_la_ia', return_value={'comidas': [self.comida_ia('cena', 'Arepa con huevo', ['arepa', 'huevos'])]}):
+            r = self.api.post(f'/api/chat/{self.chat.id}/mensaje/', {'mensaje': 'otra cena'}, format='json')
+        self.assertEqual(len(r.data['mensaje_bruce']['acciones']), 1)
+        self.assertIn('Arepa con huevo', r.data['mensaje_bruce']['contenido'])
