@@ -199,6 +199,10 @@ export const editarRutina     = (id, data) => patch(`/rutinas/${id}/`, data)
 export const eliminarRutina   = (id)       => del_(`/rutinas/${id}/`)
 export const asignarSemana    = (semana)   => put('/rutinas/semana/', { semana })
 
+// ── Logros ───────────────────────────────────────────────────────────────
+export const getLogros           = () => get('/logros/')
+export const marcarLogrosVistos  = () => post('/logros/vistos/', {})
+
 // ── Ejercicios personalizados del pool ───────────────────────────────────
 export const getEjerciciosPersonalizados   = ()     => get('/ejercicios-personalizados/')
 export const crearEjercicioPersonalizado   = (data) => post('/ejercicios-personalizados/', data)

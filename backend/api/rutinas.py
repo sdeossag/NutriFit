@@ -1,10 +1,12 @@
 """Rutinas como paquetes reutilizables y la semana que las asigna a cada día.
 
-GET    /rutinas/           → { rutinas: [...], semana: {"0": id|null, ...} }
+GET    /rutinas/           → { rutinas: [...], semana: {"0": [id, ...], ...} }
 POST   /rutinas/           → crea una rutina
 PATCH  /rutinas/<id>/      → edita nombre, emoji, color o ejercicios
-DELETE /rutinas/<id>/      → la borra; los días que la usaban quedan de descanso
-PUT    /rutinas/semana/    → { semana: {"1": id|null, ...} } asigna (parcial)
+DELETE /rutinas/<id>/      → la borra y la quita de los días que la usaban
+PUT    /rutinas/semana/    → { semana: {"1": [id, id], "3": []} } reemplaza esos días
+
+Un día puede tener varias rutinas (doble entreno); una lista vacía es descanso.
 """
 import re
 
@@ -18,6 +20,7 @@ from .models import Rutina, RutinaDia
 
 MAX_EJERCICIOS = 40
 MAX_RUTINAS    = 30
+MAX_POR_DIA    = 3
 COLOR_HEX      = re.compile(r'#[0-9a-fA-F]{6}')
 
 _PECHO = [
@@ -109,45 +112,43 @@ def _datos_rutina(data, parcial):
 
 # ── Semana ─────────────────────────────────────────────────────────────────
 
+def _semana_dict(user):
+    semana = {str(d): [] for d in range(7)}
+    for d, rid in RutinaDia.objects.filter(usuario=user).values_list('dia_semana', 'rutina_id'):
+        semana[str(d)].append(rid)
+    return semana
+
+
 @transaction.atomic
 def asegurar_semana(user):
-    """Garantiza que existan los 7 días. Los que falten toman la semana por defecto.
-
-    Una cuenta nueva recibe las rutinas por defecto como paquetes propios que
-    puede editar; una cuenta que ya tenía días guardados solo completa los que
-    le faltan (antes la app los mostraba desde el frontend).
-    """
-    dias = {d.dia_semana: d for d in RutinaDia.objects.select_for_update().filter(usuario=user)}
-    faltan = [d for d in range(7) if d not in dias]
-    if not faltan:
-        return dias
-
-    creadas = {}
-    def paquete(clave):
-        if clave not in creadas:
-            base = next(r for r in RUTINAS_POR_DEFECTO if r['clave'] == clave)
-            existente = Rutina.objects.filter(usuario=user, nombre=base['nombre']).first()
-            creadas[clave] = existente or Rutina.objects.create(
-                usuario=user, nombre=base['nombre'], emoji=base['emoji'],
-                color=base['color'], ejercicios=base['ejercicios'],
-            )
-        return creadas[clave]
-
-    for d in faltan:
-        clave = SEMANA_POR_DEFECTO[d]
-        dias[d] = RutinaDia.objects.create(usuario=user, dia_semana=d, rutina=paquete(clave) if clave else None)
-    return dias
-
-
-def _semana_dict(dias):
-    return {str(d): (dias[d].rutina_id if d in dias else None) for d in range(7)}
+    """La primera vez, la cuenta recibe la semana por defecto como paquetes
+    propios que puede editar. Después nunca se vuelve a tocar."""
+    if user.semana_creada:
+        return
+    user = type(user).objects.select_for_update().get(pk=user.pk)
+    if user.semana_creada:
+        return
+    if not RutinaDia.objects.filter(usuario=user).exists():
+        creadas = {}
+        for dia, clave in enumerate(SEMANA_POR_DEFECTO):
+            if clave is None:
+                continue
+            if clave not in creadas:
+                base = next(r for r in RUTINAS_POR_DEFECTO if r['clave'] == clave)
+                creadas[clave] = Rutina.objects.filter(usuario=user, nombre=base['nombre']).first() or Rutina.objects.create(
+                    usuario=user, nombre=base['nombre'], emoji=base['emoji'],
+                    color=base['color'], ejercicios=base['ejercicios'],
+                )
+            RutinaDia.objects.create(usuario=user, dia_semana=dia, rutina=creadas[clave])
+    user.semana_creada = True
+    user.save(update_fields=['semana_creada'])
 
 
 def _respuesta_completa(user):
-    dias = asegurar_semana(user)
+    asegurar_semana(user)
     return {
         'rutinas': [rutina_a_dict(r) for r in Rutina.objects.filter(usuario=user)],
-        'semana':  _semana_dict(dias),
+        'semana':  _semana_dict(user),
     }
 
 
@@ -176,7 +177,7 @@ def rutina_detalle(request, pk):
         return Response(status=status.HTTP_404_NOT_FOUND)
 
     if request.method == 'DELETE':
-        rutina.delete()  # los días que la usaban quedan de descanso (SET_NULL)
+        rutina.delete()  # se quita de los días que la usaban (CASCADE)
         return Response(_respuesta_completa(request.user))
 
     campos, error = _datos_rutina(request.data, parcial=True)
@@ -191,26 +192,33 @@ def rutina_detalle(request, pk):
 @api_view(['PUT'])
 @permission_classes([IsAuthenticated])
 def semana(request):
-    """Asigna rutinas a días. Mover o intercambiar es mandar los dos días a la vez."""
+    """Reemplaza las rutinas de los días enviados. Mover o intercambiar es
+    mandar los dos días a la vez. Acepta lista, un id suelto o null."""
     cambios = request.data.get('semana')
     if not isinstance(cambios, dict) or not cambios:
-        return Response({'error': 'Se requiere semana: {dia: rutina_id | null}'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'error': 'Se requiere semana: {dia: [rutina_id, ...]}'}, status=status.HTTP_400_BAD_REQUEST)
 
     propias = set(Rutina.objects.filter(usuario=request.user).values_list('id', flat=True))
     asignar = {}
-    for dia, rutina_id in cambios.items():
+    for dia, ids in cambios.items():
         if str(dia) not in {str(d) for d in range(7)}:
             return Response({'error': f'Día inválido: {dia}'}, status=status.HTTP_400_BAD_REQUEST)
-        if rutina_id is not None and rutina_id not in propias:
+        ids = [] if ids is None else ids if isinstance(ids, list) else [ids]
+        ids = list(dict.fromkeys(ids))  # sin repetidos, en orden
+        if len(ids) > MAX_POR_DIA:
+            return Response({'error': f'Máximo {MAX_POR_DIA} rutinas por día'}, status=status.HTTP_400_BAD_REQUEST)
+        if any(i not in propias for i in ids):
             return Response({'error': 'Esa rutina no existe'}, status=status.HTTP_400_BAD_REQUEST)
-        asignar[int(dia)] = rutina_id
+        asignar[int(dia)] = ids
 
     with transaction.atomic():
-        dias = asegurar_semana(request.user)
-        for d, rutina_id in asignar.items():
-            dias[d].rutina_id = rutina_id
-            dias[d].save(update_fields=['rutina', 'actualizado'])
-    return Response({'semana': _semana_dict(dias)})
+        asegurar_semana(request.user)
+        for d, ids in asignar.items():
+            RutinaDia.objects.filter(usuario=request.user, dia_semana=d).delete()
+            RutinaDia.objects.bulk_create([
+                RutinaDia(usuario=request.user, dia_semana=d, rutina_id=rid, orden=i) for i, rid in enumerate(ids)
+            ])
+    return Response({'semana': _semana_dict(request.user)})
 
 
 # ── Compatibilidad con versiones viejas de la app (/rutinas-dia/) ──────────
@@ -218,17 +226,21 @@ def semana(request):
 @api_view(['GET', 'PUT'])
 @permission_classes([IsAuthenticated])
 def rutinas_dia(request):
-    """Formato viejo: un objeto por día. El PUT edita la rutina de ese día."""
+    """Formato viejo: un objeto por día (la primera rutina). El PUT la edita."""
+    asegurar_semana(request.user)
+    primera = {}
+    for dia in RutinaDia.objects.filter(usuario=request.user).select_related('rutina'):
+        primera.setdefault(dia.dia_semana, dia.rutina)
+
     if request.method == 'GET':
-        dias = asegurar_semana(request.user)
         return Response({
             str(d): {
-                'nombre':     dia.rutina.nombre if dia.rutina else 'Descanso',
-                'rutina_id':  'A' if dia.rutina else 'R',
-                'emoji':      dia.rutina.emoji if dia.rutina else '🛌',
-                'ejercicios': dia.rutina.ejercicios if dia.rutina else [],
+                'nombre':     primera[d].nombre if d in primera else 'Descanso',
+                'rutina_id':  'A' if d in primera else 'R',
+                'emoji':      primera[d].emoji if d in primera else '🛌',
+                'ejercicios': primera[d].ejercicios if d in primera else [],
             }
-            for d, dia in dias.items()
+            for d in range(7)
         })
 
     try:
@@ -241,13 +253,12 @@ def rutinas_dia(request):
         return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
 
     with transaction.atomic():
-        dia = asegurar_semana(request.user)[d]
-        if dia.rutina is None:
-            dia.rutina = Rutina.objects.create(usuario=request.user, nombre=campos.pop('nombre', 'Rutina'), **campos)
-            dia.save(update_fields=['rutina', 'actualizado'])
+        r = primera.get(d)
+        if r is None:
+            r = Rutina.objects.create(usuario=request.user, nombre=campos.pop('nombre', 'Rutina'), **campos)
+            RutinaDia.objects.create(usuario=request.user, dia_semana=d, rutina=r)
         else:
             for k, v in campos.items():
-                setattr(dia.rutina, k, v)
-            dia.rutina.save()
-    r = dia.rutina
+                setattr(r, k, v)
+            r.save()
     return Response({'nombre': r.nombre, 'rutina_id': 'A', 'emoji': r.emoji, 'ejercicios': r.ejercicios})

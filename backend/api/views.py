@@ -577,48 +577,34 @@ def sesiones_semana(request):
     return Response(SesionGymSerializer(sesiones, many=True).data)
 
 
+def _sesiones_del_dia(user, fecha):
+    """Resumen de un día que puede tener varias sesiones (doble entreno)."""
+    sesiones = list(SesionGym.objects.filter(usuario=user, fecha=fecha).prefetch_related('ejercicios'))
+    if not sesiones:
+        return {'rutina': '', 'completada': False, 'ejercicios': []}
+    return {
+        'rutina':     sesiones[0].rutina,
+        'completada': any(s.completada for s in sesiones),
+        'ejercicios': [
+            {'nombre': e.nombre, 'series': e.series, 'reps': e.reps, 'peso_kg': e.peso_kg, 'rutina_ref': s.rutina_ref_id}
+            for s in sesiones for e in s.ejercicios.all()
+        ],
+    }
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def sesion_de_hoy(request):
-    hoy    = timezone.localdate()
-    sesion = SesionGym.objects.filter(usuario=request.user, fecha=hoy).first()
-
-    if not sesion:
-        return Response({'rutina': '', 'completada': False, 'ejercicios': []})
-
-    ejercicios = EjercicioLog.objects.filter(sesion=sesion)
-    return Response({
-        'rutina':     sesion.rutina,
-        'completada': sesion.completada,
-        'ejercicios': [
-            {'nombre': e.nombre, 'series': e.series, 'reps': e.reps, 'peso_kg': e.peso_kg}
-            for e in ejercicios
-        ],
-    })
+    return Response(_sesiones_del_dia(request.user, timezone.localdate()))
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def sesion_por_fecha(request, fecha):
-    from datetime import datetime
-    try:
-        fecha_obj = datetime.strptime(fecha, '%Y-%m-%d').date()
-    except (ValueError, TypeError):
+    fecha_obj = estadisticas.parsear_fecha(fecha)
+    if fecha_obj is None:
         return Response({'error': 'Formato de fecha inválido (YYYY-MM-DD)'}, status=status.HTTP_400_BAD_REQUEST)
-
-    sesion = SesionGym.objects.filter(usuario=request.user, fecha=fecha_obj).first()
-    if not sesion:
-        return Response({'rutina': '', 'completada': False, 'ejercicios': []})
-
-    ejercicios = EjercicioLog.objects.filter(sesion=sesion)
-    return Response({
-        'rutina':     sesion.rutina,
-        'completada': sesion.completada,
-        'ejercicios': [
-            {'nombre': e.nombre, 'series': e.series, 'reps': e.reps, 'peso_kg': e.peso_kg}
-            for e in ejercicios
-        ],
-    })
+    return Response(_sesiones_del_dia(request.user, fecha_obj))
 
 
 @api_view(['POST'])
@@ -667,12 +653,13 @@ def registrar_sesion(request):
         completada = _a_bool(request.data.get('completada', False))
 
     with transaction.atomic():
+        # Una sesión por rutina y día: el doble entreno guarda cada una aparte
         sesion, _ = SesionGym.objects.update_or_create(
             usuario=request.user,
             fecha=fecha,
+            rutina_ref=rutina_ref,
             defaults={
                 'rutina':     rutina,
-                'rutina_ref': rutina_ref,
                 'completada': completada,
                 'notas':      str(request.data.get('notas', ''))[:500],
             },
@@ -700,6 +687,7 @@ def log_ejercicio(request):
         sesion, _ = SesionGym.objects.get_or_create(
             usuario=request.user,
             fecha=fecha,
+            rutina_ref=None,
             defaults={'rutina': 'R'},
         )
         if not sesion.completada:

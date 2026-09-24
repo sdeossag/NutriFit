@@ -28,16 +28,11 @@ def parsear_fecha(valor, por_defecto=None):
 
 def dias_descanso(user):
     """Días de la semana (0=Lunes) en que el usuario no tiene que entrenar."""
-    guardados = {d.dia_semana: d for d in RutinaDia.objects.filter(usuario=user).select_related('rutina')}
-    descanso = set()
-    for dia in range(7):
-        d = guardados.get(dia)
-        if d is None:
-            if dia in DESCANSO_POR_DEFECTO:
-                descanso.add(dia)
-        elif d.rutina is None or not d.rutina.ejercicios:
-            descanso.add(dia)
-    return descanso
+    filas = list(RutinaDia.objects.filter(usuario=user).select_related('rutina'))
+    if not filas and not type(user).objects.filter(pk=user.pk, semana_creada=True).exists():
+        return set(DESCANSO_POR_DEFECTO)  # aún no tiene semana: la de por defecto
+    # Un día entrena si tiene al menos una rutina con ejercicios
+    return set(range(7)) - {d.dia_semana for d in filas if d.rutina.ejercicios}
 
 
 def _contar_racha(fechas_hechas, hoy, se_salta=lambda dia: False):

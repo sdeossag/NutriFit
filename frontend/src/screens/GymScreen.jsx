@@ -67,7 +67,6 @@ const POOL_DEFAULT = [
 const PALETA = ['#4ade80', '#60a5fa', '#a78bfa', '#f472b6', '#f87171', '#fb923c', '#fbbf24', '#2dd4bf', '#22d3ee', '#a3a3a3']
 const NOMBRE_COLOR = ['Verde', 'Azul', 'Morado', 'Rosa', 'Rojo', 'Naranja', 'Amarillo', 'Turquesa', 'Cian', 'Gris']
 
-const DESCANSO = { id: null, nombre: 'Descanso', emoji: '🛌', color: null, ejercicios: [] }
 const COLORES_DESCANSO = { bg: 'rgba(255,255,255,0.05)', border: 'rgba(255,255,255,0.08)', text: '#9ca3af', glow: 'transparent' }
 
 // Toda la paleta de una rutina sale de su color (hex + alfa)
@@ -79,6 +78,7 @@ function coloresDe(rutina) {
 
 const NOMBRES_DIA = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo']
 const DIAS_ABR    = ['L', 'M', 'X', 'J', 'V', 'S', 'D']
+const MAX_POR_DIA = 3
 
 // "lunes y jueves", "lunes, miércoles y viernes"
 const listaDias = (dias) => {
@@ -110,18 +110,21 @@ function getEjercicioColor(ex, pool) {
 }
 
 // ─── RESUMEN SEMANAL ───────────────────────────────────────────────────────────
-function ResumenSemanal({ semana, completados, rutinaDe, pool }) {
-  const diasActivos = semana.filter(({ fecha }) => (completados[fecha] ?? []).length > 0).length
-
+function ResumenSemanal({ semana, completados, rutinasDe, clave, pool }) {
+  let diasActivos = 0
   const musculosSemana = new Set()
   semana.forEach(({ fecha, dayOfWeek }) => {
-    const rutina = rutinaDe(fecha, dayOfWeek)
-    ;(completados[fecha] ?? []).forEach(idx => {
-      const ex = rutina?.ejercicios?.[idx]
-      if (!ex) return
-      const musculo = ex.musculo || pool.find(p => p.nombre === ex.nombre)?.musculo
-      if (musculo) musculosSemana.add(musculo)
-    })
+    let activo = false
+    for (const rutina of rutinasDe(fecha, dayOfWeek)) {
+      for (const idx of completados[clave(fecha, rutina.id)] ?? []) {
+        const ex = rutina.ejercicios[idx]
+        if (!ex) continue
+        activo = true
+        const musculo = ex.musculo || pool.find(p => p.nombre === ex.nombre)?.musculo
+        if (musculo) musculosSemana.add(musculo)
+      }
+    }
+    if (activo) diasActivos++
   })
 
   return (
@@ -321,6 +324,14 @@ function CrearEjercicioForm({ onCrear, onCancel }) {
 }
 
 // ─── EDITOR DE RUTINA (hoja) ──────────────────────────────────────────────────
+// El último emoji de un texto (un emoji puede ser varios caracteres: 🏋️‍♀️, 🇨🇴)
+function ultimoEmoji(texto) {
+  const partes = typeof Intl.Segmenter === 'function'
+    ? [...new Intl.Segmenter('es', { granularity: 'grapheme' }).segment(texto)].map(p => p.segment)
+    : Array.from(texto)
+  return partes.reverse().find(p => /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(p)) ?? null
+}
+
 const EMOJIS = ['💪', '🏃', '🚴', '🏊', '🦾', '🏋️‍♀️', '🧘', '🔁', '🛌', '🔥', '⚡️', '😊', '🥇', '🧠', '💥']
 
 function RutinaEditor({ open, rutina, diasUso = [], pool, onSave, onClose, onEliminar, onCrearEjercicio }) {
@@ -422,6 +433,20 @@ function RutinaEditor({ open, rutina, diasUso = [], pool, onSave, onClose, onEli
                     {em}
                   </button>
                 ))}
+                {/* Cualquier emoji: se escribe o pega con el teclado de emojis */}
+                <input
+                  aria-label='Otro emoji'
+                  placeholder='Otro emoji…'
+                  value=''
+                  enterKeyHint='done'
+                  onChange={e => {
+                    const nuevo = ultimoEmoji(e.target.value)
+                    if (nuevo) { setEmoji(nuevo); setMostrarPalette(false); haptic(6) }
+                    else toast('Usa el teclado de emojis 🙂 para elegir uno.')
+                  }}
+                  className='nf-input'
+                  style={{ flex: '1 0 100%', height: '40px', minHeight: 0, fontSize: '16px', marginTop: '2px' }}
+                />
               </div>
             )}
             <div role='radiogroup' aria-label='Color de la rutina' style={{ display: 'flex', justifyContent: 'space-between', marginTop: '14px' }}>
@@ -579,33 +604,36 @@ function RutinaEditor({ open, rutina, diasUso = [], pool, onSave, onClose, onEli
   )
 }
 
-// ─── CAMBIAR LA RUTINA DE UN DÍA ────────────────────────────────────────────────
-// Se despliega dentro de la tarjeta del día (anclado a lo que se está cambiando).
-// Asignar pone el paquete completo en este día; intercambiar mueve los dos paquetes.
-function PanelCambiar({ abierto, dow, plan, lib, sesionFija, onAsignar, onIntercambiar, onNueva }) {
-  const actual  = plan[dow]
-  const rutinas = Object.values(lib)
-  const dia     = NOMBRES_DIA[dow]
-  const plural  = dia.endsWith('s') ? dia : `${dia}s`
+// ─── CAMBIAR LAS RUTINAS DE UN DÍA ──────────────────────────────────────────────
+// Se despliega bajo el encabezado del día (anclado a lo que se está cambiando).
+// Tocar una rutina la agrega o la quita de ese día (doble entreno: hasta 3);
+// intercambiar mueve los paquetes completos entre dos días.
+function PanelCambiar({ abierto, dow, plan, lib, sesionFija, onAlternar, onDescanso, onIntercambiar, onNueva }) {
+  const actuales = plan[dow] ?? []
+  const rutinas  = Object.values(lib)
+  const dia      = NOMBRES_DIA[dow]
+  const plural   = dia.endsWith('s') ? dia : `${dia}s`
   return (
     <div className='nf-collapse' data-open={abierto} aria-hidden={!abierto}>
       <div>
-        <div style={{ padding: '14px 16px 16px', boxShadow: 'inset 0 -0.5px 0 var(--separator)' }}>
-          <p className='nf-caption' style={{ fontWeight: 600, marginBottom: '8px' }}>Rutina del {dia}</p>
+        <div style={{ padding: '4px 16px 16px' }}>
+          <p className='nf-caption' style={{ fontWeight: 600, marginBottom: '8px' }}>
+            Rutinas del {dia} <span style={{ fontWeight: 400 }}>· toca para agregar o quitar</span>
+          </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
             {rutinas.map(r => (
               <button
                 key={r.id}
                 tabIndex={abierto ? 0 : -1}
-                onClick={() => onAsignar(dow, r.id)}
+                onClick={() => onAlternar(dow, r.id)}
                 className='nf-chip'
-                aria-pressed={actual === r.id}
+                aria-pressed={actuales.includes(r.id)}
                 style={{ '--tint': r.color }}
               >
-                <span aria-hidden='true'>{r.emoji}</span> {r.nombre}
+                {actuales.includes(r.id) ? <IconCheck size={14} strokeWidth={3} /> : <span aria-hidden='true'>{r.emoji}</span>} {r.nombre}
               </button>
             ))}
-            <button tabIndex={abierto ? 0 : -1} onClick={() => onAsignar(dow, null)} className='nf-chip' aria-pressed={actual == null} style={{ '--tint': COLORES_DESCANSO.text }}>
+            <button tabIndex={abierto ? 0 : -1} onClick={() => onDescanso(dow)} className='nf-chip' aria-pressed={actuales.length === 0} style={{ '--tint': COLORES_DESCANSO.text }}>
               <span aria-hidden='true'>🛌</span> Descanso
             </button>
             <button tabIndex={abierto ? 0 : -1} onClick={() => onNueva(dow)} className='nf-chip' style={{ '--tint': 'var(--label-2)' }}>
@@ -618,14 +646,14 @@ function PanelCambiar({ abierto, dow, plan, lib, sesionFija, onAsignar, onInterc
           </p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '6px' }}>
             {[0, 1, 2, 3, 4, 5, 6].filter(d => d !== dow).map(d => {
-              const r = lib[plan[d]]
-              const c = coloresDe(r)
+              const del = (plan[d] ?? []).map(id => lib[id]).filter(Boolean)
+              const c = coloresDe(del[0])
               return (
                 <button
                   key={d}
                   tabIndex={abierto ? 0 : -1}
                   onClick={() => onIntercambiar(dow, d)}
-                  aria-label={`Intercambiar ${dia} con ${NOMBRES_DIA[d]} (${r?.nombre ?? 'Descanso'})`}
+                  aria-label={`Intercambiar ${dia} con ${NOMBRES_DIA[d]} (${del.map(r => r.nombre).join(' y ') || 'Descanso'})`}
                   className='nf-press-soft'
                   style={{
                     height: '52px', borderRadius: '12px', background: c.bg,
@@ -634,7 +662,9 @@ function PanelCambiar({ abierto, dow, plan, lib, sesionFija, onAsignar, onInterc
                   }}
                 >
                   <span style={{ fontSize: '11px', fontWeight: 700, color: c.text }}>{DIAS_ABR[d]}</span>
-                  <span aria-hidden='true' style={{ fontSize: '15px', lineHeight: 1 }}>{r?.emoji ?? '🛌'}</span>
+                  <span aria-hidden='true' style={{ fontSize: '14px', lineHeight: 1, letterSpacing: '-2px' }}>
+                    {del.length ? del.map(r => r.emoji).join('') : '🛌'}
+                  </span>
                 </button>
               )
             })}
@@ -642,7 +672,7 @@ function PanelCambiar({ abierto, dow, plan, lib, sesionFija, onAsignar, onInterc
 
           <p className='nf-caption' style={{ marginTop: '10px' }}>
             {sesionFija
-              ? `Esta fecha ya tiene su sesión guardada; el cambio aplica desde el próximo ${dia}.`
+              ? `Esta fecha ya tiene sesiones guardadas; el cambio aplica desde el próximo ${dia}.`
               : `El cambio aplica a todos los ${plural}.`}
           </p>
         </div>
@@ -651,23 +681,257 @@ function PanelCambiar({ abierto, dow, plan, lib, sesionFija, onAsignar, onInterc
   )
 }
 
-// ─── COMPONENTE PRINCIPAL ──────────────────────────────────────────────────────
-export default function GymScreen({ t, screen }) {
-  // Rutinas: paquetes por id. Plan: qué rutina toca cada día (0=Lunes … 6=Domingo)
-  const [lib, setLib]                   = useState({})
-  const [plan, setPlan]                 = useState(null)
-  const [refPorFecha, setRefPorFecha]   = useState({})   // rutina que se hizo en una sesión ya guardada
-  const [pool, setPool]                 = useState(POOL_DEFAULT)
-  const [selectedFecha, setSelectedFecha] = useState(() => fechaLocal())
-  const [completados, setCompletados]   = useState({})
-  const [logData, setLogData]           = useState({})
+// ─── TARJETA DE UNA RUTINA DEL DÍA ─────────────────────────────────────────────
+// Con doble entreno hay una por rutina. El chevron la recoge o la despliega.
+function TarjetaRutina({
+  rutina, fecha, pool, recogida, onRecoger, onEditar,
+  hechos, log, onToggle, onLog, guardando, guardado, onGuardar,
+}) {
   const [expandido, setExpandido]       = useState({})
   const [timerAbierto, setTimerAbierto] = useState(null)
-  const [guardando, setGuardando]       = useState(false)
-  const [guardado, setGuardado]         = useState({})
   const [confetti, setConfetti]         = useState(false)
+  const colores   = coloresDe(rutina)
+  const total     = rutina.ejercicios.length
+  const completa  = total > 0 && hechos.length === total
+  const idLista   = `lista-${fecha}-${rutina.id}`
+
+  const alternar = (j) => {
+    const terminaAhora = !hechos.includes(j) && hechos.length + 1 === total
+    onToggle(j)
+    if (terminaAhora) {
+      setConfetti(true)
+      haptic(30)
+      setTimeout(() => setConfetti(false), 1500)
+    }
+  }
+
+  return (
+    <section className='nf-card' style={{
+      overflow: 'hidden', position: 'relative', marginBottom: '12px',
+      boxShadow: completa ? `inset 0 0 0 1px ${colores.text}80, 0 0 28px ${colores.glow}` : undefined,
+      transition: 'box-shadow 400ms ease',
+    }}>
+      {confetti && <Confetti color={colores.text} />}
+
+      <div style={{
+        background: colores.bg,
+        padding: '6px 4px 6px 16px',
+        display: 'flex', alignItems: 'center', gap: '8px',
+        transition: 'background-color 200ms ease',
+      }}>
+        {/* Todo el encabezado despliega/recoge: objetivo grande y fácil de tocar */}
+        <button
+          onClick={onRecoger}
+          aria-expanded={!recogida}
+          aria-controls={idLista}
+          className='nf-press-soft'
+          style={{ flex: 1, minWidth: 0, textAlign: 'left', padding: '8px 0', display: 'flex', alignItems: 'center', gap: '10px' }}
+        >
+          <span style={{ minWidth: 0, flex: 1 }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <span className='nf-headline' style={{ color: colores.text }}>{rutina.emoji} {rutina.nombre}</span>
+              {completa && <span className='nf-badge' style={{ '--tint': colores.text }}><IconCheck size={12} strokeWidth={3} /> Completado</span>}
+            </span>
+            <span className='nf-footnote nf-num' style={{ display: 'block', color: colores.text, opacity: 0.8 }}>
+              {hechos.length} de {total} ejercicios
+            </span>
+          </span>
+          <IconChevronDown size={20} color={colores.text} aria-hidden='true' style={{
+            flexShrink: 0, transform: recogida ? 'rotate(-90deg)' : 'none', transition: 'transform 200ms var(--ease-out)',
+          }} />
+        </button>
+        <button onClick={onEditar} className='nf-icon-btn' aria-label={`Editar ${rutina.nombre}`} style={{ color: colores.text }}>
+          <IconPencil size={18} />
+        </button>
+      </div>
+
+      <div id={idLista} className='nf-collapse' data-open={!recogida}>
+        <div>
+          <ul style={{ listStyle: 'none' }}>
+            {rutina.ejercicios.map((ex, j) => {
+              const hecho      = hechos.includes(j)
+              const isExpanded = expandido[j] ?? false
+              const logEx      = log[j] ?? {}
+              const timerOpen  = timerAbierto === j
+              const exColor    = getEjercicioColor(ex, pool)
+              const musculo    = ex.musculo || pool.find(p => p.nombre === ex.nombre)?.musculo || ''
+              const tab        = recogida ? -1 : 0
+
+              return (
+                <li key={j} className='nf-row' style={{ display: 'block', padding: 0, '--row-inset': '60px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px' }}>
+                    {/* Check: 44px de área táctil */}
+                    <button
+                      onClick={() => alternar(j)}
+                      role='checkbox'
+                      aria-checked={hecho}
+                      aria-label={`Marcar ${ex.nombre}`}
+                      className='nf-icon-btn'
+                      tabIndex={tab}
+                    >
+                      <span style={{
+                        width: '26px', height: '26px', borderRadius: '50%',
+                        boxShadow: hecho ? 'none' : 'inset 0 0 0 1.5px var(--label-3)',
+                        background: hecho ? colores.text : 'transparent',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        transition: 'background-color 160ms ease, box-shadow 160ms ease, transform 200ms var(--ease-out)',
+                        transform: hecho ? 'scale(1)' : 'scale(0.94)',
+                      }}>
+                        {hecho && <IconCheck size={15} color='#0a0a0a' strokeWidth={3.2} />}
+                      </span>
+                    </button>
+
+                    {/* Info: toca para registrar peso/reps */}
+                    <button
+                      onClick={() => setExpandido(prev => ({ ...prev, [j]: !isExpanded }))}
+                      aria-expanded={isExpanded}
+                      className='nf-press-soft'
+                      tabIndex={tab}
+                      style={{ flex: 1, minWidth: 0, textAlign: 'left', padding: '8px 0', display: 'flex', alignItems: 'center', gap: '8px' }}
+                    >
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{
+                          display: 'block', fontSize: '16px', fontWeight: 500,
+                          color: hecho ? 'var(--label-3)' : 'var(--label)',
+                          textDecoration: hecho ? 'line-through' : 'none',
+                          transition: 'color 200ms ease',
+                        }}>
+                          {ex.nombre}
+                        </span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginTop: '2px' }}>
+                          {exColor && musculo && <span className='nf-badge' style={{ '--tint': exColor.text, height: '20px', fontSize: '11px' }}>{musculo}</span>}
+                          <span className='nf-caption nf-num'>
+                            {ex.series}×{ex.reps} · {ex.peso}
+                            {logEx.peso && <span style={{ color: colores.text, marginLeft: '4px', fontWeight: 700 }}>→ {logEx.peso} kg</span>}
+                          </span>
+                        </span>
+                      </span>
+                      <IconChevronRight size={18} color='var(--label-4)' style={{ transform: isExpanded ? 'rotate(90deg)' : 'none', transition: 'transform 200ms var(--ease-out)', flexShrink: 0 }} />
+                    </button>
+
+                    <button
+                      onClick={() => setTimerAbierto(prev => prev === j ? null : j)}
+                      className='nf-icon-btn'
+                      aria-label={`Temporizador de descanso para ${ex.nombre}`}
+                      aria-pressed={timerOpen}
+                      tabIndex={tab}
+                      style={{ color: timerOpen ? colores.text : 'var(--label-3)' }}
+                    >
+                      <IconClock size={20} />
+                    </button>
+                  </div>
+
+                  {/* Registro real */}
+                  <div className='nf-collapse' data-open={isExpanded}>
+                    <div>
+                      <div style={{ padding: '4px 16px 16px 52px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                          <label>
+                            <span className='nf-caption' style={{ display: 'block', margin: '0 0 4px 4px', fontWeight: 600 }}>Peso real (kg)</span>
+                            <input
+                              type='number' step='0.5' inputMode='decimal'
+                              className='nf-input nf-num'
+                              tabIndex={isExpanded && !recogida ? 0 : -1}
+                              value={logEx.peso ?? ''}
+                              placeholder={ex.peso}
+                              onChange={e => onLog(j, 'peso', e.target.value)}
+                              style={{ '--tint': colores.text }}
+                            />
+                          </label>
+                          <label>
+                            <span className='nf-caption' style={{ display: 'block', margin: '0 0 4px 4px', fontWeight: 600 }}>Reps reales</span>
+                            <input
+                              type='text' inputMode='numeric'
+                              className='nf-input nf-num'
+                              tabIndex={isExpanded && !recogida ? 0 : -1}
+                              value={logEx.reps ?? ''}
+                              placeholder={ex.reps}
+                              onChange={e => onLog(j, 'reps', e.target.value)}
+                              style={{ '--tint': colores.text }}
+                            />
+                          </label>
+                        </div>
+                        <input
+                          type='text'
+                          className='nf-input'
+                          tabIndex={isExpanded && !recogida ? 0 : -1}
+                          aria-label='Nota del ejercicio'
+                          value={logEx.nota ?? ''}
+                          placeholder='Nota: ej. "sentí el hombro raro"'
+                          onChange={e => onLog(j, 'nota', e.target.value)}
+                          style={{ '--tint': colores.text }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {timerOpen && (
+                    <div style={{ padding: '0 12px 12px' }}>
+                      <RestTimer color={colores.text} onClose={() => setTimerAbierto(null)} />
+                    </div>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+
+          {hechos.length > 0 && (
+            <div className='nf-reveal' style={{ boxShadow: 'inset 0 0.5px 0 var(--separator)', padding: '14px 16px 16px' }}>
+              <div style={{ height: '4px', background: 'rgba(255,255,255,0.07)', borderRadius: '2px', overflow: 'hidden', marginBottom: '12px' }}>
+                <div style={{
+                  height: '100%', width: '100%', background: colores.text, borderRadius: '2px',
+                  transform: `scaleX(${hechos.length / total})`, transformOrigin: 'left',
+                  transition: 'transform 400ms var(--ease-out)',
+                }} />
+              </div>
+
+              <button
+                onClick={onGuardar}
+                disabled={guardando}
+                tabIndex={recogida ? -1 : 0}
+                className={`nf-btn nf-btn--block nf-btn--lg ${completa && !guardado ? 'nf-btn--primary' : 'nf-btn--tinted'}`}
+                style={{ '--tint': colores.text }}
+                aria-live='polite'
+              >
+                <IconCheck size={19} />
+                {guardado
+                  ? 'Sesión guardada'
+                  : guardando
+                    ? 'Guardando…'
+                    : completa
+                      ? 'Guardar sesión completa'
+                      : `Guardar (${hechos.length}/${total})`}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// Rutinas recogidas: se recuerdan en este dispositivo
+const CLAVE_RECOGIDAS = 'nf.gym.recogidas'
+const leerRecogidas = () => {
+  try { return new Set(JSON.parse(localStorage.getItem(CLAVE_RECOGIDAS) || '[]')) } catch { return new Set() }
+}
+
+// ─── COMPONENTE PRINCIPAL ──────────────────────────────────────────────────────
+export default function GymScreen({ t, screen }) {
+  // Rutinas: paquetes por id. Plan: rutinas de cada día (0=Lunes … 6=Domingo)
+  const [lib, setLib]                   = useState({})
+  const [plan, setPlan]                 = useState(null)
+  const [hechasPorFecha, setHechasPorFecha] = useState({})  // rutinas con sesión guardada en esa fecha
+  const [pool, setPool]                 = useState(POOL_DEFAULT)
+  const [selectedFecha, setSelectedFecha] = useState(() => fechaLocal())
+  // Claves por sesión: `${fecha}|${rutinaId}`
+  const [completados, setCompletados]   = useState({})
+  const [logData, setLogData]           = useState({})
+  const [guardando, setGuardando]       = useState(null)
+  const [guardado, setGuardado]         = useState({})
+  const [recogidas, setRecogidas]       = useState(leerRecogidas)
   const [cambiarAbierto, setCambiarAbierto] = useState(false)
-  // Editor: { rutina, dia } — dia es a qué día asignar una rutina nueva
+  // Editor: { rutina, dia } — dia es a qué día agregar una rutina nueva
   const [editor, setEditor]             = useState(null)
   const [editorAbierto, setEditorAbierto] = useState(false)
   const [editorKey, setEditorKey]       = useState(0)
@@ -683,10 +947,15 @@ export default function GymScreen({ t, screen }) {
     return { fecha, dayOfWeek, d }
   })
 
-  const rutinaDelDia = (dow) => (plan && lib[plan[dow]]) || DESCANSO
-  // Un día con sesión guardada muestra la rutina que se hizo, aunque luego se haya movido
-  const rutinaDe = (fecha, dow) => lib[refPorFecha[fecha]] || rutinaDelDia(dow)
-  const diasDeRutina = (id) => (plan ? Object.keys(plan).map(Number).filter(d => plan[d] === id).sort() : [])
+  const clave = (fecha, id) => `${fecha}|${id}`
+
+  // Las del plan de ese día, más las que ya se hicieron esa fecha aunque luego se hayan movido
+  const rutinasDe = (fecha, dow) => {
+    const ids = [...(plan?.[dow] ?? [])]
+    for (const id of hechasPorFecha[fecha] ?? []) if (!ids.includes(id)) ids.push(id)
+    return ids.map(id => lib[id]).filter(Boolean)
+  }
+  const diasDeRutina = (id) => (plan ? Object.keys(plan).map(Number).filter(d => plan[d].includes(id)).sort() : [])
 
   useEffect(() => {
     let cancelado = false
@@ -697,85 +966,81 @@ export default function GymScreen({ t, screen }) {
     ])
       .then(([datos, sesiones, custom]) => {
         if (cancelado) return
-        const nuevaLib = Object.fromEntries(datos.rutinas.map(r => [r.id, r]))
-        const nuevoPlan = Object.fromEntries(Object.entries(datos.semana).map(([d, id]) => [Number(d), id]))
+        const nuevaLib  = Object.fromEntries(datos.rutinas.map(r => [r.id, r]))
+        const nuevoPlan = Object.fromEntries(Object.entries(datos.semana).map(([d, ids]) => [Number(d), ids ?? []]))
         setLib(nuevaLib)
         setPlan(nuevoPlan)
         if (Array.isArray(custom) && custom.length > 0) setPool([...POOL_DEFAULT, ...custom])
 
-        // Marca lo que ya se registró esta semana, contra la rutina de cada sesión
-        const refs = {}, hechos = {}, logs = {}
+        // Marca lo que ya se registró esta semana, sesión por sesión
+        const hechas = {}, marcados = {}, logs = {}
         for (const s of Array.isArray(sesiones) ? sesiones : []) {
+          const nombres = (s.ejercicios ?? []).map(e => e.nombre)
+          if (!nombres.length) continue
           const [y, m, dd] = s.fecha.split('-').map(Number)
           const dow = (new Date(y, m - 1, dd).getDay() + 6) % 7
-          // Solo una sesión con ejercicios hechos fija la rutina de esa fecha.
-          // Las guardadas antes de existir rutina_ref se enlazan con la rutina
-          // que contiene esos ejercicios (primero la del plan de ese día).
-          const nombres = (s.ejercicios ?? []).map(e => e.nombre)
+          // Las sesiones guardadas antes de existir rutina_ref se enlazan con
+          // la rutina que contiene esos ejercicios (primero las del plan del día)
           const contiene = (r) => r && nombres.every(n => r.ejercicios.some(ex => ex.nombre === n))
-          if (nombres.length) {
-            if (nuevaLib[s.rutina_ref]) refs[s.fecha] = s.rutina_ref
-            else if (!contiene(nuevaLib[nuevoPlan[dow]])) {
-              const r = Object.values(nuevaLib).find(contiene)
-              if (r) refs[s.fecha] = r.id
-            }
-          }
-          const rutina = nuevaLib[refs[s.fecha] ?? nuevoPlan[dow]]
+          const rutina = nuevaLib[s.rutina_ref]
+            ?? (nuevoPlan[dow] ?? []).map(id => nuevaLib[id]).find(contiene)
+            ?? Object.values(nuevaLib).find(contiene)
           if (!rutina) continue
-          const idxs = [], log = {}
-          for (const ej of s.ejercicios ?? []) {
+          hechas[s.fecha] = [...(hechas[s.fecha] ?? []), rutina.id]
+          const k = clave(s.fecha, rutina.id), idxs = [], log = {}
+          for (const ej of s.ejercicios) {
             const idx = rutina.ejercicios.findIndex(ex => ex.nombre === ej.nombre)
             if (idx === -1) continue
             idxs.push(idx)
             log[idx] = { peso: ej.peso_kg != null ? String(ej.peso_kg) : '', reps: ej.reps ?? '', nota: ej.notas ?? '' }
           }
-          hechos[s.fecha] = idxs
-          logs[s.fecha] = log
+          marcados[k] = idxs
+          logs[k] = log
         }
-        setRefPorFecha(refs)
-        setCompletados(hechos)
+        setHechasPorFecha(hechas)
+        setCompletados(marcados)
         setLogData(logs)
       })
       .catch(() => { if (!cancelado) toast.error('No se pudieron cargar tus rutinas.') })
     return () => { cancelado = true }
   }, [])
 
-  const toggleEjercicio = (fecha, idx) => {
-    haptic(8)
-    const dia = semana.find(d => d.fecha === fecha)
-    const rutina = dia ? rutinaDe(fecha, dia.dayOfWeek) : null
-    setCompletados(prev => {
-      const lista = prev[fecha] ?? []
-      const yaEsta = lista.includes(idx)
-      const nueva  = yaEsta ? lista.filter(i => i !== idx) : [...lista, idx]
-      if (!yaEsta && rutina?.ejercicios?.length > 0 && nueva.length === rutina.ejercicios.length) {
-        setConfetti(true)
-        haptic(30)
-        setTimeout(() => setConfetti(false), 1500)
-      }
-      return { ...prev, [fecha]: nueva }
+  const recoger = (id) => {
+    haptic(6)
+    setRecogidas(prev => {
+      const nuevo = new Set(prev)
+      if (nuevo.has(id)) nuevo.delete(id); else nuevo.add(id)
+      try { localStorage.setItem(CLAVE_RECOGIDAS, JSON.stringify([...nuevo])) } catch { /* sin almacenamiento */ }
+      return nuevo
     })
-    setGuardado(prev => (prev[fecha] ? sinClave(prev, fecha) : prev))
   }
 
-  const updateLog = (fecha, idx, field, value) => {
+  const toggleEjercicio = (k, idx) => {
+    haptic(8)
+    setCompletados(prev => {
+      const lista = prev[k] ?? []
+      return { ...prev, [k]: lista.includes(idx) ? lista.filter(i => i !== idx) : [...lista, idx] }
+    })
+    setGuardado(prev => (prev[k] ? sinClave(prev, k) : prev))
+  }
+
+  const updateLog = (k, idx, field, value) => {
     setLogData(prev => ({
       ...prev,
-      [fecha]: { ...(prev[fecha] ?? {}), [idx]: { ...(prev[fecha]?.[idx] ?? {}), [field]: value } },
+      [k]: { ...(prev[k] ?? {}), [idx]: { ...(prev[k]?.[idx] ?? {}), [field]: value } },
     }))
   }
 
-  const guardarSesion = async (fecha, dayOfWeek) => {
-    const rutina = rutinaDe(fecha, dayOfWeek)
-    const completadosDelDia = completados[fecha] || []
-    setGuardando(true)
-    // Un solo envío: el servidor reemplaza los ejercicios del día y marca la
-    // sesión como hecha. O se guarda todo o nada.
-    const ejercicios = completadosDelDia
+  const guardarSesion = async (fecha, rutina) => {
+    const k = clave(fecha, rutina.id)
+    setGuardando(k)
+    // Un solo envío por rutina: el servidor reemplaza sus ejercicios de ese día
+    // y la marca como hecha. O se guarda todo o nada.
+    const ejercicios = (completados[k] || [])
       .map(idx => {
         const ejercicio = rutina.ejercicios[idx]
         if (!ejercicio) return null
-        const logEx = logData[fecha]?.[idx] ?? {}
+        const logEx = logData[k]?.[idx] ?? {}
         const m = String(logEx.peso || ejercicio.peso || '').replace(',', '.').match(/\d+(\.\d+)?/)
         return {
           nombre:  ejercicio.nombre,
@@ -792,18 +1057,21 @@ export default function GymScreen({ t, screen }) {
         fecha, rutina_ref: rutina.id, ejercicios,
         notas: `${ejercicios.length}/${rutina.ejercicios.length} ejercicios`,
       })
-      setRefPorFecha(prev => (rutina.id != null && ejercicios.length ? { ...prev, [fecha]: rutina.id } : sinClave(prev, fecha)))
+      setHechasPorFecha(prev => {
+        const sinEsta = (prev[fecha] ?? []).filter(id => id !== rutina.id)
+        return { ...prev, [fecha]: ejercicios.length ? [...sinEsta, rutina.id] : sinEsta }
+      })
       haptic(20)
-      setGuardado(prev => ({ ...prev, [fecha]: true }))
-      setTimeout(() => setGuardado(prev => sinClave(prev, fecha)), 2000)
+      setGuardado(prev => ({ ...prev, [k]: true }))
+      setTimeout(() => setGuardado(prev => sinClave(prev, k)), 2000)
     } catch (e) {
       toast.error(e.mensaje || 'No se pudo guardar la sesión. Revisa tu conexión e intenta de nuevo.')
     } finally {
-      setGuardando(false)
+      setGuardando(null)
     }
   }
 
-  // ── Semana: asignar e intercambiar paquetes completos ─────────────────────
+  // ── Semana: agregar, quitar e intercambiar paquetes completos ─────────────
   // Cambia el plan al instante y lo confirma con el servidor; si falla, vuelve.
   const cambiarPlan = async (cambios, { deshacer } = {}) => {
     const anterior = plan
@@ -818,11 +1086,26 @@ export default function GymScreen({ t, screen }) {
     }
   }
 
-  const asignarRutina = (dow, id) => {
-    if (plan[dow] === id) return
-    const nombre = id == null ? 'descanso' : lib[id]?.nombre
-    cambiarPlan({ [dow]: id }, {
-      deshacer: { texto: `El ${NOMBRES_DIA[dow]} ahora es ${nombre}`, cambios: { [dow]: plan[dow] } },
+  const alternarRutina = (dow, id) => {
+    const actuales = plan[dow] ?? []
+    const quitar = actuales.includes(id)
+    if (!quitar && actuales.length >= MAX_POR_DIA) {
+      toast.error(`Máximo ${MAX_POR_DIA} rutinas por día.`)
+      return
+    }
+    const nuevas = quitar ? actuales.filter(x => x !== id) : [...actuales, id]
+    cambiarPlan({ [dow]: nuevas }, {
+      deshacer: {
+        texto: quitar ? `Quitaste ${lib[id].nombre} del ${NOMBRES_DIA[dow]}` : `Agregaste ${lib[id].nombre} al ${NOMBRES_DIA[dow]}`,
+        cambios: { [dow]: actuales },
+      },
+    })
+  }
+
+  const dejarDescanso = (dow) => {
+    if (!(plan[dow] ?? []).length) return
+    cambiarPlan({ [dow]: [] }, {
+      deshacer: { texto: `El ${NOMBRES_DIA[dow]} ahora es de descanso`, cambios: { [dow]: plan[dow] } },
     })
     setCambiarAbierto(false)
   }
@@ -849,14 +1132,18 @@ export default function GymScreen({ t, screen }) {
   const handleSaveRutina = async (datos) => {
     const { rutina, dia } = editor
     setEditorAbierto(false)
-    setCambiarAbierto(false)
 
     if (rutina.id == null) {
       try {
         const creada = await crearRutina(datos)
         setLib(prev => ({ ...prev, [creada.id]: creada }))
-        if (dia != null) await cambiarPlan({ [dia]: creada.id })
-        toast.success(dia != null ? `${creada.nombre} ahora es la rutina del ${NOMBRES_DIA[dia]}` : 'Rutina creada')
+        const actuales = dia != null ? plan[dia] ?? [] : []
+        if (dia != null && actuales.length < MAX_POR_DIA) {
+          await cambiarPlan({ [dia]: [...actuales, creada.id] })
+          toast.success(`Agregaste ${creada.nombre} al ${NOMBRES_DIA[dia]}`)
+        } else {
+          toast.success('Rutina creada')
+        }
       } catch (e) {
         toast.error(e.mensaje || 'No se pudo crear la rutina.')
       }
@@ -879,7 +1166,7 @@ export default function GymScreen({ t, screen }) {
     try {
       const datos = await eliminarRutina(rutina.id)
       setLib(Object.fromEntries(datos.rutinas.map(r => [r.id, r])))
-      setPlan(Object.fromEntries(Object.entries(datos.semana).map(([d, id]) => [Number(d), id])))
+      setPlan(Object.fromEntries(Object.entries(datos.semana).map(([d, ids]) => [Number(d), ids ?? []])))
       toast(`Eliminaste ${rutina.nombre}`)
     } catch (e) {
       toast.error(e.mensaje || 'No se pudo eliminar la rutina.')
@@ -903,15 +1190,12 @@ export default function GymScreen({ t, screen }) {
     }
   }
 
-  const cargandoPlan             = plan === null
-  const diaSeleccionado          = semana.find(d => d.fecha === selectedFecha)
-  const rutinaSeleccionada       = diaSeleccionado && !cargandoPlan ? rutinaDe(selectedFecha, diaSeleccionado.dayOfWeek) : null
-  const colores                  = coloresDe(rutinaSeleccionada)
-  const completadosSeleccionados = completados[selectedFecha] ?? []
-  const totalEjerciciosDia       = rutinaSeleccionada?.ejercicios?.length ?? 0
-  const sesionCompleta           = totalEjerciciosDia > 0 && completadosSeleccionados.length === totalEjerciciosDia
-  // Si ese día ya tiene sesión guardada con otra rutina, cambiar el plan no la toca
-  const diaConSesionFija         = Boolean(refPorFecha[selectedFecha])
+  const cargandoPlan     = plan === null
+  const diaSeleccionado  = semana.find(d => d.fecha === selectedFecha)
+  const rutinasDelDia    = diaSeleccionado && !cargandoPlan ? rutinasDe(selectedFecha, diaSeleccionado.dayOfWeek) : []
+  const coloresDia       = coloresDe(rutinasDelDia[0])
+  // Si esa fecha ya tiene sesiones guardadas, cambiar el plan no las toca
+  const diaConSesionFija = (hechasPorFecha[selectedFecha] ?? []).length > 0
 
   return (
     <div style={{ padding: 'calc(var(--safe-top) + 20px) 16px 0' }}>
@@ -945,279 +1229,131 @@ export default function GymScreen({ t, screen }) {
           <div className='nf-skeleton' style={{ height: '320px', borderRadius: 'var(--r-lg)' }} />
         </div>
       ) : (<>
-      <ResumenSemanal semana={semana} completados={completados} rutinaDe={rutinaDe} pool={pool} />
+        <ResumenSemanal semana={semana} completados={completados} rutinasDe={rutinasDe} clave={clave} pool={pool} />
 
-      {/* Semana: 7 días caben en el ancho, sin scroll lateral */}
-      <div role='tablist' aria-label='Días de la semana' style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '6px', marginBottom: '20px' }}>
-        {semana.map(({ fecha, dayOfWeek, d }) => {
-          const rutina          = rutinaDe(fecha, dayOfWeek)
-          const coloresDia      = coloresDe(rutina)
-          const esSeleccionado  = fecha === selectedFecha
-          const esHoy           = fecha === hoy
-          const hechos          = (completados[fecha] || []).length
-          const totalEjercicios = rutina.ejercicios.length
-          const pct             = totalEjercicios > 0 ? hechos / totalEjercicios : 0
-          const terminado       = pct === 1 && totalEjercicios > 0
+        {/* Semana: 7 días caben en el ancho, sin scroll lateral */}
+        <div role='tablist' aria-label='Días de la semana' style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '6px', marginBottom: '20px' }}>
+          {semana.map(({ fecha, dayOfWeek, d }) => {
+            const rutinas        = rutinasDe(fecha, dayOfWeek)
+            const c              = coloresDe(rutinas[0])
+            const esSeleccionado = fecha === selectedFecha
+            const esHoy          = fecha === hoy
+            const total          = rutinas.reduce((n, r) => n + r.ejercicios.length, 0)
+            const hechos         = rutinas.reduce((n, r) => n + (completados[clave(fecha, r.id)] ?? []).length, 0)
+            const pct            = total > 0 ? hechos / total : 0
+            const terminado      = total > 0 && hechos === total
+            const nombres        = rutinas.map(r => r.nombre).join(' y ') || 'Descanso'
 
-          return (
-            <button
-              key={fecha}
-              role='tab'
-              aria-selected={esSeleccionado}
-              aria-label={`${d.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric' })}: ${rutina.nombre}${terminado ? ', completado' : ''}`}
-              onClick={() => { setSelectedFecha(fecha); setCambiarAbierto(false) }}
-              style={{
-                height: '84px', borderRadius: '16px', position: 'relative', overflow: 'hidden',
-                background: esSeleccionado ? 'var(--surface-2)' : 'transparent',
-                boxShadow: esSeleccionado
-                  ? `inset 0 0 0 1.5px ${coloresDia.text}`
-                  : esHoy ? `inset 0 0 0 1px ${coloresDia.text}66` : 'inset 0 0 0 0.5px var(--separator)',
-                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '3px',
-                padding: 0,
-                transition: 'box-shadow 200ms ease, background-color 200ms ease',
-              }}
-            >
-              {/* Progreso del día: se llena desde abajo */}
-              <span aria-hidden='true' style={{
-                position: 'absolute', inset: 0, background: coloresDia.bg,
-                transform: `scaleY(${pct})`, transformOrigin: 'bottom',
-                transition: 'transform 400ms var(--ease-out), background-color 200ms ease',
-              }} />
-              <span style={{ position: 'relative', fontSize: '12px', fontWeight: 600, color: esHoy ? coloresDia.text : 'var(--label-3)' }}>
-                {DIAS_ABR[dayOfWeek]}
-              </span>
-              <span className='nf-num' style={{ position: 'relative', fontSize: '17px', fontWeight: 700, color: esSeleccionado ? coloresDia.text : 'var(--label)' }}>
-                {d.getDate()}
-              </span>
-              <span style={{ position: 'relative', fontSize: '16px', lineHeight: 1, height: '18px', display: 'flex', alignItems: 'center' }}>
-                {terminado
-                  ? <IconCheck size={16} color={coloresDia.text} strokeWidth={3} />
-                  : rutina.emoji}
-              </span>
-            </button>
-          )
-        })}
-      </div>
+            return (
+              <button
+                key={fecha}
+                role='tab'
+                aria-selected={esSeleccionado}
+                aria-label={`${d.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric' })}: ${nombres}${terminado ? ', completado' : ''}`}
+                onClick={() => { setSelectedFecha(fecha); setCambiarAbierto(false) }}
+                style={{
+                  height: '84px', borderRadius: '16px', position: 'relative', overflow: 'hidden',
+                  background: esSeleccionado ? 'var(--surface-2)' : 'transparent',
+                  boxShadow: esSeleccionado
+                    ? `inset 0 0 0 1.5px ${c.text}`
+                    : esHoy ? `inset 0 0 0 1px ${c.text}66` : 'inset 0 0 0 0.5px var(--separator)',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '3px',
+                  padding: 0,
+                  transition: 'box-shadow 200ms ease, background-color 200ms ease',
+                }}
+              >
+                {/* Progreso del día: se llena desde abajo */}
+                <span aria-hidden='true' style={{
+                  position: 'absolute', inset: 0, background: c.bg,
+                  transform: `scaleY(${pct})`, transformOrigin: 'bottom',
+                  transition: 'transform 400ms var(--ease-out), background-color 200ms ease',
+                }} />
+                <span style={{ position: 'relative', fontSize: '12px', fontWeight: 600, color: esHoy ? c.text : 'var(--label-3)' }}>
+                  {DIAS_ABR[dayOfWeek]}
+                </span>
+                <span className='nf-num' style={{ position: 'relative', fontSize: '17px', fontWeight: 700, color: esSeleccionado ? c.text : 'var(--label)' }}>
+                  {d.getDate()}
+                </span>
+                <span style={{ position: 'relative', fontSize: '16px', lineHeight: 1, height: '18px', display: 'flex', alignItems: 'center' }}>
+                  {terminado
+                    ? <IconCheck size={16} color={c.text} strokeWidth={3} />
+                    : (rutinas[0]?.emoji ?? '🛌')}
+                  {/* Doble entreno: un punto por cada rutina extra */}
+                  {rutinas.length > 1 && !terminado && (
+                    <span aria-hidden='true' style={{ display: 'flex', gap: '2px', marginLeft: '2px' }}>
+                      {rutinas.slice(1).map(r => <span key={r.id} style={{ width: '5px', height: '5px', borderRadius: '50%', background: r.color }} />)}
+                    </span>
+                  )}
+                </span>
+              </button>
+            )
+          })}
+        </div>
 
-      {/* Detalle del día */}
-      {rutinaSeleccionada && (
-        <section className='nf-card' style={{
-          overflow: 'hidden', position: 'relative',
-          boxShadow: sesionCompleta ? `inset 0 0 0 1px ${colores.text}80, 0 0 28px ${colores.glow}` : undefined,
-          transition: 'box-shadow 400ms ease',
-        }}>
-          {confetti && <Confetti color={colores.text} />}
-
-          <div style={{
-            background: colores.bg,
-            padding: '14px 12px 14px 16px',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px',
-            transition: 'background-color 200ms ease',
-          }}>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                <h2 className='nf-headline' style={{ color: colores.text }}>{rutinaSeleccionada.emoji} {rutinaSeleccionada.nombre}</h2>
-                {sesionCompleta && <span className='nf-badge' style={{ '--tint': colores.text }}><IconCheck size={12} strokeWidth={3} /> Completado</span>}
-              </div>
-              {totalEjerciciosDia > 0 && (
-                <p className='nf-footnote nf-num' style={{ color: colores.text, opacity: 0.8 }}>
-                  {completadosSeleccionados.length} de {totalEjerciciosDia} ejercicios
+        {/* Encabezado del día: qué toca y el botón para cambiarlo */}
+        {diaSeleccionado && (
+          <div className='nf-card' style={{ marginBottom: '12px', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '10px 12px 10px 16px' }}>
+              <div style={{ minWidth: 0 }}>
+                <p className='nf-headline' style={{ textTransform: 'capitalize' }}>
+                  {diaSeleccionado.d.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric' })}
                 </p>
-              )}
-            </div>
-            <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                <p className='nf-footnote'>
+                  {rutinasDelDia.length === 0 ? 'Día de descanso'
+                    : rutinasDelDia.length === 1 ? '1 rutina'
+                    : `Doble entreno · ${rutinasDelDia.length} rutinas`}
+                </p>
+              </div>
               <button
                 onClick={() => setCambiarAbierto(a => !a)}
                 aria-expanded={cambiarAbierto}
                 className='nf-btn nf-btn--sm nf-btn--tinted'
-                style={{ '--tint': colores.text }}
+                style={{ '--tint': coloresDia.text, flexShrink: 0 }}
               >
                 {cambiarAbierto ? <IconX size={15} /> : <IconReplace size={15} />} {cambiarAbierto ? 'Cerrar' : 'Cambiar'}
               </button>
-              {rutinaSeleccionada.id != null && (
-                <button onClick={() => abrirEditor(rutinaSeleccionada)} className='nf-btn nf-btn--sm nf-btn--tinted' style={{ '--tint': colores.text, padding: 0, width: '34px' }} aria-label={`Editar ${rutinaSeleccionada.nombre}`}>
-                  <IconPencil size={16} />
-                </button>
-              )}
             </div>
+            <PanelCambiar
+              abierto={cambiarAbierto}
+              dow={diaSeleccionado.dayOfWeek}
+              plan={plan}
+              lib={lib}
+              sesionFija={diaConSesionFija}
+              onAlternar={alternarRutina}
+              onDescanso={dejarDescanso}
+              onIntercambiar={intercambiarDias}
+              onNueva={nuevaRutina}
+            />
           </div>
+        )}
 
-          <PanelCambiar
-            abierto={cambiarAbierto}
-            dow={diaSeleccionado.dayOfWeek}
-            plan={plan}
-            lib={lib}
-            sesionFija={diaConSesionFija}
-            onAsignar={asignarRutina}
-            onIntercambiar={intercambiarDias}
-            onNueva={nuevaRutina}
-          />
-
-          {rutinaSeleccionada.ejercicios.length > 0 ? (
-            <>
-              <ul style={{ listStyle: 'none' }}>
-                {rutinaSeleccionada.ejercicios.map((ex, j) => {
-                  const hecho      = completadosSeleccionados.includes(j)
-                  const key        = `${selectedFecha}_${j}`
-                  const isExpanded = expandido[key] ?? false
-                  const logEx      = logData[selectedFecha]?.[j] ?? {}
-                  const timerOpen  = timerAbierto === key
-                  const exColor    = getEjercicioColor(ex, pool)
-                  const musculo    = ex.musculo || pool.find(p => p.nombre === ex.nombre)?.musculo || ''
-
-                  return (
-                    <li key={j} className='nf-row' style={{ display: 'block', padding: 0, '--row-inset': '60px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 4px 4px 4px' }}>
-                        {/* Check: 44px de área táctil */}
-                        <button
-                          onClick={() => toggleEjercicio(selectedFecha, j)}
-                          role='checkbox'
-                          aria-checked={hecho}
-                          aria-label={`Marcar ${ex.nombre}`}
-                          className='nf-icon-btn'
-                        >
-                          <span style={{
-                            width: '26px', height: '26px', borderRadius: '50%',
-                            boxShadow: hecho ? 'none' : 'inset 0 0 0 1.5px var(--label-3)',
-                            background: hecho ? colores.text : 'transparent',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            transition: 'background-color 160ms ease, box-shadow 160ms ease, transform 200ms var(--ease-out)',
-                            transform: hecho ? 'scale(1)' : 'scale(0.94)',
-                          }}>
-                            {hecho && <IconCheck size={15} color='#0a0a0a' strokeWidth={3.2} />}
-                          </span>
-                        </button>
-
-                        {/* Info: toca para registrar peso/reps */}
-                        <button
-                          onClick={() => setExpandido(prev => ({ ...prev, [key]: !isExpanded }))}
-                          aria-expanded={isExpanded}
-                          className='nf-press-soft'
-                          style={{ flex: 1, minWidth: 0, textAlign: 'left', padding: '8px 0', display: 'flex', alignItems: 'center', gap: '8px' }}
-                        >
-                          <span style={{ flex: 1, minWidth: 0 }}>
-                            <span style={{
-                              display: 'block', fontSize: '16px', fontWeight: 500,
-                              color: hecho ? 'var(--label-3)' : 'var(--label)',
-                              textDecoration: hecho ? 'line-through' : 'none',
-                              transition: 'color 200ms ease',
-                            }}>
-                              {ex.nombre}
-                            </span>
-                            <span style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginTop: '2px' }}>
-                              {exColor && musculo && <span className='nf-badge' style={{ '--tint': exColor.text, height: '20px', fontSize: '11px' }}>{musculo}</span>}
-                              <span className='nf-caption nf-num'>
-                                {ex.series}×{ex.reps} · {ex.peso}
-                                {logEx.peso && <span style={{ color: colores.text, marginLeft: '4px', fontWeight: 700 }}>→ {logEx.peso} kg</span>}
-                              </span>
-                            </span>
-                          </span>
-                          <IconChevronRight size={18} color='var(--label-4)' style={{ transform: isExpanded ? 'rotate(90deg)' : 'none', transition: 'transform 200ms var(--ease-out)', flexShrink: 0 }} />
-                        </button>
-
-                        <button
-                          onClick={() => setTimerAbierto(prev => prev === key ? null : key)}
-                          className='nf-icon-btn'
-                          aria-label={`Temporizador de descanso para ${ex.nombre}`}
-                          aria-pressed={timerOpen}
-                          style={{ color: timerOpen ? colores.text : 'var(--label-3)' }}
-                        >
-                          <IconClock size={20} />
-                        </button>
-                      </div>
-
-                      {/* Registro real */}
-                      <div className='nf-collapse' data-open={isExpanded}>
-                        <div>
-                          <div style={{ padding: '4px 16px 16px 52px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                              <label>
-                                <span className='nf-caption' style={{ display: 'block', margin: '0 0 4px 4px', fontWeight: 600 }}>Peso real (kg)</span>
-                                <input
-                                  type='number' step='0.5' inputMode='decimal'
-                                  className='nf-input nf-num'
-                                  tabIndex={isExpanded ? 0 : -1}
-                                  value={logEx.peso ?? ''}
-                                  placeholder={ex.peso}
-                                  onChange={e => updateLog(selectedFecha, j, 'peso', e.target.value)}
-                                  style={{ '--tint': colores.text }}
-                                />
-                              </label>
-                              <label>
-                                <span className='nf-caption' style={{ display: 'block', margin: '0 0 4px 4px', fontWeight: 600 }}>Reps reales</span>
-                                <input
-                                  type='text' inputMode='numeric'
-                                  className='nf-input nf-num'
-                                  tabIndex={isExpanded ? 0 : -1}
-                                  value={logEx.reps ?? ''}
-                                  placeholder={ex.reps}
-                                  onChange={e => updateLog(selectedFecha, j, 'reps', e.target.value)}
-                                  style={{ '--tint': colores.text }}
-                                />
-                              </label>
-                            </div>
-                            <input
-                              type='text'
-                              className='nf-input'
-                              tabIndex={isExpanded ? 0 : -1}
-                              aria-label='Nota del ejercicio'
-                              value={logEx.nota ?? ''}
-                              placeholder='Nota: ej. "sentí el hombro raro"'
-                              onChange={e => updateLog(selectedFecha, j, 'nota', e.target.value)}
-                              style={{ '--tint': colores.text }}
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      {timerOpen && (
-                        <div style={{ padding: '0 12px 12px' }}>
-                          <RestTimer color={colores.text} onClose={() => setTimerAbierto(null)} />
-                        </div>
-                      )}
-                    </li>
-                  )
-                })}
-              </ul>
-
-              {completadosSeleccionados.length > 0 && (
-                <div className='nf-reveal' style={{ boxShadow: 'inset 0 0.5px 0 var(--separator)', padding: '14px 16px 16px' }}>
-                  <div style={{ height: '4px', background: 'rgba(255,255,255,0.07)', borderRadius: '2px', overflow: 'hidden', marginBottom: '12px' }}>
-                    <div style={{
-                      height: '100%', width: '100%', background: colores.text, borderRadius: '2px',
-                      transform: `scaleX(${completadosSeleccionados.length / totalEjerciciosDia})`, transformOrigin: 'left',
-                      transition: 'transform 400ms var(--ease-out)',
-                    }} />
-                  </div>
-
-                  <button
-                    onClick={() => guardarSesion(selectedFecha, diaSeleccionado.dayOfWeek)}
-                    disabled={guardando}
-                    className={`nf-btn nf-btn--block nf-btn--lg ${sesionCompleta && !guardado[selectedFecha] ? 'nf-btn--primary' : 'nf-btn--tinted'}`}
-                    style={{ '--tint': colores.text }}
-                    aria-live='polite'
-                  >
-                    <IconCheck size={19} />
-                    {guardado[selectedFecha]
-                      ? 'Sesión guardada'
-                      : guardando
-                        ? 'Guardando…'
-                        : sesionCompleta
-                          ? 'Guardar sesión completa'
-                          : `Guardar (${completadosSeleccionados.length}/${totalEjerciciosDia})`}
-                  </button>
-                </div>
-              )}
-            </>
-          ) : (
-            <div style={{ padding: '32px 16px', textAlign: 'center' }}>
-              <p style={{ fontSize: '34px', marginBottom: '8px' }}>🛌</p>
-              <p className='nf-headline' style={{ marginBottom: '4px' }}>Día de descanso</p>
-              <p className='nf-footnote'>Recuperar también es entrenar. Toca "Cambiar" si quieres ponerle una rutina.</p>
-            </div>
-          )}
-        </section>
-      )}
+        {rutinasDelDia.length === 0 ? (
+          <div className='nf-card' style={{ padding: '32px 16px', textAlign: 'center' }}>
+            <p style={{ fontSize: '34px', marginBottom: '8px' }}>🛌</p>
+            <p className='nf-headline' style={{ marginBottom: '4px' }}>Día de descanso</p>
+            <p className='nf-footnote'>Recuperar también es entrenar. Toca "Cambiar" si quieres ponerle una rutina.</p>
+          </div>
+        ) : rutinasDelDia.map(rutina => {
+          const k = clave(selectedFecha, rutina.id)
+          return (
+            <TarjetaRutina
+              key={k}
+              rutina={rutina}
+              fecha={selectedFecha}
+              pool={pool}
+              recogida={recogidas.has(rutina.id)}
+              onRecoger={() => recoger(rutina.id)}
+              onEditar={() => abrirEditor(rutina)}
+              hechos={completados[k] ?? []}
+              log={logData[k] ?? {}}
+              onToggle={(j) => toggleEjercicio(k, j)}
+              onLog={(j, campo, valor) => updateLog(k, j, campo, valor)}
+              guardando={guardando === k}
+              guardado={Boolean(guardado[k])}
+              onGuardar={() => guardarSesion(selectedFecha, rutina)}
+            />
+          )
+        })}
       </>)}
     </div>
   )

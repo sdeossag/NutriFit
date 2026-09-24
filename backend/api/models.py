@@ -69,6 +69,8 @@ class Usuario(AbstractUser):
 
     # ── Control de flujo ──────────────────────────────────────────────────────
     onboarding_completo = models.BooleanField(default=False)
+    # La semana de rutinas ya se creó (una semana toda de descanso no tiene filas)
+    semana_creada       = models.BooleanField(default=False)
 
     class Meta:
         verbose_name        = 'Usuario'
@@ -216,7 +218,8 @@ class SesionGym(models.Model):
 
     class Meta:
         ordering    = ['-fecha']
-        constraints = [models.UniqueConstraint(fields=['usuario', 'fecha'], name='sesion_unica_por_dia')]
+        # Una sesión por rutina y día: el doble entreno son dos sesiones
+        constraints = [models.UniqueConstraint(fields=['usuario', 'fecha', 'rutina_ref'], name='sesion_unica_por_rutina')]
 
     def __str__(self):
         return f"Gym {self.rutina} — {self.fecha}"
@@ -331,20 +334,22 @@ class Rutina(models.Model):
 
 
 class RutinaDia(models.Model):
-    """Qué rutina toca cada día de la semana. rutina=None es día de descanso.
+    """Una rutina asignada a un día de la semana. Un día puede tener varias
+    (doble entreno) y un día sin filas es de descanso.
     dia_semana: 0=Lunes ... 6=Domingo (mismo criterio que usa el frontend)
     """
     usuario     = models.ForeignKey('Usuario', on_delete=models.CASCADE, related_name='rutinas_dia')
     dia_semana  = models.IntegerField()  # 0-6
-    rutina      = models.ForeignKey(Rutina, on_delete=models.SET_NULL, null=True, blank=True, related_name='dias')
+    rutina      = models.ForeignKey(Rutina, on_delete=models.CASCADE, related_name='dias')
+    orden       = models.PositiveSmallIntegerField(default=0)
     actualizado = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering        = ['dia_semana']
-        unique_together  = ['usuario', 'dia_semana']
+        ordering    = ['dia_semana', 'orden']
+        constraints = [models.UniqueConstraint(fields=['usuario', 'dia_semana', 'rutina'], name='rutina_una_vez_por_dia')]
 
     def __str__(self):
-        return f"{self.usuario} — Día {self.dia_semana}: {self.rutina or 'Descanso'}"
+        return f"{self.usuario} — Día {self.dia_semana}: {self.rutina}"
 
 
 class EjercicioPersonalizado(models.Model):
@@ -400,3 +405,21 @@ class PushSubscription(models.Model):
 
     def __str__(self):
         return f"Push {self.usuario} — {self.endpoint[:60]}"
+
+# ──────────────────────────────────────────────
+#  LOGROS
+# ──────────────────────────────────────────────
+
+class LogroUsuario(models.Model):
+    """Nivel alcanzado en cada logro. Nunca baja: lo ganado se queda."""
+    usuario         = models.ForeignKey('Usuario', on_delete=models.CASCADE, related_name='logros')
+    clave           = models.CharField(max_length=40)
+    nivel           = models.PositiveSmallIntegerField(default=0)
+    desbloqueado_en = models.DateTimeField()
+    visto           = models.BooleanField(default=False)  # la celebración se muestra una sola vez
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['usuario', 'clave'], name='logro_unico_por_usuario')]
+
+    def __str__(self):
+        return f"{self.usuario} — {self.clave} nivel {self.nivel}"

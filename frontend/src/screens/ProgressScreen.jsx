@@ -2,8 +2,9 @@ import { useState, useEffect, useRef } from 'react'
 import {
   IconTrendingDown, IconTrendingUp, IconBarbell, IconToolsKitchen2,
   IconInfoCircle, IconChevronRight, IconRefresh, IconTrophy,
+  IconFlame, IconCalendarCheck, IconMeat, IconTarget, IconNotebook, IconDroplet, IconScale,
 } from '@tabler/icons-react'
-import { registrarPeso, getProgresoCompleto, getHistorialEjercicios } from '../api'
+import { registrarPeso, getProgresoCompleto, getHistorialEjercicios, getLogros, marcarLogrosVistos } from '../api'
 import Segmented from '../components/Segmented'
 import { toast } from '../lib/toast'
 import { haptic, useEntrada } from '../lib/motion'
@@ -363,20 +364,73 @@ function BarrasComparacion({ actual, anterior, metaCal, animado }) {
   )
 }
 
+const ICONO_LOGRO = {
+  barbell: IconBarbell, flame: IconFlame, calendar: IconCalendarCheck, trophy: IconTrophy,
+  meat: IconMeat, target: IconTarget, notebook: IconNotebook, droplet: IconDroplet, scale: IconScale,
+}
+// Bronce, plata, oro, diamante, leyenda
+const COLOR_NIVEL = ['#c98a5a', '#cbd5e1', '#fbbf24', '#67e8f9', '#c084fc']
+
+function TarjetaLogro({ l, i, entrar }) {
+  const Icono    = ICONO_LOGRO[l.icono] ?? IconTrophy
+  const ganado   = l.nivel > 0
+  const medalla  = ganado ? COLOR_NIVEL[l.nivel - 1] : 'var(--label-4)'
+  const maximo   = l.siguiente == null
+  return (
+    <div
+      className={`nf-card${entrar ? ' nf-enter' : ''}${l.nuevo ? ' nf-logro-nuevo' : ''}`}
+      style={{
+        padding: '14px', animationDelay: `${i * 40}ms`,
+        '--tint': l.color,
+        boxShadow: l.nuevo ? `inset 0 0 0 1px ${l.color}99, 0 0 24px ${l.color}40` : undefined,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+        {/* Ícono dentro de una medalla: el anillo toma el color del nivel */}
+        <span style={{
+          width: '40px', height: '40px', borderRadius: '50%',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: ganado ? `${l.color}22` : 'rgba(255,255,255,0.04)',
+          boxShadow: `inset 0 0 0 2px ${medalla}`,
+          opacity: ganado ? 1 : 0.55,
+        }}>
+          <Icono size={20} color={ganado ? l.color : 'var(--label-3)'} strokeWidth={1.9} />
+        </span>
+        {l.nuevo
+          ? <span className='nf-badge' style={{ '--tint': l.color }}>¡Nuevo!</span>
+          : ganado && <span className='nf-badge' style={{ '--tint': medalla }}>{l.nivel_nombre}</span>}
+      </div>
+      <p style={{ fontSize: '15px', fontWeight: 700, letterSpacing: '-0.01em', color: ganado ? 'var(--label)' : 'var(--label-2)' }}>{l.titulo}</p>
+      <p className='nf-caption' style={{ minHeight: '32px', marginBottom: '8px' }}>
+        {maximo ? `Nivel máximo · ${l.descripcion}` : `Siguiente: ${l.descripcion}`}
+      </p>
+      <div style={{ height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '2px', overflow: 'hidden', marginBottom: '4px' }}>
+        <div style={{
+          height: '100%', width: '100%', borderRadius: '2px', background: ganado || l.progreso > 0 ? l.color : 'transparent',
+          transform: `scaleX(${l.progreso})`, transformOrigin: 'left',
+          transition: 'transform 700ms var(--ease-out) 200ms',
+        }} />
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
+        <p className='nf-caption nf-num' style={{ fontWeight: 600 }}>
+          {maximo ? `${l.valor} ${l.unidad}` : `${l.valor} / ${l.siguiente} ${l.unidad}`}
+        </p>
+        {/* Un punto por nivel, del color de su medalla cuando ya se ganó */}
+        <span role='img' aria-label={`Nivel ${l.nivel} de ${l.niveles.length}`} style={{ display: 'flex', gap: '3px', flexShrink: 0 }}>
+          {l.niveles.map((_, n) => (
+            <span key={n} style={{ width: '5px', height: '5px', borderRadius: '50%', background: n < l.nivel ? COLOR_NIVEL[n] : 'rgba(255,255,255,0.14)' }} />
+          ))}
+        </span>
+      </div>
+    </div>
+  )
+}
+
 function Logros({ logros, entrar }) {
   if (!logros || !logros.length) return null
   return (
-    <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', margin: '0 -16px', padding: '2px 16px 4px', scrollSnapType: 'x mandatory' }}>
-      {logros.map((l, i) => (
-        <div key={l.id} className={`nf-card${entrar ? ' nf-enter' : ''}`} style={{
-          flexShrink: 0, padding: '14px', width: '132px', textAlign: 'center', scrollSnapAlign: 'start',
-          boxShadow: `inset 0 0 0 0.5px ${l.color}40`, animationDelay: `${i * 50}ms`,
-        }}>
-          <IconTrophy size={26} color={l.color} style={{ margin: '0 auto 6px', display: 'block' }} />
-          <p style={{ fontSize: '14px', fontWeight: 700, color: l.color, marginBottom: '3px' }}>{l.titulo}</p>
-          <p className='nf-caption'>{l.desc}</p>
-        </div>
-      ))}
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '10px' }}>
+      {logros.map((l, i) => <TarjetaLogro key={l.clave} l={l} i={i} entrar={entrar} />)}
     </div>
   )
 }
@@ -635,6 +689,7 @@ function ErrorCarga({ onRetry }) {
 // ── Componente principal ──────────────────────────────────────────────────
 export default function ProgressScreen({ t, screen }) {
   const [data,       setData]       = useState(null)
+  const [logros,     setLogros]     = useState([])
   const [cargando,   setCargando]   = useState(true)
   const [error,      setError]      = useState(false)
   const [nuevoPeso,  setNuevoPeso]  = useState('')
@@ -644,7 +699,24 @@ export default function ProgressScreen({ t, screen }) {
   const [seccion,    setSeccion]    = useState('semana')
   const entrar = useEntrada(screen === 'progress')
 
+  // Lo recién ganado se celebra una vez: aviso + vibración, y el servidor lo
+  // marca como visto. El brillo en la tarjeta se queda mientras la pantalla siga abierta.
+  const cargarLogros = () =>
+    getLogros()
+      .then(d => {
+        setLogros(d.logros)
+        const nuevos = d.logros.filter(l => l.nuevo)
+        if (!nuevos.length) return
+        haptic(30)
+        toast.success(nuevos.length === 1
+          ? `¡Nuevo logro! ${nuevos[0].titulo} · ${nuevos[0].nivel_nombre}`
+          : `¡Ganaste ${nuevos.length} logros nuevos!`)
+        marcarLogrosVistos().catch(() => {})
+      })
+      .catch(() => {})
+
   const cargar = () => {
+    cargarLogros()
     setCargando(prev => prev || !data)
     getProgresoCompleto()
       .then(d => { setData(d); setError(false) })
@@ -677,6 +749,7 @@ export default function ProgressScreen({ t, screen }) {
       toast.success(`${kg} kg registrados`)
       const d = await getProgresoCompleto()
       setData(d)
+      cargarLogros()
     } catch { toast.error('Error al guardar el peso.') }
     finally { setGuardando(false) }
   }
@@ -688,7 +761,6 @@ export default function ProgressScreen({ t, screen }) {
   const proyeccion     = data?.proyeccion      ?? null
   const score          = data?.score_semanal   ?? 0
   const desglose       = data?.desglose_score  ?? null
-  const logros         = data?.logros          ?? []
   const metaCal        = data?.metas?.calorias ?? 1900
   const pesoObjetivo   = data?.peso_objetivo   ?? null
 
@@ -871,7 +943,12 @@ export default function ProgressScreen({ t, screen }) {
 
           {logros.length > 0 && (
             <section>
-              <h2 className='nf-section-label' style={{ marginTop: '12px' }}>Logros desbloqueados</h2>
+              <h2 className='nf-section-label' style={{ marginTop: '12px', display: 'flex', justifyContent: 'space-between' }}>
+                <span>Logros</span>
+                <span className='nf-num' style={{ textTransform: 'none', letterSpacing: 0 }}>
+                  {logros.reduce((n, l) => n + l.nivel, 0)} de {logros.reduce((n, l) => n + l.niveles.length, 0)} niveles
+                </span>
+              </h2>
               <Logros logros={logros} entrar={entrar} />
             </section>
           )}
