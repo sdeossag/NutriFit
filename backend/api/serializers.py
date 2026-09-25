@@ -4,6 +4,7 @@ import io
 from PIL import Image, ImageOps
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from .models import Comida, SesionGym, EjercicioLog, PesoCorporal, AlimentoAlacena, MensajeChat, SesionChat
 
 User = get_user_model()
@@ -16,6 +17,9 @@ User = get_user_model()
 class UsuarioSerializer(serializers.ModelSerializer):
     avatar_display = serializers.SerializerMethodField()
     edad           = serializers.SerializerMethodField()
+    # Cómo salieron las calorías (gasto, mínimo seguro y si se tuvo que aplicar)
+    calculo_metas  = serializers.SerializerMethodField()
+    peso_actual    = serializers.SerializerMethodField()
 
     class Meta:
         model  = User
@@ -24,10 +28,10 @@ class UsuarioSerializer(serializers.ModelSerializer):
             'avatar_url', 'avatar_display',
             'bio', 'idioma',
             # Metas
-            'meta_calorias', 'meta_proteina', 'meta_carbos', 'meta_grasas',
+            'meta_calorias', 'meta_proteina', 'meta_carbos', 'meta_grasas', 'calculo_metas',
             # Datos físicos
             'sexo', 'fecha_nacimiento', 'edad', 'estatura_cm',
-            'peso_inicial_kg', 'peso_objetivo_kg',
+            'peso_inicial_kg', 'peso_actual', 'peso_objetivo_kg',
             # Objetivo
             'objetivo', 'velocidad_objetivo', 'nivel_actividad',
             # Preferencias
@@ -44,8 +48,20 @@ class UsuarioSerializer(serializers.ModelSerializer):
     def get_edad(self, obj):
         return obj.get_edad()
 
+    def get_calculo_metas(self, obj):
+        return obj.calculo_metas()
+
+    def get_peso_actual(self, obj):
+        return obj.peso_actual()
+
 
 class MetasSerializer(serializers.ModelSerializer):
+    # Metas editadas a mano: mismos límites que en la app, también si llega por la API
+    meta_calorias = serializers.IntegerField(min_value=1200, max_value=6000)
+    meta_proteina = serializers.IntegerField(min_value=20, max_value=400)
+    meta_carbos   = serializers.IntegerField(min_value=0, max_value=900)
+    meta_grasas   = serializers.IntegerField(min_value=20, max_value=300)
+
     class Meta:
         model  = User
         fields = ['meta_calorias', 'meta_proteina', 'meta_carbos', 'meta_grasas']
@@ -127,14 +143,22 @@ class ObjetivoSerializer(serializers.ModelSerializer):
     Edita objetivo, velocidad, datos físicos y nivel de actividad.
     Al guardar recalcula las metas automáticamente.
     """
+    # El peso de hoy: queda en el historial, que es de donde sale el cálculo
+    peso_actual = serializers.FloatField(min_value=30, max_value=300, required=False, write_only=True)
+
     class Meta:
         model  = User
         fields = [
             'objetivo', 'velocidad_objetivo', 'nivel_actividad',
-            'estatura_cm', 'peso_inicial_kg', 'peso_objetivo_kg',
+            'estatura_cm', 'peso_inicial_kg', 'peso_actual', 'peso_objetivo_kg',
         ]
 
     def update(self, instance, validated_data):
+        peso = validated_data.pop('peso_actual', None)
+        if peso and peso != instance.peso_actual():
+            PesoCorporal.objects.update_or_create(
+                usuario=instance, fecha=timezone.localdate(), defaults={'peso_kg': peso},
+            )
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()

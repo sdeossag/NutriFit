@@ -147,7 +147,7 @@ function PantallaGenerando({ nombre }) {
 
 // ── Pantalla del plan listo ──────────────────────────────────────────────────
 
-function PantallaPlan({ plan, calorias, proteina, carbos, grasas, onEntrar }) {
+function PantallaPlan({ plan, calorias, proteina, carbos, grasas, enElMinimo, onEntrar }) {
   return (
     <div style={{ minHeight: 'var(--app-h)', padding: 'calc(var(--safe-top) + 32px) 20px calc(var(--safe-bottom) + 24px)', display: 'flex', flexDirection: 'column' }}>
       <div className='nf-enter' style={{ textAlign: 'center', marginBottom: '24px' }}>
@@ -173,6 +173,11 @@ function PantallaPlan({ plan, calorias, proteina, carbos, grasas, onEntrar }) {
         ))}
       </div>
       <p className='nf-caption' style={{ textAlign: 'center', marginBottom: '8px' }}>Tu meta diaria</p>
+      {enElMinimo && (
+        <p className='nf-caption nf-enter' style={{ textAlign: 'center', color: 'var(--orange)', margin: '0 12px 16px', animationDelay: '120ms' }}>
+          Es lo mínimo seguro para ti: con menos perderías músculo y energía. Bajarás un poco más lento, pero sin rebote.
+        </p>
+      )}
 
       {plan?.alimentos?.length > 0 && (
         <>
@@ -325,6 +330,12 @@ export default function OnboardingScreen({ usuario, onComplete }) {
     }
   }
 
+  // Mismo ritmo que usa el servidor: un porcentaje del peso por semana
+  const ritmoPerdida = (pct) => {
+    const kg = parseFloat(datos.peso_inicial_kg) * pct / 100
+    return kg ? `~${kg.toLocaleString('es-CO', { maximumFractionDigits: 1 })} kg/sem` : `${pct} % de tu peso por semana`
+  }
+
   if (fase === 'generando') return <PantallaGenerando nombre={usuario.first_name} />
 
   if (fase === 'plan' && plan) {
@@ -335,6 +346,7 @@ export default function OnboardingScreen({ usuario, onComplete }) {
         proteina={usuarioActualizado?.meta_proteina}
         carbos={usuarioActualizado?.meta_carbos}
         grasas={usuarioActualizado?.meta_grasas}
+        enElMinimo={usuarioActualizado?.calculo_metas?.limitada}
         onEntrar={() => onComplete(usuarioActualizado)}
       />
     )
@@ -437,9 +449,9 @@ export default function OnboardingScreen({ usuario, onComplete }) {
           <>
             <Titulo sub='El ritmo con el que quieres llegar a tu meta'>¿A qué velocidad?</Titulo>
             {[
-              { val: 'suave',    label: 'Suave',    emoji: '🐢', desc: datos.objetivo === 'perder' ? '~0.25 kg/sem' : '+0.25 kg/sem', extra: 'Más sostenible' },
-              { val: 'moderado', label: 'Moderado', emoji: '🏃', desc: datos.objetivo === 'perder' ? '~0.5 kg/sem'  : '+0.4 kg/sem',  extra: 'Recomendado' },
-              { val: 'agresivo', label: 'Agresivo', emoji: '🚀', desc: datos.objetivo === 'perder' ? '~1 kg/sem'    : '+0.5 kg/sem',  extra: 'Requiere disciplina' },
+              { val: 'suave',    label: 'Suave',    emoji: '🐢', desc: datos.objetivo === 'perder' ? ritmoPerdida(0.25) : 'Casi sin grasa extra', extra: 'Más sostenible' },
+              { val: 'moderado', label: 'Moderado', emoji: '🏃', desc: datos.objetivo === 'perder' ? ritmoPerdida(0.5)  : 'Buen equilibrio',      extra: 'Recomendado' },
+              { val: 'agresivo', label: 'Agresivo', emoji: '🚀', desc: datos.objetivo === 'perder' ? ritmoPerdida(0.8)  : 'Más rápido, algo más de grasa', extra: 'Requiere disciplina' },
             ].map(({ val, label, emoji, desc, extra }) => (
               <Opcion key={val} activa={datos.velocidad_objetivo === val} emoji={emoji} label={label} desc={`${desc} · ${extra}`} onClick={() => elegir('velocidad_objetivo', val)} />
             ))}

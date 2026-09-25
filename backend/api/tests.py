@@ -158,6 +158,61 @@ class MetasTests(Base):
         u.calcular_metas()
         self.assertEqual(u.meta_proteina, 160)  # 2 g/kg con 80 kg, no con 90
 
+    def perfil(self, sexo, nacimiento, cm, kg, actividad, objetivo, velocidad='moderado', meta_kg=None):
+        u = self.user
+        u.sexo, u.fecha_nacimiento, u.estatura_cm, u.peso_inicial_kg = sexo, nacimiento, cm, kg
+        u.nivel_actividad, u.objetivo, u.velocidad_objetivo, u.peso_objetivo_kg = actividad, objetivo, velocidad, meta_kg
+        u.save()
+        with en(HOY):
+            u.calcular_metas()
+            return u, u.calculo_metas()
+
+    def assertMacrosCuadran(self, u):
+        por_macros = 4 * u.meta_proteina + 4 * u.meta_carbos + 9 * u.meta_grasas
+        self.assertAlmostEqual(por_macros, u.meta_calorias, delta=8)
+
+    def test_nunca_baja_del_minimo_seguro(self):
+        # Antes: 1.449 − 750 = 699 kcal
+        u, calculo = self.perfil('F', date(1996, 1, 1), 155, 55, 'sedentario', 'perder', 'agresivo')
+        self.assertEqual(u.meta_calorias, 1210)          # su gasto en reposo (1.208), redondeado
+        self.assertTrue(calculo['limitada'])
+        self.assertMacrosCuadran(u)
+
+    def test_deficit_segun_el_peso_de_la_persona(self):
+        chica, _ = self.perfil('F', date(1996, 1, 1), 165, 60, 'moderado', 'perder')
+        deficit_chica = chica.calculo_metas()['gasto'] - chica.meta_calorias
+        grande, _ = self.perfil('M', date(1996, 1, 1), 180, 100, 'moderado', 'perder')
+        deficit_grande = grande.calculo_metas()['gasto'] - grande.meta_calorias
+        self.assertAlmostEqual(deficit_chica, 330, delta=10)    # 0,5 % de 60 kg por semana
+        self.assertAlmostEqual(deficit_grande, 550, delta=10)   # 0,5 % de 100 kg por semana
+
+    def test_sobrepeso_proteina_realista_y_macros_que_cuadran(self):
+        # Antes: 240 g de proteína (67 % de las calorías) y macros que sumaban 1.517 de 1.427
+        u, calculo = self.perfil('F', date(1981, 1, 1), 160, 120, 'sedentario', 'perder', 'agresivo')
+        self.assertEqual(u.meta_calorias, 1810)          # no baja de su gasto en reposo (1.814)
+        self.assertEqual(u.meta_proteina, 138)           # 2 g/kg de 69 kg (IMC 27), no de 120
+        self.assertMacrosCuadran(u)
+
+    def test_ganar_es_un_porcentaje_del_gasto(self):
+        u, calculo = self.perfil('M', date(2000, 1, 1), 175, 70, 'activo', 'ganar')
+        self.assertEqual(u.meta_calorias, round(calculo['gasto'] * 1.10 / 10) * 10)
+        self.assertFalse(calculo['limitada'])
+        self.assertMacrosCuadran(u)
+
+    def test_metas_a_mano_con_limites_en_el_servidor(self):
+        r = self.api.patch('/api/auth/perfil/metas/', {'meta_calorias': 400}, format='json')
+        self.assertEqual(r.status_code, 400)
+
+    def test_peso_actual_desde_ajustes_queda_en_el_historial_y_recalcula(self):
+        u, _ = self.perfil('M', date(1995, 1, 1), 175, 90, 'moderado', 'mantener')
+        PesoCorporal.objects.create(usuario=u, peso_kg=90, fecha=date(2026, 9, 1))
+        with en(HOY):
+            r = self.api.patch('/api/auth/perfil/objetivo/', {'peso_actual': 80}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data['peso_actual'], 80)
+        self.assertEqual(r.data['meta_proteina'], 160)
+        self.assertTrue(PesoCorporal.objects.filter(usuario=u, fecha=HOY, peso_kg=80).exists())
+
 
 class ProgresoTests(Base):
     def test_logros_y_score_con_sesiones_reales(self):

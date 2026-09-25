@@ -26,6 +26,24 @@ function Section({ label, footer, children }) {
   )
 }
 
+// De dónde salen las calorías, dicho en una línea. Si la meta quedó en el mínimo
+// seguro, se explica por qué: es mejor saberlo que ver un número "raro".
+function NotaMetas({ calculo, objetivo, meta }) {
+  if (!calculo) return null
+  const kcal = (n) => Math.abs(n).toLocaleString('es-CO')
+  const actual = Number(meta) || calculo.calorias
+  // Si la editó a mano, la explicación del mínimo ya no aplica
+  const enElMinimo = calculo.limitada && actual === calculo.calorias
+  const texto = enElMinimo
+    ? `Tu meta quedó en ${kcal(actual)} kcal, lo mínimo seguro para ti: por debajo perderías músculo y energía. Vas a bajar a un ritmo un poco más lento, pero sostenible.`
+    : objetivo === 'perder' ? `Gastas unas ${kcal(calculo.gasto)} kcal al día; tu meta te deja un déficit de ${kcal(calculo.gasto - actual)} kcal.`
+    : objetivo === 'ganar'  ? `Gastas unas ${kcal(calculo.gasto)} kcal al día; tu meta suma ${kcal(actual - calculo.gasto)} kcal para construir músculo.`
+    : `Gastas unas ${kcal(calculo.gasto)} kcal al día según tu edad, tamaño y actividad.`
+  return (
+    <p className='nf-caption' style={{ margin: '8px 16px 0', color: enElMinimo ? 'var(--orange)' : undefined }}>{texto}</p>
+  )
+}
+
 function Row({ icon, tint, label, children }) {
   return (
     <div className='nf-row' style={{ '--row-inset': icon ? '60px' : '16px' }}>
@@ -123,7 +141,7 @@ export default function ProfileScreen({ setUsuario, onLogout, lang, setLang }) {
   const [metas,    setMetas]    = useState({ meta_calorias: 1900, meta_proteina: 140, meta_carbos: 200, meta_grasas: 55 })
   const [objetivo, setObjetivo] = useState({
     objetivo: 'mantener', velocidad_objetivo: 'moderado', nivel_actividad: 'moderado',
-    estatura_cm: null, peso_inicial_kg: null, peso_objetivo_kg: null,
+    estatura_cm: null, peso_actual: null, peso_objetivo_kg: null,
   })
 
   // Ajustes → Alimentación: página abierta y si se está volviendo (para animar hacia atrás)
@@ -151,7 +169,7 @@ export default function ProfileScreen({ setUsuario, onLogout, lang, setLang }) {
         velocidad_objetivo: u.velocidad_objetivo || 'moderado',
         nivel_actividad:    u.nivel_actividad    || 'moderado',
         estatura_cm:        u.estatura_cm        || '',
-        peso_inicial_kg:    u.peso_inicial_kg    || '',
+        peso_actual:        u.peso_actual ?? u.peso_inicial_kg ?? '',
         peso_objetivo_kg:   u.peso_objetivo_kg   || '',
       })
     } catch { toast.error('No se pudo cargar el perfil') }
@@ -186,7 +204,7 @@ export default function ProfileScreen({ setUsuario, onLogout, lang, setLang }) {
       const payload = {
         ...objetivo,
         estatura_cm:      objetivo.estatura_cm      ? Number(objetivo.estatura_cm)      : null,
-        peso_inicial_kg:  objetivo.peso_inicial_kg  ? Number(objetivo.peso_inicial_kg)  : null,
+        peso_actual:      objetivo.peso_actual      ? Number(objetivo.peso_actual)      : undefined,
         peso_objetivo_kg: objetivo.peso_objetivo_kg ? Number(objetivo.peso_objetivo_kg) : null,
       }
       const updated = await actualizarObjetivo(payload)
@@ -396,10 +414,10 @@ export default function ProfileScreen({ setUsuario, onLogout, lang, setLang }) {
       </Section>
 
       {/* ── Datos físicos ── */}
-      <Section label='Datos físicos'>
+      <Section label='Datos físicos' footer='Si cambias tu peso actual, queda registrado con fecha de hoy en tu progreso.'>
         {[
           { key: 'estatura_cm',      label: 'Estatura',      unit: 'cm', color: 'var(--blue)',   icon: <IconRuler  size={18} />, min: 100, max: 250 },
-          { key: 'peso_inicial_kg',  label: 'Peso actual',   unit: 'kg', color: 'var(--green)',  icon: <IconWeight size={18} />, min: 30,  max: 300 },
+          { key: 'peso_actual',      label: 'Peso actual',   unit: 'kg', color: 'var(--green)',  icon: <IconWeight size={18} />, min: 30,  max: 300 },
           { key: 'peso_objetivo_kg', label: 'Peso objetivo', unit: 'kg', color: 'var(--orange)', icon: <IconTarget size={18} />, min: 30,  max: 300 },
         ].map(({ key, label, unit, color, icon, min, max }) => (
           <Row key={key} icon={icon} tint={color} label={label}>
@@ -455,6 +473,7 @@ export default function ProfileScreen({ setUsuario, onLogout, lang, setLang }) {
           </Row>
         ))}
       </div>
+      <NotaMetas calculo={perfil?.calculo_metas} objetivo={perfil?.objetivo} meta={perfil?.meta_calorias} />
 
       {/* ── Preferencias ── */}
       <Section label='Alimentación' footer='Bruce usa esto en tu plan del día, el chat y las recetas.'>

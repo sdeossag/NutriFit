@@ -10,6 +10,20 @@ import uuid
 #  USUARIO (AUTH_USER_MODEL)
 # ──────────────────────────────────────────────
 
+# ── Cálculo de metas ──────────────────────────────────────────────────────────
+FACTOR_ACTIVIDAD = {
+    'sedentario': 1.2, 'ligero': 1.375, 'moderado': 1.55, 'activo': 1.725, 'muy_activo': 1.9,
+}
+# Perder: cuánto del peso corporal por semana (%). Así el ritmo escala con la persona:
+# "moderado" son ~0,45 kg/sem con 90 kg y ~0,28 kg/sem con 55 kg.
+PERDIDA_SEMANAL_PCT = {'suave': 0.25, 'moderado': 0.5, 'agresivo': 0.8}
+DEFICIT_MAXIMO = 0.25          # nunca más del 25 % del gasto del día
+# Ganar: superávit sobre el gasto. Más de ~15 % suma sobre todo grasa.
+SUPERAVIT_PCT = {'suave': 0.05, 'moderado': 0.10, 'agresivo': 0.15}
+# Piso de seguridad al perder peso, además del gasto en reposo
+CALORIAS_MINIMAS = {'M': 1500, 'F': 1200}
+
+
 class Usuario(AbstractUser):
     """
     Usuario personalizado.
@@ -104,59 +118,72 @@ class Usuario(AbstractUser):
         ultimo = self.pesos.order_by('-fecha').values_list('peso_kg', flat=True).first()
         return ultimo or self.peso_inicial_kg
 
-    def calcular_tdee(self):
-        """
-        Calcula el TDEE usando Harris-Benedict revisado (Mifflin-St Jeor).
-        Devuelve None si faltan datos.
-        """
-        edad    = self.get_edad()
-        peso    = self.peso_actual()
-        estatura = self.estatura_cm
-
-        if not all([edad, peso, estatura, self.sexo, self.nivel_actividad]):
+    def calcular_tmb(self):
+        """Gasto en reposo con Mifflin-St Jeor. None si faltan datos."""
+        edad, peso, estatura = self.get_edad(), self.peso_actual(), self.estatura_cm
+        if not all([edad, peso, estatura, self.sexo]):
             return None
+        return 10 * peso + 6.25 * estatura - 5 * edad + (5 if self.sexo == 'M' else -161)
 
-        if self.sexo == 'M':
-            tmb = 10 * peso + 6.25 * estatura - 5 * edad + 5
+    def calcular_tdee(self):
+        """Gasto del día: reposo × nivel de actividad. None si faltan datos."""
+        tmb = self.calcular_tmb()
+        if not tmb or not self.nivel_actividad:
+            return None
+        return round(tmb * FACTOR_ACTIVIDAD.get(self.nivel_actividad, 1.55))
+
+    def peso_referencia(self):
+        """Peso para calcular proteína y grasa. Con sobrepeso, 2 g por kg del peso
+        total da cantidades imposibles de comer (240 g con 120 kg), así que se topa
+        en el peso de un IMC de 27, o en el peso objetivo si es mayor."""
+        peso = self.peso_actual() or 70
+        if not self.estatura_cm:
+            return peso
+        tope = 27 * (self.estatura_cm / 100) ** 2
+        return min(peso, max(tope, self.peso_objetivo_kg or 0))
+
+    def calculo_metas(self):
+        """Cómo salen las calorías, paso a paso. None si faltan datos."""
+        tmb, gasto = self.calcular_tmb(), self.calcular_tdee()
+        if not gasto:
+            return None
+        velocidad = self.velocidad_objetivo or 'moderado'
+        minimo, limitada = None, False
+
+        if self.objetivo == 'perder':
+            # Déficit según lo que la persona pesa: 1 kg de grasa ≈ 7.700 kcal
+            deficit = self.peso_actual() * PERDIDA_SEMANAL_PCT.get(velocidad, 0.5) / 100 * 7700 / 7
+            deficit = min(deficit, gasto * DEFICIT_MAXIMO)
+            calorias = gasto - deficit
+            # Nunca por debajo del gasto en reposo ni del mínimo seguro
+            minimo = min(gasto, max(CALORIAS_MINIMAS.get(self.sexo, 1200), tmb))
+            if calorias < minimo:
+                calorias, limitada = minimo, True
+        elif self.objetivo == 'ganar':
+            calorias = gasto * (1 + SUPERAVIT_PCT.get(velocidad, 0.10))
         else:
-            tmb = 10 * peso + 6.25 * estatura - 5 * edad - 161
+            calorias = gasto
 
-        factores = {
-            'sedentario': 1.2,
-            'ligero':     1.375,
-            'moderado':   1.55,
-            'activo':     1.725,
-            'muy_activo': 1.9,
+        return {
+            'reposo': round(tmb), 'gasto': gasto, 'calorias': int(round(calorias / 10) * 10),
+            'minimo': round(minimo) if minimo else None, 'limitada': limitada,
         }
-        return round(tmb * factores.get(self.nivel_actividad, 1.55))
 
     def calcular_metas(self):
         """
-        Calcula y guarda las metas nutricionales según TDEE + objetivo.
-        Llama a este método al finalizar el onboarding.
+        Calcula y guarda las metas nutricionales según el gasto y el objetivo.
+        Se llama al terminar el onboarding y al editar el objetivo.
         """
-        tdee = self.calcular_tdee()
-        if not tdee:
+        calculo = self.calculo_metas()
+        if not calculo:
             return
+        calorias = calculo['calorias']
+        ref = self.peso_referencia()
 
-        ajuste = {
-            ('perder',   'suave'):    -250,
-            ('perder',   'moderado'): -500,
-            ('perder',   'agresivo'): -750,
-            ('mantener', 'suave'):    0,
-            ('mantener', 'moderado'): 0,
-            ('mantener', 'agresivo'): 0,
-            ('ganar',    'suave'):    250,
-            ('ganar',    'moderado'): 400,
-            ('ganar',    'agresivo'): 500,
-        }.get((self.objetivo, self.velocidad_objetivo), 0)
-
-        calorias = tdee + ajuste
-
-        # Macros: proteína alta (2g/kg), grasas 25%, resto carbos
-        peso = self.peso_actual() or 70
-        proteina = round(peso * 2)
-        grasas   = round(calorias * 0.25 / 9)
+        # Proteína alta (2 g/kg) pero nunca más del 35 % de las calorías;
+        # grasa 25 % con un piso de 0,6 g/kg; el resto, carbohidratos.
+        proteina = round(min(ref * 2, calorias * 0.35 / 4))
+        grasas   = round(max(calorias * 0.25 / 9, ref * 0.6))
         carbos   = round((calorias - proteina * 4 - grasas * 9) / 4)
 
         self.meta_calorias = calorias
