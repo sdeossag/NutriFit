@@ -1319,6 +1319,10 @@ def _contexto_semana(user, hoy):
     pesos = list(PesoCorporal.objects.filter(usuario=user, fecha__gte=hoy - timedelta(days=21)).order_by('fecha').values_list('peso_kg', flat=True))
     if len(pesos) >= 2:
         lineas.append(f'• Peso últimas 3 semanas: de {pesos[0]} a {pesos[-1]} kg ({pesos[-1] - pesos[0]:+.1f} kg).')
+    from .gasto_real import texto_ajuste, ultimo_ajuste
+    ajuste = ultimo_ajuste(user)
+    if ajuste:
+        lineas.append(f'• Gasto real (ajuste del {ajuste.fecha:%d/%m}): {texto_ajuste(ajuste)}')
 
     rutinas_hoy = list(RutinaDia.objects.filter(usuario=user, dia_semana=hoy.weekday()).values_list('rutina__nombre', flat=True))
     lineas.append(f'• Rutina de hoy: {", ".join(rutinas_hoy) if rutinas_hoy else "descanso"}.')
@@ -1551,11 +1555,13 @@ def progreso_completo(request):
 
     # ── Proyección lineal de peso ─────────────────────────────────────────
     proyeccion = None
-    pesos_recientes = [p for p in pesos if p['peso_kg']][-14:]
-    if len(pesos_recientes) >= 2:
-        n      = len(pesos_recientes)
-        delta  = (pesos_recientes[-1]['peso_kg'] - pesos_recientes[0]['peso_kg']) / max(n - 1, 1)
-        ultimo = pesos_recientes[-1]['peso_kg']
+    # Tendencia en kg por DÍA (recta por los pesajes de las últimas 4 semanas),
+    # no por pesaje: quien se pesa cada 5 días no debe ver la tendencia ×5
+    from .gasto_real import _pendiente
+    recientes = [p for p in pesos_qs if p.peso_kg and p.fecha >= hoy - timedelta(days=28)]
+    if len(recientes) >= 2 and (recientes[-1].fecha - recientes[0].fecha).days >= 3:
+        delta  = _pendiente([((p.fecha - recientes[0].fecha).days, p.peso_kg) for p in recientes])
+        ultimo = recientes[-1].peso_kg
         peso_obj = user.peso_objetivo_kg
 
         proyeccion_puntos = []

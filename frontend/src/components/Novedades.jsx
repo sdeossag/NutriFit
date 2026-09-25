@@ -12,7 +12,7 @@ import { marcarNovedadesVistas, novedadesPendientes } from '../utils/novedades'
 
 const NOVEDADES = [
   { icono: IconScale, tint: 'var(--orange)', titulo: 'Metas que se ajustan contigo',
-    texto: 'Tus calorías nunca bajan de un mínimo seguro y el ritmo depende de tu peso. Cuando bajas o subes 2 kg, las metas se reajustan solas y te avisamos. El agua ahora va según tu peso.' },
+    texto: 'Tus calorías nunca bajan de un mínimo seguro y el ritmo depende de tu peso. Cuando bajas o subes 2 kg se reajustan solas, y cada domingo Bruce mira lo que comiste y cómo va tu peso para calcular cuánto gastas de verdad y afinar tu meta. El agua ahora va según tu peso.' },
   { icono: IconSparkles, tint: 'var(--green)', titulo: 'Bruce arma tu semana',
     texto: 'Dile qué días entrenas, cuánto tiempo tienes, dónde y tu nivel, y te arma las rutinas según tu objetivo.' },
   { icono: IconBarbell, tint: 'var(--orange)', titulo: 'Rutinas a tu manera',

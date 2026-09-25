@@ -1,6 +1,6 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
-from . import ejercicios, logros, notificaciones, plan, rutinas, views
+from . import ejercicios, gasto_real, logros, notificaciones, plan, rutinas, views
 
 urlpatterns = [
     # ───────────────────────── AUTH ─────────────────────────
@@ -17,6 +17,7 @@ urlpatterns = [
     path('auth/perfil/metas/',          views.actualizar_metas,     name='perfil-metas'),
     path('auth/perfil/preferencias/',   views.actualizar_preferencias, name='perfil-preferencias'),
     path('auth/perfil/objetivo/',       views.actualizar_objetivo,  name='perfil-objetivo'),
+    path('metas/gasto-real/',           gasto_real.estado,          name='gasto-real'),
 
     # ────────────────────── ONBOARDING ──────────────────────
     path('onboarding/',                 views.completar_onboarding, name='onboarding'),

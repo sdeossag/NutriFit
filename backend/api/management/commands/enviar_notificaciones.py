@@ -8,6 +8,7 @@ import time
 from django.core.management.base import BaseCommand
 from django.db import close_old_connections
 
+from api.gasto_real import revisar_semana
 from api.notificaciones import revisar_todos
 
 
@@ -20,6 +21,10 @@ class Command(BaseCommand):
     def handle(self, *args, cada=0, **opciones):
         while True:
             try:
+                # Los domingos primero se ajusta el gasto, para que el resumen lo cuente
+                ajustados = revisar_semana()
+                if ajustados:
+                    self.stdout.write(f'metas ajustadas por gasto real: {ajustados}')
                 enviadas = revisar_todos()
                 self.stdout.write(f'notificaciones enviadas: {enviadas}')
             except Exception as e:  # un error no debe tumbar el proceso

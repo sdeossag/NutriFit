@@ -2,9 +2,9 @@ import { useState, useEffect, useRef } from 'react'
 import {
   IconTrendingDown, IconTrendingUp, IconBarbell, IconToolsKitchen2,
   IconInfoCircle, IconChevronRight, IconRefresh, IconTrophy,
-  IconFlame, IconCalendarCheck, IconMeat, IconTarget, IconNotebook, IconDroplet, IconScale,
+  IconFlame, IconCalendarCheck, IconMeat, IconTarget, IconNotebook, IconDroplet, IconScale, IconCircleCheckFilled,
 } from '@tabler/icons-react'
-import { registrarPeso, getProgresoCompleto, getHistorialEjercicios, getLogros, marcarLogrosVistos } from '../api'
+import { registrarPeso, getProgresoCompleto, getHistorialEjercicios, getLogros, marcarLogrosVistos, getGastoReal } from '../api'
 import Segmented from '../components/Segmented'
 import { toast } from '../lib/toast'
 import { haptic, useEntrada } from '../lib/motion'
@@ -33,6 +33,89 @@ function BruceAvatar({ size = 38 }) {
 
 function Label({ children, style }) {
   return <p className='nf-footnote' style={{ fontWeight: 600, marginBottom: '8px', ...style }}>{children}</p>
+}
+
+// ── Gasto real ────────────────────────────────────────────────────────────
+// Lo que Bruce aprende de tus datos: cuánto gastas de verdad frente a la fórmula.
+// Mientras faltan datos, muestra qué falta (progreso, no un número inventado).
+const kcal = (n) => Math.round(n).toLocaleString('es-CO')
+const diaCorto = (iso) => new Date(`${iso}T12:00`).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric' })
+
+function Requisito({ label, valor, meta, animado }) {
+  const listo = valor >= meta
+  return (
+    <div style={{ marginBottom: '10px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px', gap: '8px' }}>
+        <span className='nf-footnote' style={{ display: 'flex', alignItems: 'center', gap: '5px', color: listo ? 'var(--label)' : undefined }}>
+          {listo && <IconCircleCheckFilled size={15} color={C.green} />} {label}
+        </span>
+        <span className='nf-caption nf-num'>{Math.min(valor, meta)}/{meta}</span>
+      </div>
+      <div style={{ height: '6px', borderRadius: '3px', background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+        <div style={{
+          height: '100%', borderRadius: '3px', background: listo ? C.green : C.blue,
+          transform: `scaleX(${animado ? Math.min(valor / meta, 1) : 0})`, transformOrigin: 'left',
+          transition: 'transform 600ms var(--ease-out)',
+        }} />
+      </div>
+    </div>
+  )
+}
+
+function GastoReal({ info, animado }) {
+  if (!info) return null
+  const e = info.estimacion
+  const ultimo = info.ultimo
+  const proximo = diaCorto(info.proximo_ajuste)
+
+  if (!e.listo && !ultimo) {
+    return (
+      <>
+        <Label style={{ marginBottom: '4px' }}>Tu gasto real</Label>
+        <p className='nf-footnote' style={{ marginBottom: '14px' }}>
+          La fórmula es un punto de partida. Con lo que comes y tus pesajes, Bruce calcula cuánto gastas de verdad y ajusta tu meta cada domingo.
+        </p>
+        <Requisito label='Días con comida registrada' valor={e.dias_comida} meta={e.dias_comida_min} animado={animado} />
+        <Requisito label='Pesajes' valor={e.pesajes} meta={e.pesajes_min} animado={animado} />
+        <Requisito label='Días entre el primer y el último pesaje' valor={e.dias_pesajes} meta={e.dias_pesajes_min} animado={animado} />
+        <p className='nf-caption' style={{ marginTop: '4px' }}>Cuenta lo de las últimas 3 semanas.</p>
+      </>
+    )
+  }
+
+  // Número actual si hay datos; si no, el del último ajuste
+  const gasto   = e.listo ? e.gasto_real : ultimo.gasto_real
+  const formula = e.listo ? e.gasto_formula : ultimo.gasto_formula
+  const comio   = e.listo ? e.ingesta_media : ultimo.ingesta_media
+  const ritmo   = e.listo ? e.cambio_kg_semana : ultimo.cambio_kg_semana
+  const diff    = gasto - formula
+  const cambioMeta = ultimo && ultimo.calorias_despues !== ultimo.calorias_antes
+
+  return (
+    <>
+      <Label style={{ marginBottom: '4px' }}>Tu gasto real</Label>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginBottom: '4px' }}>
+        <span className='nf-num' style={{ fontSize: '32px', fontWeight: 700, letterSpacing: '-0.03em', lineHeight: 1 }}>~{kcal(gasto)}</span>
+        <span className='nf-footnote'>kcal/día</span>
+      </div>
+      <p className='nf-footnote' style={{ marginBottom: '10px' }}>
+        {Math.abs(diff) < 50
+          ? `Igual a lo que decía la fórmula (${kcal(formula)}).`
+          : `${kcal(Math.abs(diff))} kcal ${diff > 0 ? 'más' : 'menos'} que la fórmula (${kcal(formula)}).`}
+        {' '}Comiste en promedio {kcal(comio)} kcal y tu peso va {ritmo > 0 ? '+' : ''}{ritmo.toLocaleString('es-CO')} kg por semana.
+      </p>
+      {cambioMeta && (
+        <p className='nf-footnote' style={{ color: 'var(--label)', marginBottom: '6px' }}>
+          El {diaCorto(ultimo.fecha)} tu meta pasó de {kcal(ultimo.calorias_antes)} a <strong>{kcal(ultimo.calorias_despues)} kcal</strong>.
+        </p>
+      )}
+      <p className='nf-caption'>
+        {info.metas_manuales
+          ? 'Tus metas están ajustadas a mano, así que no las muevo solo.'
+          : `Próxima revisión: ${proximo}. Los cambios son graduales.`}
+      </p>
+    </>
+  )
 }
 
 // ── Score semanal ─────────────────────────────────────────────────────────
@@ -697,6 +780,7 @@ export default function ProgressScreen({ t, screen }) {
   const [animado,    setAnimado]    = useState(false)
   const [vistaRacha, setVistaRacha] = useState('gym')
   const [seccion,    setSeccion]    = useState('semana')
+  const [gastoReal,  setGastoReal]  = useState(null)
   const entrar = useEntrada(screen === 'progress')
 
   // Lo recién ganado se celebra una vez: aviso + vibración, y el servidor lo
@@ -715,8 +799,11 @@ export default function ProgressScreen({ t, screen }) {
       })
       .catch(() => {})
 
+  const cargarGasto = () => getGastoReal().then(setGastoReal).catch(() => {})
+
   const cargar = () => {
     cargarLogros()
+    cargarGasto()
     setCargando(prev => prev || !data)
     getProgresoCompleto()
       .then(d => { setData(d); setError(false) })
@@ -760,6 +847,7 @@ export default function ProgressScreen({ t, screen }) {
       const d = await getProgresoCompleto()
       setData(d)
       cargarLogros()
+      cargarGasto()
     } catch { toast.error('Error al guardar el peso.') }
     finally { setGuardando(false) }
   }
@@ -950,6 +1038,12 @@ export default function ProgressScreen({ t, screen }) {
             </div>
             <GraficoPeso pesos={pesos} proyeccion={proyeccion} pesoObjetivo={pesoObjetivo} animado={animado} />
           </section>
+
+          {gastoReal && (
+            <section {...enter(240)}>
+              <GastoReal info={gastoReal} animado={animado} />
+            </section>
+          )}
 
           {logros.length > 0 && (
             <section>

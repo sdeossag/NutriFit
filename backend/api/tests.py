@@ -5,6 +5,7 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from . import estadisticas
@@ -811,3 +812,98 @@ class ChatPlanTests(Base):
             r = self.api.post(f'/api/chat/{self.chat.id}/mensaje/', {'mensaje': 'otra cena'}, format='json')
         self.assertEqual(len(r.data['mensaje_bruce']['acciones']), 1)
         self.assertIn('Arepa con huevo', r.data['mensaje_bruce']['contenido'])
+
+
+class GastoRealTests(Base):
+    """El gasto real sale de lo que come y de cómo se mueve el peso."""
+
+    def setUp(self):
+        super().setUp()
+        u = self.user
+        u.sexo, u.fecha_nacimiento, u.estatura_cm, u.peso_inicial_kg = 'M', date(1996, 1, 1), 175, 80
+        u.nivel_actividad, u.objetivo, u.velocidad_objetivo = 'moderado', 'mantener', 'moderado'
+        u.save()
+        with en(HOY):
+            u.calcular_metas()          # fórmula: ~2.710 kcal
+
+    def datos(self, kcal, kg_por_semana=0.0, dias=21, pesajes=(0, 7, 14, 20)):
+        hasta = HOY - timedelta(days=1)
+        for i in range(dias):
+            Comida.objects.create(usuario=self.user, nombre='x', calorias=kcal, fecha=hasta - timedelta(days=i))
+        for d in pesajes:
+            fecha = hasta - timedelta(days=20 - d)
+            PesoCorporal.objects.create(usuario=self.user, fecha=fecha, peso_kg=80 + kg_por_semana * d / 7)
+
+    def test_come_menos_de_lo_que_dice_la_formula_y_no_baja(self):
+        from .gasto_real import ajustar
+        self.datos(2400)                                     # peso estable comiendo 2.400
+        with en(HOY):
+            ajuste = ajustar(self.user, HOY)
+        self.assertEqual(ajuste.gasto_real, 2400)
+        self.assertEqual(ajuste.calorias_antes, 2710)
+        self.assertLess(self.user.factor_gasto, 1)
+        self.assertAlmostEqual(ajuste.calorias_despues, 2610, delta=10)   # de a poco, no de golpe a 2.400
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.meta_calorias, ajuste.calorias_despues)
+
+    def test_si_baja_comiendo_eso_gasta_mas(self):
+        from .gasto_real import estimar
+        self.datos(2400, kg_por_semana=-0.5)
+        e = estimar(self.user, HOY)
+        self.assertAlmostEqual(e['gasto_real'], 2950, delta=5)           # 2.400 + 0,5 kg × 7.700 / 7
+        self.assertEqual(e['cambio_kg_semana'], -0.5)
+
+    def test_faltan_datos_dice_cuantos(self):
+        from .gasto_real import ajustar, estimar
+        self.datos(2400, dias=6, pesajes=(0, 20))
+        e = estimar(self.user, HOY)
+        self.assertFalse(e['listo'])
+        self.assertEqual((e['dias_comida'], e['pesajes']), (6, 2))
+        self.assertIsNone(ajustar(self.user, HOY))
+
+    def test_dias_casi_vacios_no_cuentan(self):
+        from .gasto_real import estimar
+        self.datos(2400, dias=12)
+        Comida.objects.create(usuario=self.user, nombre='solo un café', calorias=80, fecha=HOY - timedelta(days=15))
+        self.assertEqual(estimar(self.user, HOY)['dias_comida'], 12)
+
+    def test_metas_manuales_no_se_mueven(self):
+        from .gasto_real import ajustar
+        self.api.patch('/api/auth/perfil/metas/', {'meta_calorias': 2500}, format='json')
+        self.datos(2000)
+        self.user.refresh_from_db()
+        ajuste = ajustar(self.user, HOY)
+        self.assertEqual((ajuste.calorias_antes, ajuste.calorias_despues), (2500, 2500))
+        self.assertLess(self.user.factor_gasto, 1)       # igual se aprende, para cuando vuelva a automáticas
+
+    def test_corre_los_domingos_una_sola_vez(self):
+        from datetime import datetime
+        from .gasto_real import revisar_semana
+        from .models import AjusteGasto
+        domingo = HOY + timedelta(days=5)
+        self.datos(2400)
+        tz = timezone.get_current_timezone()
+        self.assertEqual(revisar_semana(datetime(2026, 9, 26, 10, tzinfo=tz)), 0)   # sábado
+        with en(domingo):
+            self.assertEqual(revisar_semana(datetime(2026, 9, 27, 5, tzinfo=tz)), 0)   # muy temprano
+            self.assertEqual(revisar_semana(datetime(2026, 9, 27, 7, tzinfo=tz)), 1)
+            self.assertEqual(revisar_semana(datetime(2026, 9, 27, 7, 10, tzinfo=tz)), 0)
+        self.assertEqual(AjusteGasto.objects.count(), 1)
+
+    def test_endpoint_para_la_tarjeta(self):
+        self.datos(2400, dias=8, pesajes=(0, 14))
+        with en(HOY):
+            r = self.api.get('/api/metas/gasto-real/')
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(r.data['estimacion']['listo'])
+        self.assertEqual(r.data['proximo_ajuste'], '2026-09-27')
+        self.assertIsNone(r.data['ultimo'])
+
+    def test_tendencia_de_peso_por_dia_no_por_pesaje(self):
+        # Pesándose cada 7 días y bajando 0,5 kg por semana: la tendencia es −0,5, no −3,5
+        for semanas in range(4):
+            PesoCorporal.objects.create(usuario=self.user, fecha=HOY - timedelta(days=21 - 7 * semanas),
+                                        peso_kg=80 - 0.5 * semanas)
+        with en(HOY):
+            r = self.api.get('/api/progreso-completo/')
+        self.assertEqual(r.data['proyeccion']['tendencia_kg_semana'], -0.5)

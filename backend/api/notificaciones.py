@@ -356,6 +356,13 @@ def pendientes(user, ahora):
         situacion = (f"Resumen de la semana: gym {dias_gym} de {planeados} días planeados; registró comida {len(totales)} de 7 días; "
                      f"cumplió la proteína {prot_ok} de 7 días; peso {cambio_peso}. Resalta lo mejor y lo que más debe mejorar.")
         respaldo = f"Gym {dias_gym} de {planeados} días y proteína cumplida {prot_ok} de 7. Toca para ver en qué mejorar la próxima."
+        from .gasto_real import texto_ajuste, ultimo_ajuste
+        ajuste = ultimo_ajuste(user, dias=0)
+        if ajuste:
+            situacion += f" Ajuste de hoy: {texto_ajuste(ajuste)} Menciónalo en una frase si la meta cambió."
+            if ajuste.calorias_despues != ajuste.calorias_antes:
+                respaldo = (f"Gym {dias_gym} de {planeados} días. Con tus datos reales tu meta pasa a "
+                            f"{ajuste.calorias_despues} kcal. Toca para ver por qué.")
         lista.append(('resumen', f'resumen:{hoy}', titulo, situacion, respaldo, 'progreso'))
 
     return lista[:cupo]

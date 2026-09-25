@@ -185,6 +185,7 @@ export const logEjercicio      = (data)   => post('/ejercicios/log/', data)
 export const getProgresoSemanal  = ()     => get('/progreso/')
 export const getProgresoCompleto = ()     => get('/progreso-completo/')
 export const registrarPeso       = (data) => post('/peso/', data)
+export const getGastoReal        = ()     => get('/metas/gasto-real/')
 
 // ── Alacena ───────────────────────────────────────────────────────────────────
 

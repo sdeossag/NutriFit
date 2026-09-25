@@ -48,6 +48,8 @@ class Usuario(AbstractUser):
     # la persona las editó a mano (entonces no se tocan solas)
     peso_metas_kg  = models.FloatField(null=True, blank=True)
     metas_manuales = models.BooleanField(default=False)
+    # Corrección del gasto de la fórmula según los datos reales (ver gasto_real.py)
+    factor_gasto   = models.FloatField(default=1.0)
 
     # ── Datos físicos ──────────────────────────────────────────────────────────
     SEXO_CHOICES = [('M', 'Masculino'), ('F', 'Femenino')]
@@ -150,9 +152,11 @@ class Usuario(AbstractUser):
 
     def calculo_metas(self):
         """Cómo salen las calorías, paso a paso. None si faltan datos."""
-        tmb, gasto = self.calcular_tmb(), self.calcular_tdee()
-        if not gasto:
+        tmb, formula = self.calcular_tmb(), self.calcular_tdee()
+        if not formula:
             return None
+        # La fórmula, corregida con lo que dicen sus pesos y comidas
+        gasto = round(formula * (self.factor_gasto or 1.0))
         velocidad = self.velocidad_objetivo or 'moderado'
         minimo, limitada = None, False
 
@@ -171,7 +175,8 @@ class Usuario(AbstractUser):
             calorias = gasto
 
         return {
-            'reposo': round(tmb), 'gasto': gasto, 'calorias': int(round(calorias / 10) * 10),
+            'reposo': round(tmb), 'gasto': gasto, 'gasto_formula': formula,
+            'calorias': int(round(calorias / 10) * 10),
             'minimo': round(minimo) if minimo else None, 'limitada': limitada,
         }
 
@@ -229,6 +234,25 @@ class Usuario(AbstractUser):
 
     def __str__(self):
         return self.email or self.username
+
+
+class AjusteGasto(models.Model):
+    """El ajuste semanal del gasto: qué dijeron los datos y cómo quedó la meta."""
+    usuario          = models.ForeignKey(Usuario, on_delete=models.CASCADE, related_name='ajustes_gasto')
+    fecha            = models.DateField()
+    ingesta_media    = models.IntegerField()
+    cambio_kg_semana = models.FloatField()
+    gasto_formula    = models.IntegerField()
+    gasto_real       = models.IntegerField()
+    factor           = models.FloatField()
+    calorias_antes   = models.IntegerField()
+    calorias_despues = models.IntegerField()
+    dias_comida      = models.IntegerField()
+    pesajes          = models.IntegerField()
+
+    class Meta:
+        ordering = ['-fecha']
+        constraints = [models.UniqueConstraint(fields=['usuario', 'fecha'], name='ajuste_gasto_unico_por_dia')]
 
 
 # ──────────────────────────────────────────────
