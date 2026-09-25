@@ -20,6 +20,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
     # Cómo salieron las calorías (gasto, mínimo seguro y si se tuvo que aplicar)
     calculo_metas  = serializers.SerializerMethodField()
     peso_actual    = serializers.SerializerMethodField()
+    meta_agua_ml   = serializers.SerializerMethodField()
 
     class Meta:
         model  = User
@@ -29,6 +30,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
             'bio', 'idioma',
             # Metas
             'meta_calorias', 'meta_proteina', 'meta_carbos', 'meta_grasas', 'calculo_metas',
+            'meta_agua_ml', 'metas_manuales',
             # Datos físicos
             'sexo', 'fecha_nacimiento', 'edad', 'estatura_cm',
             'peso_inicial_kg', 'peso_actual', 'peso_objetivo_kg',
@@ -54,6 +56,9 @@ class UsuarioSerializer(serializers.ModelSerializer):
     def get_peso_actual(self, obj):
         return obj.peso_actual()
 
+    def get_meta_agua_ml(self, obj):
+        return obj.meta_agua_ml()
+
 
 class MetasSerializer(serializers.ModelSerializer):
     # Metas editadas a mano: mismos límites que en la app, también si llega por la API
@@ -65,6 +70,11 @@ class MetasSerializer(serializers.ModelSerializer):
     class Meta:
         model  = User
         fields = ['meta_calorias', 'meta_proteina', 'meta_carbos', 'meta_grasas']
+
+    def update(self, instance, validated_data):
+        # Si las ajusta a mano, cambiar de peso ya no las recalcula solas
+        instance.metas_manuales = True
+        return super().update(instance, validated_data)
 
 
 def _avatar_a_data_url(archivo, lado=256):

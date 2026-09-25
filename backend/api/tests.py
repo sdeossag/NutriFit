@@ -199,6 +199,36 @@ class MetasTests(Base):
         self.assertFalse(calculo['limitada'])
         self.assertMacrosCuadran(u)
 
+    def test_bajar_2_kg_reajusta_las_metas_y_avisa(self):
+        u, _ = self.perfil('M', date(1995, 1, 1), 175, 90, 'moderado', 'perder')
+        antes = u.meta_calorias
+        with en(HOY):
+            poco = self.api.post('/api/peso/', {'peso_kg': 89}, format='json')
+            self.assertIsNone(poco.data['metas_ajustadas'])          # 1 kg: todavía no
+            r = self.api.post('/api/peso/', {'peso_kg': 87.5}, format='json')
+        ajuste = r.data['metas_ajustadas']
+        self.assertEqual((ajuste['antes'], ajuste['cambio_kg']), (antes, -2.5))
+        self.assertLess(ajuste['despues'], antes)
+        u.refresh_from_db()
+        self.assertEqual((u.meta_calorias, u.peso_metas_kg), (ajuste['despues'], 87.5))
+
+    def test_metas_editadas_a_mano_no_se_tocan_al_pesarse(self):
+        u, _ = self.perfil('M', date(1995, 1, 1), 175, 90, 'moderado', 'perder')
+        self.api.patch('/api/auth/perfil/metas/', {'meta_calorias': 2300}, format='json')
+        with en(HOY):
+            r = self.api.post('/api/peso/', {'peso_kg': 85}, format='json')
+        self.assertIsNone(r.data['metas_ajustadas'])
+        u.refresh_from_db()
+        self.assertEqual(u.meta_calorias, 2300)
+
+    def test_meta_de_agua_segun_el_peso(self):
+        u, _ = self.perfil('M', date(1995, 1, 1), 175, 77, 'moderado', 'mantener')
+        self.assertEqual(u.meta_agua_ml(), 2750)                 # 35 ml × 77 kg
+        u, _ = self.perfil('F', date(1995, 1, 1), 160, 55, 'activo', 'mantener')
+        self.assertEqual(u.meta_agua_ml(), 2500)                 # 1.925 + 500 por entrenar
+        with en(HOY):
+            self.assertEqual(self.api.get('/api/resumen/').data['meta_agua_ml'], 2500)
+
     def test_metas_a_mano_con_limites_en_el_servidor(self):
         r = self.api.patch('/api/auth/perfil/metas/', {'meta_calorias': 400}, format='json')
         self.assertEqual(r.status_code, 400)

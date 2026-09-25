@@ -742,11 +742,21 @@ export default function ProgressScreen({ t, screen }) {
     }
     setGuardando(true)
     try {
-      await registrarPeso({ peso_kg: kg })
+      const r = await registrarPeso({ peso_kg: kg })
       setNuevoPeso('')
       document.activeElement?.blur?.()
       haptic()
-      toast.success(`${kg} kg registrados`)
+      // Si el peso se movió 2 kg o más, el servidor reajustó las metas: se cuenta qué cambió
+      const a = r?.metas_ajustadas
+      if (a) {
+        const num = (n) => Math.abs(n).toLocaleString('es-CO')
+        toast.success(
+          `${a.cambio_kg < 0 ? 'Bajaste' : 'Subiste'} ${num(a.cambio_kg)} kg desde tu último ajuste. Tu meta pasa de ${num(a.antes)} a ${num(a.despues)} kcal.`,
+          { duration: 6500 },
+        )
+      } else {
+        toast.success(`${kg} kg registrados`)
+      }
       const d = await getProgresoCompleto()
       setData(d)
       cargarLogros()

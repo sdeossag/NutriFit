@@ -18,7 +18,8 @@ import bruceFace from '../assets/bruce-face.webp'
 
 const hoyISO = () => new Date().toLocaleDateString('en-CA')
 const colorConfianza = { alta: 'var(--green)', media: 'var(--orange)', baja: 'var(--red)' }
-const META_AGUA_ML = 2500
+// Si el servidor no la manda (versión vieja), la meta de antes
+const META_AGUA_POR_DEFECTO = 2500
 const RAPIDOS = [200, 350, 500, 750]
 
 const ALACENA_INICIAL = [
@@ -307,6 +308,7 @@ export default function FoodScreen({ screen }) {
 
   // Agua
   const [aguaMl,        setAguaMl]        = useState(0)
+  const [metaAgua,      setMetaAgua]      = useState(META_AGUA_POR_DEFECTO)   // según tu peso
   const [aguaLogs,      setAguaLogs]      = useState([])   // [{ id, cantidad_ml }]
   const [termoMl,       setTermoMl]       = useState(() => parseInt(localStorage.getItem('nutrifit_termo_ml') || '0'))
   const [editandoTermo, setEditandoTermo] = useState(false)
@@ -326,6 +328,7 @@ export default function FoodScreen({ screen }) {
   const cargarAgua = () => {
     getAgua(hoyISO()).then(data => {
       setAguaMl(data.total_ml ?? 0)
+      if (data.meta_ml) setMetaAgua(data.meta_ml)
       setAguaLogs(data.registros ?? [])
     }).catch(() => {})
   }
@@ -502,7 +505,7 @@ export default function FoodScreen({ screen }) {
   const cerrarModal = () => { setModal('closed'); setSeleccionado(null); setFormEditar(null) }
   const volverAAlacena = () => { setModal('alacena'); setSeleccionado(null); setFormEditar(null) }
 
-  const pctAgua = Math.min(aguaMl / META_AGUA_ML, 1)
+  const pctAgua = Math.min(aguaMl / metaAgua, 1)
   const aguaCompleta = pctAgua >= 1
 
   const tituloModal = { alacena: 'Mi alacena', porciones: 'Agregar', editar: 'Editar alimento' }[modal] ?? ''
@@ -637,7 +640,7 @@ export default function FoodScreen({ screen }) {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
             <span className='nf-num' style={{ fontSize: '15px', fontWeight: 700, color: aguaCompleta ? 'var(--green)' : 'var(--cyan)' }}>
-              {+(aguaMl / 1000).toFixed(2)} / {META_AGUA_ML / 1000} L
+              {+(aguaMl / 1000).toFixed(2)} / {metaAgua / 1000} L
             </span>
             {aguaLogs.length > 0 && (
               <button onClick={deshacerUltimoAgua} className='nf-icon-btn nf-icon-btn--sm' aria-label='Deshacer último registro de agua'>

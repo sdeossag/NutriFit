@@ -576,6 +576,7 @@ def resumen_hoy(request):
         'comidas':      ComidaSerializer(comidas, many=True).data,
         'racha_gym':    racha_gym,
         'agua_ml':      agua_ml,
+        'meta_agua_ml': user.meta_agua_ml(),
         'racha_comida': racha_comida,
         'es_dia_descanso': hoy.weekday() in descanso,
         'objetivo':     getattr(user, 'objetivo', 'mantener'),
@@ -800,7 +801,9 @@ def registrar_peso(request):
         fecha=datos.get('fecha') or timezone.localdate(),
         defaults={'peso_kg': datos['peso_kg']},
     )
-    return Response(PesoCorporalSerializer(peso).data, status=status.HTTP_201_CREATED)
+    # Con 2 kg de diferencia las metas quedan viejas: se reajustan y se avisa
+    ajuste = request.user.revisar_metas_por_peso()
+    return Response({**PesoCorporalSerializer(peso).data, 'metas_ajustadas': ajuste}, status=status.HTTP_201_CREATED)
 
 
 # ──────────────────────────────────────────────
@@ -1745,6 +1748,7 @@ def agua(request):
         return Response({
             'fecha':    fecha.isoformat(),
             'total_ml': total_ml,
+            'meta_ml':  user.meta_agua_ml(),
             'registros': [{'id': r.id, 'cantidad_ml': r.cantidad_ml} for r in registros],
         })
 

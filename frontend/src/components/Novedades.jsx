@@ -5,12 +5,14 @@
 import { useState } from 'react'
 import {
   IconSparkles, IconBarbell, IconBooks, IconToolsKitchen2, IconMessageCircle,
-  IconSalad, IconBell, IconTrophy, IconShieldCheck,
+  IconSalad, IconBell, IconTrophy, IconShieldCheck, IconScale,
 } from '@tabler/icons-react'
 import Sheet from './Sheet'
 import { marcarNovedadesVistas, novedadesPendientes } from '../utils/novedades'
 
 const NOVEDADES = [
+  { icono: IconScale, tint: 'var(--orange)', titulo: 'Metas que se ajustan contigo',
+    texto: 'Tus calorías nunca bajan de un mínimo seguro y el ritmo depende de tu peso. Cuando bajas o subes 2 kg, las metas se reajustan solas y te avisamos. El agua ahora va según tu peso.' },
   { icono: IconSparkles, tint: 'var(--green)', titulo: 'Bruce arma tu semana',
     texto: 'Dile qué días entrenas, cuánto tiempo tienes, dónde y tu nivel, y te arma las rutinas según tu objetivo.' },
   { icono: IconBarbell, tint: 'var(--orange)', titulo: 'Rutinas a tu manera',
@@ -31,6 +33,7 @@ const NOVEDADES = [
 
 const NOTAS = [
   'Activa otra vez las notificaciones en Ajustes → Notificaciones: cambiamos cómo se envían y hay que darles permiso de nuevo.',
+  'Si tu meta de calorías estaba por debajo de lo seguro, la subimos. Si ajustaste tus metas a mano, se respetan y no cambian solas.',
   'Tus rutinas siguen como estaban. Solo las cuentas nuevas empiezan sin rutinas para que Bruce les arme la suya.',
   'La sesión ya no se cierra sola cada pocas horas y tu foto de perfil queda guardada en tu cuenta.',
   'Las rachas respetan tus días de descanso y las sesiones del gym se marcan completas bien.',

@@ -41,9 +41,6 @@ def _numero(n, texto):
     return texto
 
 
-META_AGUA_ML = 2500
-
-
 def _definiciones(objetivo):
     """(clave, título, descripción con {n}, unidad, ícono, color, niveles)."""
     base = [
@@ -54,7 +51,7 @@ def _definiciones(objetivo):
         ('proteina',         'Proteína al día',   '{n} días cumpliendo tu proteína',      'días',     'meat',     '#60a5fa', [1, 7, 30, 100]),
         ('calorias',         'En el objetivo',    '{n} días dentro de tu meta de calorías', 'días',   'target',   '#2dd4bf', [3, 14, 50, 100]),
         ('registro',         'Sin fallar',        '{n} días seguidos registrando comidas', 'días',    'notebook', '#f472b6', [3, 7, 30, 100]),
-        ('agua',             'Bien hidratado',    '{n} días tomando 2.5 L de agua',       'días',     'droplet',  '#22d3ee', [3, 14, 50]),
+        ('agua',             'Bien hidratado',    '{n} días cumpliendo tu meta de agua',       'días',     'droplet',  '#22d3ee', [3, 14, 50]),
     ]
     if objetivo == 'perder':
         base.append(('peso', 'Transformación', '{n} kg menos desde que empezaste', 'kg', 'scale', '#4ade80', [1, 3, 5, 10]))
@@ -105,7 +102,7 @@ def metricas(user, hoy):
 
     dias_agua = (
         RegistroAgua.objects.filter(usuario=user, fecha__lte=hoy).values('fecha')
-        .annotate(total=Sum('cantidad_ml')).filter(total__gte=META_AGUA_ML).count()
+        .annotate(total=Sum('cantidad_ml')).filter(total__gte=user.meta_agua_ml()).count()
     )
 
     # Récord: superar el peso máximo que se había levantado antes en ese ejercicio

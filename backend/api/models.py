@@ -22,6 +22,8 @@ DEFICIT_MAXIMO = 0.25          # nunca más del 25 % del gasto del día
 SUPERAVIT_PCT = {'suave': 0.05, 'moderado': 0.10, 'agresivo': 0.15}
 # Piso de seguridad al perder peso, además del gasto en reposo
 CALORIAS_MINIMAS = {'M': 1500, 'F': 1200}
+# Cuánto tiene que cambiar el peso para reajustar las metas solas
+CAMBIO_PESO_METAS_KG = 2
 
 
 class Usuario(AbstractUser):
@@ -42,6 +44,10 @@ class Usuario(AbstractUser):
     meta_proteina = models.IntegerField(default=0)
     meta_carbos   = models.IntegerField(default=0)
     meta_grasas   = models.IntegerField(default=0)
+    # Con qué peso se calcularon (para reajustarlas cuando el peso cambie) y si
+    # la persona las editó a mano (entonces no se tocan solas)
+    peso_metas_kg  = models.FloatField(null=True, blank=True)
+    metas_manuales = models.BooleanField(default=False)
 
     # ── Datos físicos ──────────────────────────────────────────────────────────
     SEXO_CHOICES = [('M', 'Masculino'), ('F', 'Femenino')]
@@ -190,11 +196,36 @@ class Usuario(AbstractUser):
         self.meta_proteina = proteina
         self.meta_carbos   = max(carbos, 50)   # mínimo 50g
         self.meta_grasas   = grasas
+        self.peso_metas_kg = self.peso_actual()
+        self.metas_manuales = False
         self.onboarding_completo = True
         self.save(update_fields=[
             'meta_calorias', 'meta_proteina', 'meta_carbos', 'meta_grasas',
-            'onboarding_completo',
+            'peso_metas_kg', 'metas_manuales', 'onboarding_completo',
         ])
+
+    def revisar_metas_por_peso(self):
+        """Si el peso cambió 2 kg o más desde el último cálculo, recalcula las
+        metas. Devuelve qué cambió (para avisarle a la persona) o None."""
+        if self.metas_manuales or not self.calculo_metas():
+            return None
+        base = self.peso_metas_kg or self.peso_inicial_kg
+        peso = self.peso_actual()
+        if not base or abs(peso - base) < CAMBIO_PESO_METAS_KG:
+            return None
+        antes = self.meta_calorias
+        self.calcular_metas()
+        if self.meta_calorias == antes:
+            return None
+        return {'antes': antes, 'despues': self.meta_calorias,
+                'cambio_kg': round(peso - base, 1), 'proteina': self.meta_proteina}
+
+    def meta_agua_ml(self):
+        """~35 ml por kg (+500 si entrena casi a diario), en pasos de 250 ml."""
+        ml = 35 * (self.peso_actual() or 70)
+        if self.nivel_actividad in ('activo', 'muy_activo'):
+            ml += 500
+        return int(min(max(round(ml / 250) * 250, 1500), 4500))
 
     def __str__(self):
         return self.email or self.username

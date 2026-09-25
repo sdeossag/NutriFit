@@ -38,7 +38,6 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
-META_AGUA_ML = 2500
 VENTANA = timedelta(minutes=25)   # tolera que el proceso llegue unos minutos tarde
 
 AJUSTES_POR_DEFECTO = {
@@ -316,13 +315,14 @@ def pendientes(user, ahora):
             if not _toca(hora, ahora):
                 continue
             h = _hora(hora)
-            esperado = META_AGUA_ML * min(max((h.hour + h.minute / 60 - 7) / 14, 0), 1)   # de 7 a. m. a 9 p. m.
+            meta_agua = user.meta_agua_ml()
+            esperado = meta_agua * min(max((h.hour + h.minute / 60 - 7) / 14, 0), 1)   # de 7 a. m. a 9 p. m.
             falta = round(esperado - d['agua'])
             if falta < 250:
                 continue
             titulo = 'Agua'
             situacion = (f"Lleva {d['agua']} ml de agua; a esta hora debería llevar unos {round(esperado)} ml "
-                         f"(meta {META_AGUA_ML} ml). Le faltan ~{falta} ml para ir al día.")
+                         f"(meta {meta_agua} ml). Le faltan ~{falta} ml para ir al día.")
             respaldo = f"Vas en {d['agua'] / 1000:.1f} L. Un vaso grande ahora y quedas al día."
             lista.append(('agua', f'agua:{hora}:{hoy}', titulo, situacion, respaldo, 'agua'))
 
