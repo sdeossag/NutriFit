@@ -1546,8 +1546,23 @@ def progreso_completo(request):
             'gym':      dia in con_gym,
         })
 
-    semana_actual   = dias[-7:]
-    semana_anterior = dias[-14:-7]
+    # Semanas de calendario, de lunes a domingo: el lunes el score arranca de cero.
+    # Los días que todavía no llegan van marcados como futuros (sin datos).
+    lunes = hoy - timedelta(days=hoy.weekday())
+    por_fecha = {d['fecha']: d for d in dias}
+
+    def semana_desde(inicio):
+        semana = []
+        for i in range(7):
+            dia = inicio + timedelta(days=i)
+            semana.append(por_fecha.get(dia.isoformat()) or {
+                'fecha': dia.isoformat(), 'dia_sem': dia.weekday(), 'dia_abr': dia.strftime('%a'),
+                'calorias': 0, 'proteina': 0, 'gym': False, 'futuro': dia > hoy,
+            })
+        return semana
+
+    semana_actual   = semana_desde(lunes)
+    semana_anterior = semana_desde(lunes - timedelta(days=7))
 
     # ── Todos los pesos históricos ────────────────────────────────────────
     pesos_qs = PesoCorporal.objects.filter(usuario=user).order_by('fecha')
@@ -1630,6 +1645,7 @@ def progreso_completo(request):
             'dias_cal':      dias_cal,
             'dias_activos':  dias_activos,
             'dias_planeados': dias_planeados,
+            'dias_transcurridos': hoy.weekday() + 1,
             'pct_gym':       pct_gym,
             'pct_cal':       pct_cal,
             'pct_constancia': pct_constancia,

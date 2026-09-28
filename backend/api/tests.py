@@ -259,6 +259,26 @@ class ProgresoTests(Base):
         self.assertNotIn('10_sesiones', [l['id'] for l in r.data['logros']])
         self.assertIn('primera_sesion', [l['id'] for l in r.data['logros']])
 
+    def test_el_score_arranca_de_cero_cada_lunes(self):
+        domingo, lunes = date(2026, 9, 27), date(2026, 9, 28)
+        for i in range(6):                       # martes a domingo de la semana pasada
+            dia = domingo - timedelta(days=i)
+            self.sesion(dia)
+            Comida.objects.create(usuario=self.user, nombre='x', calorias=self.user.meta_calorias or 1900, fecha=dia)
+        with en(domingo):
+            r = self.api.get('/api/progreso-completo/')
+        self.assertGreater(r.data['score_semanal'], 60)
+        self.assertEqual(r.data['semana_actual'][0]['fecha'], '2026-09-21')
+
+        with en(lunes):
+            r = self.api.get('/api/progreso-completo/')
+        semana = r.data['semana_actual']
+        self.assertEqual(r.data['score_semanal'], 0)
+        self.assertEqual((semana[0]['fecha'], semana[-1]['fecha']), ('2026-09-28', '2026-10-04'))
+        self.assertEqual([d.get('futuro', False) for d in semana], [False] + [True] * 6)
+        self.assertEqual(r.data['semana_anterior'][0]['fecha'], '2026-09-21')   # de lunes a lunes
+        self.assertEqual(r.data['desglose_score']['dias_transcurridos'], 1)
+
     def test_progreso_no_hace_una_consulta_por_dia(self):
         for dias in range(30):
             Comida.objects.create(usuario=self.user, nombre='x', calorias=500, fecha=HOY - timedelta(days=dias))

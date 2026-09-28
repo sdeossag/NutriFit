@@ -419,7 +419,8 @@ function BarrasComparacion({ actual, anterior, metaCal, animado }) {
             const hAct = animado ? Math.max((d.calorias / maxVal) * H, d.calorias > 0 ? 5 : 0) : 0
             const hAnt = (animado && hayDatosAnteriores) ? Math.max((ant.calorias / maxVal) * H, ant.calorias > 0 ? 4 : 0) : 0
             const enMeta = d.calorias >= metaCal * 0.85 && d.calorias <= metaCal * 1.1
-            const esHoy  = i === actual.length - 1   // la semana son los últimos 7 días, hoy al final
+            // La semana va de lunes a domingo: hoy puede estar en cualquier posición
+            const esHoy  = d.fecha === fechaLocal()
             return (
               <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
                 <div style={{ width: '100%', display: 'flex', alignItems: 'flex-end', height: H, gap: '2px' }}>
@@ -435,7 +436,7 @@ function BarrasComparacion({ actual, anterior, metaCal, animado }) {
                     }}
                   />
                 </div>
-                <span className='nf-caption' style={{ color: esHoy ? 'var(--green)' : undefined, fontWeight: esHoy ? 700 : 500 }}>
+                <span className='nf-caption' style={{ color: esHoy ? 'var(--green)' : undefined, fontWeight: esHoy ? 700 : 500, opacity: d.futuro ? 0.45 : 1 }}>
                   {esHoy ? 'Hoy' : DIAS[d.dia_sem ?? i]}
                 </span>
               </div>
@@ -920,7 +921,10 @@ export default function ProgressScreen({ t, screen }) {
               <div>
                 <ScoreArc score={score} animado={animado} desglose={desglose} />
                 <p className='nf-caption' style={{ textAlign: 'center', marginTop: '2px', fontWeight: 600 }}>
-                  {score >= 80 ? 'Semana perfecta' : score >= 50 ? 'Buen ritmo' : 'Puedes mejorar'}
+                  {score >= 80 ? 'Semana perfecta'
+                    : score >= 50 ? 'Buen ritmo'
+                    : (desglose?.dias_transcurridos ?? 7) <= 2 ? 'Semana nueva'   // lunes y martes: recién empieza
+                    : 'Puedes mejorar'}
                 </p>
               </div>
               <AnillosFitness anillos={anillos} animado={animado} />
@@ -1003,7 +1007,9 @@ export default function ProgressScreen({ t, screen }) {
                   return (
                     <span key={i} style={{
                       aspectRatio: '1', borderRadius: '50%',
-                      background: activo ? C.green : 'rgba(255,255,255,0.08)',
+                      // Los días que no han llegado: solo el contorno
+                      background: activo ? C.green : d.futuro ? 'transparent' : 'rgba(255,255,255,0.08)',
+                      boxShadow: d.futuro ? 'inset 0 0 0 1px rgba(255,255,255,0.1)' : 'none',
                       transition: 'background-color 250ms ease',
                     }} />
                   )
