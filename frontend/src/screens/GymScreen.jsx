@@ -575,9 +575,12 @@ function RutinaEditor({ open, rutina, diasUso = [], pool, onSave, onClose, onEli
 // Se despliega bajo el encabezado del día (anclado a lo que se está cambiando).
 // Tocar una rutina la agrega o la quita de ese día (doble entreno: hasta 3);
 // intercambiar mueve los paquetes completos entre dos días.
-function PanelCambiar({ abierto, dow, plan, lib, sesionFija, onAlternar, onDescanso, onIntercambiar, onNueva }) {
+function PanelCambiar({ abierto, dow, plan, lib, sesionFija, onAlternar, onDescanso, onIntercambiar, onNueva, onEditar }) {
   const actuales = plan[dow] ?? []
   const rutinas  = Object.values(lib)
+  // Las que no están en ningún día no tienen tarjeta: sin esto no habría cómo editarlas ni borrarlas
+  const usadas   = new Set(Object.values(plan).flat())
+  const sueltas  = rutinas.filter(r => !usadas.has(r.id))
   const dia      = NOMBRES_DIA[dow]
   const plural   = dia.endsWith('s') ? dia : `${dia}s`
   return (
@@ -607,6 +610,26 @@ function PanelCambiar({ abierto, dow, plan, lib, sesionFija, onAlternar, onDesca
               <IconPlus size={15} /> Nueva rutina
             </button>
           </div>
+
+          {sueltas.length > 0 && (<>
+            <p className='nf-caption' style={{ fontWeight: 600, margin: '16px 0 8px' }}>
+              Sin día asignado <span style={{ fontWeight: 400 }}>· toca para editar o eliminar</span>
+            </p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              {sueltas.map(r => (
+                <button
+                  key={r.id}
+                  tabIndex={abierto ? 0 : -1}
+                  onClick={() => onEditar(r)}
+                  className='nf-chip'
+                  aria-label={`Editar ${r.nombre}`}
+                  style={{ '--tint': 'var(--label-2)' }}
+                >
+                  <span aria-hidden='true'>{r.emoji}</span> {r.nombre} <IconPencil size={13} aria-hidden='true' />
+                </button>
+              ))}
+            </div>
+          </>)}
 
           <p className='nf-caption' style={{ fontWeight: 600, margin: '16px 0 8px', display: 'flex', alignItems: 'center', gap: '5px' }}>
             <IconArrowsExchange size={14} /> Intercambiar con otro día
@@ -1348,6 +1371,7 @@ export default function GymScreen({ t, screen }) {
               onDescanso={dejarDescanso}
               onIntercambiar={intercambiarDias}
               onNueva={nuevaRutina}
+              onEditar={(r) => abrirEditor(r)}
             />
           </div>
         )}
