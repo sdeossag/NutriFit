@@ -19,6 +19,19 @@ const C = {
 }
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
+
+// La meta de calorías es un rango, no un mínimo: igual que el score del servidor,
+// un día cuenta si queda entre el 80 % y el 110 %. Pasarse no suma, se marca.
+const RANGO_MIN = 0.8
+const RANGO_MAX = 1.1
+const zonaCal = (cal, meta) =>
+  !cal ? 'sin' : cal > meta * RANGO_MAX ? 'sobre' : cal >= meta * RANGO_MIN ? 'rango' : 'bajo'
+const COLOR_ZONA = {
+  rango: 'rgba(74,222,128,0.75)',
+  sobre: 'rgba(249,115,22,0.8)',
+  bajo:  'rgba(74,222,128,0.28)',
+  sin:   'transparent',
+}
 const fechaLocal = (d = new Date()) => d.toLocaleDateString('en-CA')
 const DIAS = ['L', 'M', 'X', 'J', 'V', 'S', 'D']
 
@@ -177,7 +190,7 @@ function ScoreArc({ score, animado, desglose }) {
           <p className='nf-footnote' style={{ fontWeight: 600, marginBottom: '10px', color: 'var(--label)' }}>Cómo se calcula</p>
           {[
             { label: 'Gym (50%)',        val: desglose.dias_gym,     total: desglose.dias_planeados ?? 7, pts: desglose.pct_gym,        color: C.green  },
-            { label: 'Calorías (35%)',   val: desglose.dias_cal,     total: 7, pts: desglose.pct_cal,        color: C.blue   },
+            { label: 'Calorías en tu rango (35%)', val: desglose.dias_cal,     total: 7, pts: desglose.pct_cal,        color: C.blue   },
             { label: 'Constancia (15%)', val: desglose.dias_activos, total: 7, pts: desglose.pct_constancia, color: C.purple },
           ].map(({ label, val, total, pts, color }) => (
             <div key={label} style={{ marginBottom: '10px' }}>
@@ -253,12 +266,13 @@ function GridMensual({ dias, metaCal, animado }) {
 
   const colorDia = (d) => {
     if (!d) return 'transparent'
-    if (d.calorias === 0 && !d.gym) return 'rgba(255,255,255,0.05)'
-    if (d.gym && d.calorias >= metaCal * 0.8) return C.green
+    const zona = zonaCal(d.calorias, metaCal)
+    if (zona === 'sin' && !d.gym) return 'rgba(255,255,255,0.05)'
+    if (zona === 'sobre') return 'rgba(249,115,22,0.55)'     // pasarse no cuenta como cumplir
+    if (d.gym && zona === 'rango') return C.green
     if (d.gym) return 'rgba(74,222,128,0.5)'
-    if (d.calorias >= metaCal * 0.8) return 'rgba(74,222,128,0.28)'
-    if (d.calorias > 0) return 'rgba(74,222,128,0.14)'
-    return 'rgba(255,255,255,0.05)'
+    if (zona === 'rango') return 'rgba(74,222,128,0.28)'
+    return 'rgba(74,222,128,0.12)'
   }
 
   return (
@@ -286,9 +300,10 @@ function GridMensual({ dias, metaCal, animado }) {
       </div>
       <div style={{ display: 'flex', gap: '12px', marginTop: '12px', flexWrap: 'wrap' }}>
         {[
-          { color: C.green,                 label: 'Gym + meta cal' },
+          { color: C.green,                 label: 'Gym + en tu rango' },
           { color: 'rgba(74,222,128,0.5)',  label: 'Solo gym' },
-          { color: 'rgba(74,222,128,0.28)', label: 'Solo meta cal' },
+          { color: 'rgba(74,222,128,0.28)', label: 'En tu rango' },
+          { color: 'rgba(249,115,22,0.55)', label: 'Te pasaste' },
           { color: 'rgba(255,255,255,0.05)', label: 'Sin datos' },
         ].map(({ color, label }) => (
           <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
@@ -389,9 +404,11 @@ function GraficoPeso({ pesos, proyeccion, pesoObjetivo, animado }) {
 
 function BarrasComparacion({ actual, anterior, metaCal, animado }) {
   const hayDatosAnteriores = anterior.some(d => d.calorias > 0 || d.gym)
-  const maxVal = Math.max(...actual.map(d => d.calorias), ...anterior.map(d => d.calorias), metaCal, 1)
+  const maxVal = Math.max(...actual.map(d => d.calorias), ...anterior.map(d => d.calorias), metaCal * RANGO_MAX * 1.08, 1)
   const H = 88
-  const metaY = (metaCal / maxVal) * H
+  const metaY  = (metaCal / maxVal) * H
+  const rangoY = [metaCal * RANGO_MIN, metaCal * RANGO_MAX].map(v => (v / maxVal) * H)
+  const hayExceso = actual.some(d => zonaCal(d.calorias, metaCal) === 'sobre')
 
   return (
     <div>
@@ -406,9 +423,20 @@ function BarrasComparacion({ actual, anterior, metaCal, animado }) {
             <span className='nf-caption' style={{ color: 'var(--label-2)' }}>Semana anterior</span>
           </div>
         )}
+        {hayExceso && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: COLOR_ZONA.sobre }} />
+            <span className='nf-caption' style={{ color: 'var(--label-2)' }}>Te pasaste</span>
+          </div>
+        )}
       </div>
       <div style={{ position: 'relative' }}>
-        {/* Línea de meta */}
+        {/* Tu rango (80–110 %) como franja, con la meta punteada adentro */}
+        <div aria-hidden='true' style={{
+          position: 'absolute', left: 0, right: 0,
+          bottom: `${24 + rangoY[0]}px`, height: `${rangoY[1] - rangoY[0]}px`,
+          background: 'rgba(251,191,36,0.08)', borderRadius: '3px',
+        }} />
         <div aria-hidden='true' style={{
           position: 'absolute', left: 0, right: 0, bottom: `${24 + metaY}px`,
           borderTop: '1px dashed rgba(251,191,36,0.45)',
@@ -418,7 +446,7 @@ function BarrasComparacion({ actual, anterior, metaCal, animado }) {
             const ant  = anterior[i] ?? { calorias: 0 }
             const hAct = animado ? Math.max((d.calorias / maxVal) * H, d.calorias > 0 ? 5 : 0) : 0
             const hAnt = (animado && hayDatosAnteriores) ? Math.max((ant.calorias / maxVal) * H, ant.calorias > 0 ? 4 : 0) : 0
-            const enMeta = d.calorias >= metaCal * 0.85 && d.calorias <= metaCal * 1.1
+            const zona   = zonaCal(d.calorias, metaCal)
             // La semana va de lunes a domingo: hoy puede estar en cualquier posición
             const esHoy  = d.fecha === fechaLocal()
             return (
@@ -428,10 +456,11 @@ function BarrasComparacion({ actual, anterior, metaCal, animado }) {
                     <div style={{ flex: 1, borderRadius: '4px 4px 1px 1px', height: hAnt, background: 'rgba(255,255,255,0.14)', transition: `height 600ms var(--ease-out) ${i * 40}ms` }} />
                   )}
                   <div
-                    title={`${d.calorias} kcal`}
+                    title={`${d.calorias} kcal${zona === 'sobre' ? ' · por encima de tu rango' : ''}`}
                     style={{
                       flex: 1, borderRadius: '4px 4px 1px 1px', height: hAct,
-                      background: esHoy ? C.green : enMeta ? 'rgba(74,222,128,0.6)' : d.calorias > 0 ? 'rgba(74,222,128,0.28)' : 'transparent',
+                      // Hoy aún no termina: verde lleno salvo que ya se haya pasado
+                      background: zona === 'sobre' ? COLOR_ZONA.sobre : esHoy ? C.green : COLOR_ZONA[zona],
                       transition: `height 600ms var(--ease-out) ${i * 40 + 40}ms`,
                     }}
                   />
@@ -873,7 +902,7 @@ export default function ProgressScreen({ t, screen }) {
 
   const diasGym     = semanaActual.filter(d => d.gym).length
   // Mismo criterio que el servidor: entre 80% y 110% de la meta
-  const diasCal     = semanaActual.filter(d => d.calorias >= metaCal * 0.8 && d.calorias <= metaCal * 1.1).length
+  const diasCal     = semanaActual.filter(d => zonaCal(d.calorias, metaCal) === 'rango').length
   const diasActivos = semanaActual.filter(d => d.calorias > 0 || d.gym).length
   const anillos     = ANILLOS(diasGym, diasCal, diasActivos, data?.desglose_score?.dias_planeados)
 
@@ -943,8 +972,11 @@ export default function ProgressScreen({ t, screen }) {
                 </div>
               </div>
               <div style={{ textAlign: 'right' }}>
-                <p className='nf-caption'>Meta</p>
-                <p className='nf-num' style={{ fontSize: '16px', fontWeight: 700, color: C.yellow }}>{metaCal.toLocaleString('es-CO')}</p>
+                <p className='nf-caption'>Tu rango</p>
+                <p className='nf-num' style={{ fontSize: '16px', fontWeight: 700, color: C.yellow }}>
+                  {Math.round(metaCal * RANGO_MIN).toLocaleString('es-CO')}–{Math.round(metaCal * RANGO_MAX).toLocaleString('es-CO')}
+                </p>
+                <p className='nf-caption nf-num'>meta {metaCal.toLocaleString('es-CO')}</p>
               </div>
             </div>
             <BarrasComparacion actual={semanaActual} anterior={semanaAnterior} metaCal={metaCal} animado={animado} />

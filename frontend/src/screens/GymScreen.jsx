@@ -77,7 +77,10 @@ function getEjercicioColor(ex, pool) {
 function ResumenSemanal({ semana, completados, rutinasDe, clave, pool }) {
   let diasActivos = 0
   const musculosSemana = new Set()
-  semana.forEach(({ fecha, dayOfWeek }) => {
+  // El calendario muestra los últimos 7 días (para marcar sesiones atrasadas),
+  // pero el resumen cuenta la semana de lunes a domingo: hoy es el último día
+  const estaSemana = semana.slice(6 - semana[semana.length - 1].dayOfWeek)
+  estaSemana.forEach(({ fecha, dayOfWeek }) => {
     let activo = false
     for (const rutina of rutinasDe(fecha, dayOfWeek)) {
       for (const idx of completados[clave(fecha, rutina.id)] ?? []) {
@@ -97,7 +100,7 @@ function ResumenSemanal({ semana, completados, rutinasDe, clave, pool }) {
         <p className='nf-num' style={{ fontSize: '30px', fontWeight: 700, lineHeight: 1, letterSpacing: '-0.02em', color: diasActivos > 0 ? 'var(--green)' : 'var(--label-3)' }}>
           {diasActivos}
         </p>
-        <p className='nf-caption' style={{ marginTop: '2px', fontWeight: 600 }}>de 7 días</p>
+        <p className='nf-caption' style={{ marginTop: '2px', fontWeight: 600 }}>esta semana</p>
       </div>
       <div style={{ width: '0.5px', alignSelf: 'stretch', background: 'var(--separator)' }} />
       <div style={{ flex: 1 }}>
