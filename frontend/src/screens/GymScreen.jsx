@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
+import { flushSync } from 'react-dom'
 import {
   IconCheck, IconChevronRight, IconChevronUp, IconChevronDown, IconPlus, IconX,
   IconClock, IconPencil, IconTrash, IconSearch, IconPalette, IconBarbell,
-  IconReplace, IconArrowsExchange, IconSparkles, IconBooks,
+  IconReplace, IconArrowsExchange, IconSparkles, IconBooks, IconChevronLeft, IconLock,
 } from '@tabler/icons-react'
 import {
   registrarSesion, getSesionesSemana,
@@ -11,7 +12,7 @@ import {
 } from '../api'
 import Sheet, { SheetHeader } from '../components/Sheet'
 import { toast } from '../lib/toast'
-import { haptic, useEntrada } from '../lib/motion'
+import { haptic, useEntrada, spring, project, rubberband, velocityFrom } from '../lib/motion'
 import { BibliotecaSheet, GenerarSheet } from '../components/GymExtras'
 import bruceGym from '../assets/bruce-tuxedo-determinado.webp'
 
@@ -41,6 +42,27 @@ function coloresDe(rutina) {
 }
 
 const NOMBRES_DIA = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo']
+
+// Semanas de calendario, de lunes a domingo. 0 = esta semana, -1 = la pasada.
+// El orden de los días nunca cambia: hoy se resalta donde caiga.
+const SEMANA_MAS_ANTIGUA = -1
+const semanaDe = (offset) => {
+  const lunes = new Date()
+  lunes.setHours(12, 0, 0, 0)
+  lunes.setDate(lunes.getDate() - ((lunes.getDay() + 6) % 7) + offset * 7)
+  return [...Array(7)].map((_, i) => {
+    const d = new Date(lunes)
+    d.setDate(lunes.getDate() + i)
+    return { fecha: fechaLocal(d), dayOfWeek: i, d }
+  })
+}
+const rangoSemana = (semana) => {
+  const [a, b] = [semana[0].d, semana[6].d]
+  const mes = (d) => d.toLocaleDateString('es-CO', { month: 'short' }).replace('.', '')
+  return a.getMonth() === b.getMonth()
+    ? `${a.getDate()}–${b.getDate()} ${mes(b)}`
+    : `${a.getDate()} ${mes(a)} – ${b.getDate()} ${mes(b)}`
+}
 const DIAS_ABR    = ['L', 'M', 'X', 'J', 'V', 'S', 'D']
 const MAX_POR_DIA = 3
 
@@ -74,13 +96,10 @@ function getEjercicioColor(ex, pool) {
 }
 
 // ─── RESUMEN SEMANAL ───────────────────────────────────────────────────────────
-function ResumenSemanal({ semana, completados, rutinasDe, clave, pool }) {
+function ResumenSemanal({ semana, completados, rutinasDe, clave, pool, pasada }) {
   let diasActivos = 0
   const musculosSemana = new Set()
-  // El calendario muestra los últimos 7 días (para marcar sesiones atrasadas),
-  // pero el resumen cuenta la semana de lunes a domingo: hoy es el último día
-  const estaSemana = semana.slice(6 - semana[semana.length - 1].dayOfWeek)
-  estaSemana.forEach(({ fecha, dayOfWeek }) => {
+  semana.forEach(({ fecha, dayOfWeek }) => {
     let activo = false
     for (const rutina of rutinasDe(fecha, dayOfWeek)) {
       for (const idx of completados[clave(fecha, rutina.id)] ?? []) {
@@ -100,7 +119,7 @@ function ResumenSemanal({ semana, completados, rutinasDe, clave, pool }) {
         <p className='nf-num' style={{ fontSize: '30px', fontWeight: 700, lineHeight: 1, letterSpacing: '-0.02em', color: diasActivos > 0 ? 'var(--green)' : 'var(--label-3)' }}>
           {diasActivos}
         </p>
-        <p className='nf-caption' style={{ marginTop: '2px', fontWeight: 600 }}>esta semana</p>
+        <p className='nf-caption' style={{ marginTop: '2px', fontWeight: 600 }}>{pasada ? (diasActivos === 1 ? 'día entrenado' : 'días entrenados') : 'esta semana'}</p>
       </div>
       <div style={{ width: '0.5px', alignSelf: 'stretch', background: 'var(--separator)' }} />
       <div style={{ flex: 1 }}>
@@ -112,8 +131,123 @@ function ResumenSemanal({ semana, completados, rutinasDe, clave, pool }) {
             })}
           </div>
         ) : (
-          <p className='nf-footnote'>Aún sin actividad esta semana. El primer set es el más difícil.</p>
+          <p className='nf-footnote'>{pasada ? 'Sin sesiones registradas esa semana.' : 'Aún sin actividad esta semana. El primer set es el más difícil.'}</p>
         )}
+      </div>
+    </div>
+  )
+}
+
+// ─── TIRA DE LA SEMANA ─────────────────────────────────────────────────────────
+// Encabezado con ‹ › y la fila de 7 días, que se puede arrastrar entre semanas:
+// sigue al dedo 1:1, resiste en los bordes (rubber-band) y al soltar proyecta
+// el momentum para decidir si cambia de semana. La semana nueva entra desde el
+// lado contrario al que salió la vieja (consistencia espacial).
+function TiraSemana({ offset, semana, onCambiar, children }) {
+  const tiraRef = useRef(null)
+  const x       = useRef(0)
+  const anim    = useRef(null)
+  const gesto   = useRef(null)
+  const huboArrastre = useRef(false)
+  const pasada  = offset < 0
+
+  const puede = (dir) => (dir > 0 ? offset > SEMANA_MAS_ANTIGUA : offset < 0)   // dir > 0: hacia la anterior
+  const ancho = () => tiraRef.current?.offsetWidth || 320
+  const aplicar = (val) => {
+    x.current = val
+    const el = tiraRef.current
+    if (!el) return
+    el.style.transform = val ? `translate3d(${val}px, 0, 0)` : ''
+    el.style.opacity = String(1 - Math.min(Math.abs(val) / ancho(), 1) * 0.5)
+  }
+  const animar = (to, velocity = 0, onComplete) => {
+    anim.current?.stop()
+    anim.current = spring({ from: x.current, to, velocity, response: 0.32, damping: 1, onUpdate: aplicar, onComplete })
+  }
+
+  // dir > 0 = ir a la semana anterior (el contenido sale hacia la derecha)
+  const ir = (dir, velocity = 0) => {
+    if (!puede(dir)) return
+    haptic(6)
+    const w = ancho()
+    animar(dir * w, velocity, () => {
+      flushSync(() => onCambiar(offset - dir))
+      aplicar(-dir * w)
+      animar(0)
+    })
+  }
+
+  useEffect(() => () => anim.current?.stop(), [])
+
+  const onPointerDown = (e) => {
+    if (e.button !== 0) return
+    gesto.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, base: x.current, activo: false, muestras: [] }
+    huboArrastre.current = false
+  }
+  const onPointerMove = (e) => {
+    const g = gesto.current
+    if (!g || e.pointerId !== g.id) return
+    const dx = e.clientX - g.x0, dy = e.clientY - g.y0
+    if (!g.activo) {
+      // Histéresis: primero se decide si es horizontal; si es vertical, es scroll
+      if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { gesto.current = null; return }
+      if (Math.abs(dx) < 10) return
+      g.activo = true
+      huboArrastre.current = true
+      anim.current?.stop()
+      tiraRef.current?.setPointerCapture?.(e.pointerId)
+    }
+    const w = ancho()
+    let val = g.base + dx
+    if ((val > 0 && !puede(1)) || (val < 0 && !puede(-1))) val = rubberband(val, w)
+    aplicar(val)
+    g.muestras.push({ x: e.clientX, t: performance.now() })
+    if (g.muestras.length > 8) g.muestras.shift()
+  }
+  const onPointerUp = (e) => {
+    const g = gesto.current
+    gesto.current = null
+    if (!g?.activo || e.pointerId !== g.id) return
+    const v = velocityFrom(g.muestras)
+    const destino = x.current + project(v)
+    const dir = Math.sign(destino)
+    if (Math.abs(destino) > ancho() * 0.35 && puede(dir)) ir(dir, v)
+    else animar(0, v)
+  }
+
+  return (
+    <div style={{ marginBottom: '20px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '0 4px', marginBottom: '8px' }}>
+        <p aria-live='polite' style={{ minWidth: 0 }}>
+          <span className='nf-headline'>{pasada ? 'Semana pasada' : 'Esta semana'}</span>
+          <span className='nf-footnote nf-num' style={{ marginLeft: '6px' }}>{rangoSemana(semana)}</span>
+        </p>
+        <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
+          <button onClick={() => ir(1)} disabled={!puede(1)} className='nf-icon-btn' aria-label='Semana anterior'
+            style={{ color: puede(1) ? 'var(--green)' : 'var(--label-4)' }}>
+            <IconChevronLeft size={22} />
+          </button>
+          <button onClick={() => ir(-1)} disabled={!puede(-1)} className='nf-icon-btn' aria-label='Semana siguiente'
+            style={{ color: puede(-1) ? 'var(--green)' : 'var(--label-4)' }}>
+            <IconChevronRight size={22} />
+          </button>
+        </div>
+      </div>
+      <div style={{ overflow: 'hidden', margin: '0 -16px', padding: '0 16px' }}>
+        <div
+          ref={tiraRef}
+          role='tablist'
+          aria-label={`Días de ${pasada ? 'la semana pasada' : 'esta semana'}`}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+          // Un arrastre no debe terminar seleccionando el día donde se soltó
+          onClickCapture={(e) => { if (huboArrastre.current) { e.stopPropagation(); e.preventDefault(); huboArrastre.current = false } }}
+          style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '6px', touchAction: 'pan-y', willChange: 'transform' }}
+        >
+          {children}
+        </div>
       </div>
     </div>
   )
@@ -671,11 +805,46 @@ function PanelCambiar({ abierto, dow, plan, lib, sesionFija, onAlternar, onDesca
   )
 }
 
+// Días pasados: registrar una rutina distinta a la planeada, solo para esa fecha.
+// El plan semanal no cambia (por eso cambiar un día pasado ya no desconfigura nada).
+function PanelOtraRutina({ abierto, lib, delDia, fijas, onAlternar }) {
+  return (
+    <div className='nf-collapse' data-open={abierto} aria-hidden={!abierto}>
+      <div>
+        <div style={{ padding: '4px 16px 16px' }}>
+          <p className='nf-caption' style={{ fontWeight: 600, marginBottom: '8px' }}>
+            ¿Qué hiciste ese día? <span style={{ fontWeight: 400 }}>· solo cambia esta fecha, no tu plan</span>
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            {Object.values(lib).map(r => {
+              const puesta = delDia.includes(r.id)
+              const fija = fijas.includes(r.id)
+              return (
+                <button
+                  key={r.id}
+                  tabIndex={abierto ? 0 : -1}
+                  onClick={() => !fija && onAlternar(r.id)}
+                  aria-disabled={fija}
+                  className='nf-chip'
+                  aria-pressed={puesta}
+                  style={{ '--tint': r.color, opacity: fija ? 0.6 : 1 }}
+                >
+                  {puesta ? <IconCheck size={14} strokeWidth={3} /> : <span aria-hidden='true'>{r.emoji}</span>} {r.nombre}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── TARJETA DE UNA RUTINA DEL DÍA ─────────────────────────────────────────────
 // Con doble entreno hay una por rutina. El chevron la recoge o la despliega.
 function TarjetaRutina({
   rutina, fecha, pool, recogida, onRecoger, onEditar,
-  hechos, log, onToggle, onLog, guardando, guardado, onGuardar,
+  hechos, log, onToggle, onLog, guardando, guardado, onGuardar, bloqueada,
 }) {
   const [expandido, setExpandido]       = useState({})
   const [timerAbierto, setTimerAbierto] = useState(null)
@@ -722,8 +891,8 @@ function TarjetaRutina({
               <span className='nf-headline' style={{ color: colores.text }}>{rutina.emoji} {rutina.nombre}</span>
               {completa && <span className='nf-badge' style={{ '--tint': colores.text }}><IconCheck size={12} strokeWidth={3} /> Completado</span>}
             </span>
-            <span className='nf-footnote nf-num' style={{ display: 'block', color: colores.text, opacity: 0.8 }}>
-              {hechos.length} de {total} ejercicios
+            <span className='nf-footnote nf-num' style={{ display: 'flex', alignItems: 'center', gap: '4px', color: colores.text, opacity: 0.8 }}>
+              {bloqueada ? <><IconLock size={13} aria-hidden='true' /> {bloqueada}</> : `${hechos.length} de ${total} ejercicios`}
             </span>
           </span>
           <IconChevronDown size={20} color={colores.text} aria-hidden='true' style={{
@@ -758,6 +927,8 @@ function TarjetaRutina({
                       aria-label={`Marcar ${ex.nombre}`}
                       className='nf-icon-btn'
                       tabIndex={tab}
+                      disabled={Boolean(bloqueada)}
+                      style={{ opacity: bloqueada ? 0.35 : 1 }}
                     >
                       <span style={{
                         width: '26px', height: '26px', borderRadius: '50%',
@@ -916,6 +1087,10 @@ export default function GymScreen({ t, screen }) {
   const [bibliotecaAbierta, setBibliotecaAbierta] = useState(false)
   const [generarAbierto, setGenerarAbierto]       = useState(false)
   const [selectedFecha, setSelectedFecha] = useState(() => fechaLocal())
+  const [offsetSemana, setOffsetSemana] = useState(0)
+  // Rutinas agregadas a un día pasado (solo esa fecha; al guardar quedan en hechasPorFecha)
+  const [extrasPorFecha, setExtrasPorFecha] = useState({})
+  const [avisoAyerCerrado, setAvisoAyerCerrado] = useState(false)
   // Claves por sesión: `${fecha}|${rutinaId}`
   const [completados, setCompletados]   = useState({})
   const [logData, setLogData]           = useState({})
@@ -931,20 +1106,21 @@ export default function GymScreen({ t, screen }) {
 
   const [hoy] = useState(() => fechaLocal())
 
-  const semana = [...Array(7)].map((_, i) => {
-    const d = new Date()
-    d.setDate(d.getDate() - (6 - i))
-    const fecha = fechaLocal(d)
-    const dayOfWeek = d.getDay() === 0 ? 6 : d.getDay() - 1
-    return { fecha, dayOfWeek, d }
-  })
+  const semana = semanaDe(offsetSemana)
+
+  // Al volver a esta semana se elige hoy; en la pasada, el domingo (lo más reciente)
+  const cambiarSemana = (nuevo, fecha) => {
+    setOffsetSemana(nuevo)
+    setSelectedFecha(fecha ?? (nuevo === 0 ? hoy : semanaDe(nuevo)[6].fecha))
+    setCambiarAbierto(false)
+  }
 
   const clave = (fecha, id) => `${fecha}|${id}`
 
   // Las del plan de ese día, más las que ya se hicieron esa fecha aunque luego se hayan movido
   const rutinasDe = (fecha, dow) => {
     const ids = [...(plan?.[dow] ?? [])]
-    for (const id of hechasPorFecha[fecha] ?? []) if (!ids.includes(id)) ids.push(id)
+    for (const id of [...(hechasPorFecha[fecha] ?? []), ...(extrasPorFecha[fecha] ?? [])]) if (!ids.includes(id)) ids.push(id)
     return ids.map(id => lib[id]).filter(Boolean)
   }
   const diasDeRutina = (id) => (plan ? Object.keys(plan).map(Number).filter(d => plan[d].includes(id)).sort() : [])
@@ -1203,6 +1379,18 @@ export default function GymScreen({ t, screen }) {
   const coloresDia       = coloresDe(rutinasDelDia[0])
   // Si esa fecha ya tiene sesiones guardadas, cambiar el plan no las toca
   const diaConSesionFija = (hechasPorFecha[selectedFecha] ?? []).length > 0
+  const esPasado  = selectedFecha < hoy
+  const esFuturo  = selectedFecha > hoy
+  const alternarExtra = (id) => setExtrasPorFecha(prev => {
+    const lista = prev[selectedFecha] ?? []
+    return { ...prev, [selectedFecha]: lista.includes(id) ? lista.filter(x => x !== id) : [...lista, id] }
+  })
+
+  // Los lunes: si ayer (domingo, semana pasada) tocaba entrenar y no se registró, se ofrece
+  const ayer = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return fechaLocal(d) })()
+  const rutinasAyer = !cargandoPlan && semana[0].fecha === hoy && offsetSemana === 0 ? rutinasDe(ayer, 6) : []
+  const mostrarAvisoAyer = !avisoAyerCerrado && rutinasAyer.length > 0 &&
+    !rutinasAyer.some(r => (completados[clave(ayer, r.id)] ?? []).length > 0)
 
   return (
     <div style={{ padding: 'calc(var(--safe-top) + 20px) 16px 0' }}>
@@ -1277,15 +1465,30 @@ export default function GymScreen({ t, screen }) {
           </button>
         </div>
       ) : (<>
-        <ResumenSemanal semana={semana} completados={completados} rutinasDe={rutinasDe} clave={clave} pool={pool} />
+        <ResumenSemanal semana={semana} completados={completados} rutinasDe={rutinasDe} clave={clave} pool={pool} pasada={offsetSemana < 0} />
 
-        {/* Semana: 7 días caben en el ancho, sin scroll lateral */}
-        <div role='tablist' aria-label='Días de la semana' style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '6px', marginBottom: '20px' }}>
+        {mostrarAvisoAyer && (
+          <div className='nf-card nf-reveal' style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 8px 12px 16px', marginBottom: '16px' }}>
+            <span aria-hidden='true' style={{ fontSize: '22px' }}>{rutinasAyer[0].emoji}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p className='nf-subhead' style={{ color: 'var(--label)', fontWeight: 600 }}>¿Entrenaste ayer?</p>
+              <p className='nf-footnote'>Tenías {rutinasAyer.map(r => r.nombre).join(' y ')}.</p>
+            </div>
+            <button onClick={() => cambiarSemana(-1, ayer)} className='nf-btn nf-btn--sm nf-btn--tinted'>Registrar</button>
+            <button onClick={() => setAvisoAyerCerrado(true)} className='nf-icon-btn' aria-label='Ocultar aviso' style={{ color: 'var(--label-3)' }}>
+              <IconX size={18} />
+            </button>
+          </div>
+        )}
+
+        {/* Semana de lunes a domingo; se desliza a la semana pasada */}
+        <TiraSemana offset={offsetSemana} semana={semana} onCambiar={(n) => cambiarSemana(n)}>
           {semana.map(({ fecha, dayOfWeek, d }) => {
             const rutinas        = rutinasDe(fecha, dayOfWeek)
             const c              = coloresDe(rutinas[0])
             const esSeleccionado = fecha === selectedFecha
             const esHoy          = fecha === hoy
+            const futuro         = fecha > hoy
             const total          = rutinas.reduce((n, r) => n + r.ejercicios.length, 0)
             const hechos         = rutinas.reduce((n, r) => n + (completados[clave(fecha, r.id)] ?? []).length, 0)
             const pct            = total > 0 ? hechos / total : 0
@@ -1307,7 +1510,9 @@ export default function GymScreen({ t, screen }) {
                     : esHoy ? `inset 0 0 0 1px ${c.text}66` : 'inset 0 0 0 0.5px var(--separator)',
                   display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '3px',
                   padding: 0,
-                  transition: 'box-shadow 200ms ease, background-color 200ms ease',
+                  // Los días que no han llegado se ven más tenues, pero se pueden abrir para ver o cambiar el plan
+                  opacity: futuro && !esSeleccionado ? 0.6 : 1,
+                  transition: 'box-shadow 200ms ease, background-color 200ms ease, opacity 200ms ease',
                 }}
               >
                 {/* Progreso del día: se llena desde abajo */}
@@ -1336,7 +1541,7 @@ export default function GymScreen({ t, screen }) {
               </button>
             )
           })}
-        </div>
+        </TiraSemana>
 
         {/* Encabezado del día: qué toca y el botón para cambiarlo */}
         {diaSeleccionado && (
@@ -1350,6 +1555,7 @@ export default function GymScreen({ t, screen }) {
                   {rutinasDelDia.length === 0 ? 'Día de descanso'
                     : rutinasDelDia.length === 1 ? '1 rutina'
                     : `Doble entreno · ${rutinasDelDia.length} rutinas`}
+                  {esFuturo && ' · aún no llega'}
                 </p>
               </div>
               <button
@@ -1358,10 +1564,19 @@ export default function GymScreen({ t, screen }) {
                 className='nf-btn nf-btn--sm nf-btn--tinted'
                 style={{ '--tint': coloresDia.text, flexShrink: 0 }}
               >
-                {cambiarAbierto ? <IconX size={15} /> : <IconReplace size={15} />} {cambiarAbierto ? 'Cerrar' : 'Cambiar'}
+                {cambiarAbierto ? <IconX size={15} /> : esPasado ? <IconPlus size={15} /> : <IconReplace size={15} />}
+                {cambiarAbierto ? 'Cerrar' : esPasado ? 'Otra rutina' : 'Cambiar'}
               </button>
             </div>
-            <PanelCambiar
+            {esPasado ? (
+              <PanelOtraRutina
+                abierto={cambiarAbierto}
+                lib={lib}
+                delDia={rutinasDelDia.map(r => r.id)}
+                fijas={[...(plan?.[diaSeleccionado.dayOfWeek] ?? []), ...(hechasPorFecha[selectedFecha] ?? [])]}
+                onAlternar={alternarExtra}
+              />
+            ) : <PanelCambiar
               abierto={cambiarAbierto}
               dow={diaSeleccionado.dayOfWeek}
               plan={plan}
@@ -1372,7 +1587,7 @@ export default function GymScreen({ t, screen }) {
               onIntercambiar={intercambiarDias}
               onNueva={nuevaRutina}
               onEditar={(r) => abrirEditor(r)}
-            />
+            />}
           </div>
         )}
 
@@ -1380,7 +1595,9 @@ export default function GymScreen({ t, screen }) {
           <div className='nf-card' style={{ padding: '32px 16px', textAlign: 'center' }}>
             <p style={{ fontSize: '34px', marginBottom: '8px' }}>🛌</p>
             <p className='nf-headline' style={{ marginBottom: '4px' }}>Día de descanso</p>
-            <p className='nf-footnote'>Recuperar también es entrenar. Toca "Cambiar" si quieres ponerle una rutina.</p>
+            <p className='nf-footnote'>
+              {esPasado ? 'Si entrenaste ese día, toca "Otra rutina" y regístrala.' : 'Recuperar también es entrenar. Toca "Cambiar" si quieres ponerle una rutina.'}
+            </p>
           </div>
         ) : rutinasDelDia.map(rutina => {
           const k = clave(selectedFecha, rutina.id)
@@ -1400,6 +1617,7 @@ export default function GymScreen({ t, screen }) {
               guardando={guardando === k}
               guardado={Boolean(guardado[k])}
               onGuardar={() => guardarSesion(selectedFecha, rutina)}
+              bloqueada={esFuturo ? `Se registra el ${NOMBRES_DIA[diaSeleccionado.dayOfWeek]}` : null}
             />
           )
         })}

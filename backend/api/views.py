@@ -624,7 +624,9 @@ def comida_detalle(request, pk):
 def sesiones_semana(request):
     from datetime import timedelta
     hoy    = timezone.localdate()
-    inicio = hoy - timedelta(days=6)
+    # Desde el lunes de la semana pasada: la vista de Gym va por semanas de
+    # calendario y deja volver una semana para registrar lo atrasado
+    inicio = hoy - timedelta(days=hoy.weekday() + 7)
     sesiones = SesionGym.objects.filter(usuario=request.user, fecha__range=[inicio, hoy])
     return Response(SesionGymSerializer(sesiones, many=True).data)
 

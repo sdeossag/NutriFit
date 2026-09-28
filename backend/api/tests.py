@@ -279,6 +279,14 @@ class ProgresoTests(Base):
         self.assertEqual(r.data['semana_anterior'][0]['fecha'], '2026-09-21')   # de lunes a lunes
         self.assertEqual(r.data['desglose_score']['dias_transcurridos'], 1)
 
+    def test_sesiones_desde_el_lunes_de_la_semana_pasada(self):
+        lunes = date(2026, 9, 28)
+        for dias in (7, 8):                       # lunes y domingo anteriores
+            self.sesion(lunes - timedelta(days=dias))
+        with en(lunes):
+            fechas = {s['fecha'] for s in self.api.get('/api/sesiones/').data}
+        self.assertEqual(fechas, {'2026-09-21'})
+
     def test_progreso_no_hace_una_consulta_por_dia(self):
         for dias in range(30):
             Comida.objects.create(usuario=self.user, nombre='x', calorias=500, fecha=HOY - timedelta(days=dias))

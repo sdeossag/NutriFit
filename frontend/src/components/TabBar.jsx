@@ -374,8 +374,10 @@ export default function TabBar({ screen, onSelect, labels, hidden }) {
             aria-label={label}
             className='no-press nf-tabbar-btn'
           >
+            {/* Las dos capas cambian juntas: si solo la iluminada se pone la máscara,
+                el Bruce normal de la base se sigue viendo alrededor del lente */}
             <span className='nf-tabbar-layer nf-tabbar-base'>
-              <Contenido tab={tab} label={label} batman={false} />
+              <Contenido tab={tab} label={label} batman={tab.avatar && batman} />
             </span>
             <span ref={el => (litRefs.current[i] = el)} className='nf-tabbar-layer nf-tabbar-lit' aria-hidden='true'>
               <Contenido tab={tab} label={label} batman={tab.avatar && batman} />
