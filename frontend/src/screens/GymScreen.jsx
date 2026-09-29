@@ -12,7 +12,7 @@ import {
 } from '../api'
 import Sheet, { SheetHeader } from '../components/Sheet'
 import { toast } from '../lib/toast'
-import { haptic, useEntrada, spring, project, rubberband, velocityFrom } from '../lib/motion'
+import { haptic, useEntrada, project, rubberband, velocityFrom, prefersReducedMotion } from '../lib/motion'
 import { BibliotecaSheet, GenerarSheet } from '../components/GymExtras'
 import bruceGym from '../assets/bruce-tuxedo-determinado.webp'
 
@@ -141,43 +141,77 @@ function ResumenSemanal({ semana, completados, rutinasDe, clave, pool, pasada })
 // ─── TIRA DE LA SEMANA ─────────────────────────────────────────────────────────
 // Encabezado con ‹ › y la fila de 7 días, que se puede arrastrar entre semanas:
 // sigue al dedo 1:1, resiste en los bordes (rubber-band) y al soltar proyecta
-// el momentum para decidir si cambia de semana. La semana nueva entra desde el
-// lado contrario al que salió la vieja (consistencia espacial).
+// el momentum para decidir si cambia de semana.
+// El cambio es inmediato y la semana nueva entra con un desplazamiento corto
+// desde el lado del que viene (32 px, 260 ms, ease-out fuerte, con un blur que
+// une las dos semanas). Todo con WAAPI: corre fuera del hilo principal.
+const EASE_OUT = 'cubic-bezier(0.23, 1, 0.32, 1)'
+const ENTRADA_PX = 32
+
 function TiraSemana({ offset, semana, onCambiar, children }) {
-  const tiraRef = useRef(null)
-  const x       = useRef(0)
-  const anim    = useRef(null)
-  const gesto   = useRef(null)
+  const tiraRef  = useRef(null)
+  const tituloRef = useRef(null)
+  const x        = useRef(0)
+  const gesto    = useRef(null)
   const huboArrastre = useRef(false)
-  const pasada  = offset < 0
+  const pasada   = offset < 0
 
   const puede = (dir) => (dir > 0 ? offset > SEMANA_MAS_ANTIGUA : offset < 0)   // dir > 0: hacia la anterior
   const ancho = () => tiraRef.current?.offsetWidth || 320
+  // Durante el arrastre: 1:1 con el dedo, sin transición
   const aplicar = (val) => {
     x.current = val
     const el = tiraRef.current
     if (!el) return
     el.style.transform = val ? `translate3d(${val}px, 0, 0)` : ''
-    el.style.opacity = String(1 - Math.min(Math.abs(val) / ancho(), 1) * 0.5)
+    el.style.opacity = val ? String(1 - Math.min(Math.abs(val) / ancho(), 1) * 0.4) : ''
   }
-  const animar = (to, velocity = 0, onComplete) => {
-    anim.current?.stop()
-    anim.current = spring({ from: x.current, to, velocity, response: 0.32, damping: 1, onUpdate: aplicar, onComplete })
+  const cancelarAnimaciones = () => {
+    tiraRef.current?.getAnimations().forEach(a => a.cancel())
+    tituloRef.current?.getAnimations().forEach(a => a.cancel())
   }
 
-  // dir > 0 = ir a la semana anterior (el contenido sale hacia la derecha)
-  const ir = (dir, velocity = 0) => {
+  // La semana nueva ya está en pantalla: entra desde el lado del que viene
+  const entrar = (dir) => {
+    const el = tiraRef.current, titulo = tituloRef.current
+    aplicar(0)
+    if (!el) return
+    if (prefersReducedMotion()) {
+      el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: 'ease' })
+      return
+    }
+    el.animate([
+      { transform: `translate3d(${-dir * ENTRADA_PX}px, 0, 0)`, opacity: 0, filter: 'blur(3px)' },
+      { transform: 'translate3d(0, 0, 0)', opacity: 1, filter: 'blur(0)' },
+    ], { duration: 260, easing: EASE_OUT })
+    titulo?.animate([
+      { transform: `translate3d(${-dir * 8}px, 0, 0)`, opacity: 0 },
+      { transform: 'translate3d(0, 0, 0)', opacity: 1 },
+    ], { duration: 220, easing: EASE_OUT })
+  }
+
+  // dir > 0 = ir a la semana anterior (la nueva entra desde la izquierda)
+  const ir = (dir) => {
     if (!puede(dir)) return
     haptic(6)
-    const w = ancho()
-    animar(dir * w, velocity, () => {
-      flushSync(() => onCambiar(offset - dir))
-      aplicar(-dir * w)
-      animar(0)
-    })
+    cancelarAnimaciones()
+    flushSync(() => onCambiar(offset - dir))
+    entrar(dir)
   }
 
-  useEffect(() => () => anim.current?.stop(), [])
+  // Soltó sin cambiar de semana: vuelve rápido desde donde quedó el dedo
+  const volver = () => {
+    const el = tiraRef.current
+    const desde = x.current
+    aplicar(0)
+    if (!el || !desde) return
+    el.animate([
+      { transform: `translate3d(${desde}px, 0, 0)`, opacity: 1 - Math.min(Math.abs(desde) / ancho(), 1) * 0.4 },
+      { transform: 'translate3d(0, 0, 0)', opacity: 1 },
+    ], { duration: 200, easing: EASE_OUT })
+  }
+
+  useEffect(() => () => cancelarAnimaciones(), [])
 
   const onPointerDown = (e) => {
     if (e.button !== 0) return
@@ -194,7 +228,7 @@ function TiraSemana({ offset, semana, onCambiar, children }) {
       if (Math.abs(dx) < 10) return
       g.activo = true
       huboArrastre.current = true
-      anim.current?.stop()
+      cancelarAnimaciones()
       tiraRef.current?.setPointerCapture?.(e.pointerId)
     }
     const w = ancho()
@@ -211,14 +245,15 @@ function TiraSemana({ offset, semana, onCambiar, children }) {
     const v = velocityFrom(g.muestras)
     const destino = x.current + project(v)
     const dir = Math.sign(destino)
-    if (Math.abs(destino) > ancho() * 0.35 && puede(dir)) ir(dir, v)
-    else animar(0, v)
+    // Un gesto rápido basta aunque haya sido corto (proyección del momentum)
+    if (Math.abs(destino) > ancho() * 0.3 && puede(dir)) ir(dir)
+    else volver()
   }
 
   return (
     <div style={{ marginBottom: '20px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '0 4px', marginBottom: '8px' }}>
-        <p aria-live='polite' style={{ minWidth: 0 }}>
+        <p ref={tituloRef} aria-live='polite' style={{ minWidth: 0 }}>
           <span className='nf-headline'>{pasada ? 'Semana pasada' : 'Esta semana'}</span>
           <span className='nf-footnote nf-num' style={{ marginLeft: '6px' }}>{rangoSemana(semana)}</span>
         </p>
@@ -244,7 +279,7 @@ function TiraSemana({ offset, semana, onCambiar, children }) {
           onPointerCancel={onPointerUp}
           // Un arrastre no debe terminar seleccionando el día donde se soltó
           onClickCapture={(e) => { if (huboArrastre.current) { e.stopPropagation(); e.preventDefault(); huboArrastre.current = false } }}
-          style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '6px', touchAction: 'pan-y', willChange: 'transform' }}
+          style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '6px', touchAction: 'pan-y' }}
         >
           {children}
         </div>

@@ -365,6 +365,8 @@ export default function TabBar({ screen, onSelect, labels, hidden }) {
 
       {TABS.map((tab, i) => {
         const label = tab.id === 'chat' ? 'Bruce' : labels[i]
+        // Bruce trae la máscara puesta mientras su pestaña está abierta o el lente pasa por encima
+        const enmascarado = tab.avatar && (batman || screen === tab.id)
         return (
           <button
             key={tab.id}
@@ -377,10 +379,10 @@ export default function TabBar({ screen, onSelect, labels, hidden }) {
             {/* Las dos capas cambian juntas: si solo la iluminada se pone la máscara,
                 el Bruce normal de la base se sigue viendo alrededor del lente */}
             <span className='nf-tabbar-layer nf-tabbar-base'>
-              <Contenido tab={tab} label={label} batman={tab.avatar && batman} />
+              <Contenido tab={tab} label={label} batman={enmascarado} />
             </span>
             <span ref={el => (litRefs.current[i] = el)} className='nf-tabbar-layer nf-tabbar-lit' aria-hidden='true'>
-              <Contenido tab={tab} label={label} batman={tab.avatar && batman} />
+              <Contenido tab={tab} label={label} batman={enmascarado} />
             </span>
           </button>
         )
