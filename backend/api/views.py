@@ -1293,6 +1293,61 @@ Usa confianza "baja" si la etiqueta está muy borrosa o incompleta. Nunca uses 0
 
 # ── Chat con Bruce ────────────────────────────────────────────────────────
 
+DIAS_CORTOS = ['lun', 'mar', 'mié', 'jue', 'vie', 'sáb', 'dom']
+
+
+def _dia(fecha):
+    return f'{DIAS_CORTOS[fecha.weekday()]} {fecha:%d/%m}'
+
+
+def _nombre_sesion(s):
+    ref = getattr(s, 'rutina_ref', None)
+    return ref.nombre if ref else (s.rutina or 'sesión')
+
+
+def _contexto_dias(user, hoy):
+    """Día por día: así Bruce no inventa ("el lunes comiste 0") ni mezcla días."""
+    desde = hoy - timedelta(days=7)
+    totales = estadisticas.totales_por_dia(user, desde, hoy - timedelta(days=1))
+    sesiones = {}
+    for s in SesionGym.objects.filter(usuario=user, fecha__range=[desde, hoy], completada=True).select_related('rutina_ref'):
+        sesiones.setdefault(s.fecha, []).append(_nombre_sesion(s))
+    lineas = ['DÍA POR DÍA (los días sin registro son días que NO ANOTÓ, no días en que comió 0):']
+    for i in range(7, 0, -1):
+        f = hoy - timedelta(days=i)
+        t = totales.get(f)
+        comida = f"{t['calorias']} kcal, {round(t['proteina'])} g prot" if t else 'sin comida registrada'
+        gym = ' y '.join(sesiones.get(f, [])) or 'sin gym'
+        lineas.append(f'• {_dia(f)}: {comida} | {gym}')
+    return '\n'.join(lineas)
+
+
+def _contexto_entrenos(user, hoy, max_sesiones=4):
+    """Las últimas sesiones con sus cargas y la comparación con la vez anterior
+    de cada ejercicio. Sin esto Bruce no puede hablar de rendimiento."""
+    sesiones = list(
+        SesionGym.objects.filter(usuario=user, fecha__gte=hoy - timedelta(days=21), fecha__lte=hoy)
+        .select_related('rutina_ref').prefetch_related('ejercicios').order_by('-fecha', '-id')[:max_sesiones]
+    )
+    if not sesiones:
+        return 'ENTRENOS RECIENTES: no hay sesiones registradas en las últimas 3 semanas.'
+    lineas = ['ENTRENOS RECIENTES (cargas registradas; "antes" = la vez anterior que hizo ese ejercicio):']
+    for s in sesiones:
+        partes = []
+        for e in s.ejercicios.all():
+            if e.peso_kg is None:
+                partes.append(f'{e.nombre} {e.series}x{e.reps}')
+                continue
+            previo = (EjercicioLog.objects
+                      .filter(sesion__usuario=user, nombre=e.nombre, sesion__fecha__lt=s.fecha, peso_kg__isnull=False)
+                      .select_related('sesion').order_by('-sesion__fecha').first())
+            antes = f' (antes {previo.peso_kg:g} kg {previo.series}x{previo.reps} el {_dia(previo.sesion.fecha)})' if previo else ''
+            partes.append(f'{e.nombre} {e.series}x{e.reps} {e.peso_kg:g} kg{antes}')
+        estado = '' if s.completada else ' [sin terminar]'
+        lineas.append(f'• {_dia(s.fecha)} – {_nombre_sesion(s)}{estado}: ' + ('; '.join(partes) or 'sin ejercicios registrados'))
+    return '\n'.join(lineas)
+
+
 def _contexto_semana(user, hoy):
     """Lo que Bruce necesita para hablar de patrones y no solo del día."""
     from .models import PlanDia
@@ -1334,6 +1389,10 @@ def _contexto_semana(user, hoy):
         pendientes = [f'{c["momento"]}: {c["nombre"]} ({c["calorias"]} kcal, {c["proteina"]} g prot)' for c in plan.comidas if not c.get('registrada')]
         if pendientes:
             lineas.append('• Plan de hoy pendiente: ' + '; '.join(pendientes))
+    lineas.append('')
+    lineas.append(_contexto_dias(user, hoy))
+    lineas.append('')
+    lineas.append(_contexto_entrenos(user, hoy))
     return '\n'.join(lineas)
 
 
@@ -1431,11 +1490,11 @@ def bruce_chat(request, pk):
 • ALERGIAS (peligroso: nunca, ni como ingrediente menor): {', '.join(user.alergias or []) or 'ninguna'}
 • Metas: {metas['calorias']} kcal | {metas['proteina']}g prot | {metas['carbos']}g carbos | {metas['grasas']}g grasas
 
-HOY ({hoy.strftime('%A %d de %B')}):
+HOY ({_dia(hoy)}, son las {timezone.localtime():%H:%M}; el día va en curso):
 • Calorías: {totales['calorias']}/{metas['calorias']} kcal ({pct_cal}%)
 • Proteína: {totales['proteina']}g/{metas['proteina']}g ({pct_prot}%)
 • Carbos: {totales['carbos']}g/{metas['carbos']}g | Grasas: {totales['grasas']}g/{metas['grasas']}g
-• FALTA HOY (ya calculado, úsalo tal cual): {max(metas['calorias'] - totales['calorias'], 0)} kcal y {max(round(metas['proteina'] - totales['proteina']), 0)} g de proteína
+• Le falta por comer hoy (ya calculado; el día no ha terminado, así que NO es un déficit todavía): {max(metas['calorias'] - totales['calorias'], 0)} kcal y {max(round(metas['proteina'] - totales['proteina']), 0)} g de proteína
 • Gym hoy: {'completó la sesión' if fue_al_gym else 'no fue'}
 • Racha gym: {racha_gym} días | Racha registro comida: {racha_comida} días
 
@@ -1466,6 +1525,15 @@ PERSONALIDAD:
 - No repites consejos genéricos — siempre basas tu respuesta en los números reales del usuario.
 - Mira la semana, no solo hoy: si ves un patrón (poca proteína varios días, se salta el gym, el peso no se mueve), dilo con el número concreto.
 - Usa los números del contexto tal como vienen; no recalcules porcentajes ni totales de la semana.
+
+DATOS Y RENDIMIENTO (muy importante):
+- Nunca inventes un dato. Si un día dice "sin comida registrada", di que no lo anotó; jamás que comió 0.
+- Lo que falta de hoy no explica nada si el día va en curso: a mediodía es normal llevar poco.
+- Si pregunta por su rendimiento en el gym, compara las CARGAS de "ENTRENOS RECIENTES" (peso, series y reps contra la vez anterior). Luego busca causas reales en este orden: cuánto comió el día anterior y antes de entrenar, días seguidos entrenando sin descanso, si entrenó el mismo grupo hace poco, y el cardio. Si la causa puede ser algo que no está en los datos (sueño, estrés, lesión), pregúntaselo en vez de adivinar.
+- Si no hay datos suficientes para responder, dilo y pide lo que falta (por ejemplo, que registre las cargas).
+- Respuesta de rendimiento: 3-5 oraciones. Primero la caída en números (ejercicio, kg y reps de hoy contra la vez anterior), luego la causa más probable con el dato que la respalda, y un consejo concreto.
+- Nada de razonamientos circulares ("bajaste carga porque hiciste menos carga") ni de usar la racha o la "memoria muscular" como causa.
+- Los consejos de comida usan sus metas DIARIAS del perfil, nunca cifras inventadas ni "X gramos la noche anterior".
 
 ESTILO DE RESPUESTA:
 - Máximo 3-4 oraciones salvo que pidan más detalle, un plan o una receta.

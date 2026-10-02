@@ -935,3 +935,20 @@ class GastoRealTests(Base):
         with en(HOY):
             r = self.api.get('/api/progreso-completo/')
         self.assertEqual(r.data['proyeccion']['tendencia_kg_semana'], -0.5)
+
+
+class ContextoBruceTests(Base):
+    """Lo que Bruce recibe para no inventar datos."""
+
+    def test_dia_por_dia_y_cargas_comparadas(self):
+        from .views import _contexto_semana
+        Comida.objects.create(usuario=self.user, nombre='x', calorias=1850, proteina=95, fecha=HOY - timedelta(days=1))
+        lunes_pasado = self.sesion(HOY - timedelta(days=8))
+        EjercicioLog.objects.create(sesion=lunes_pasado, nombre='Chest press', series=3, reps='10', peso_kg=64)
+        ayer = self.sesion(HOY - timedelta(days=1))
+        EjercicioLog.objects.create(sesion=ayer, nombre='Chest press', series=3, reps='8', peso_kg=52)
+        with en(HOY):
+            texto = _contexto_semana(self.user, HOY)
+        self.assertIn('lun 21/09: 1850 kcal, 95 g prot', texto)
+        self.assertIn('dom 20/09: sin comida registrada', texto)          # no anotó ≠ comió 0
+        self.assertIn('Chest press 3x8 52 kg (antes 64 kg 3x10 el lun 14/09)', texto)
