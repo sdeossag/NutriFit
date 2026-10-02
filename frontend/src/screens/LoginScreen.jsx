@@ -3,6 +3,49 @@ import { GoogleLogin } from '@react-oauth/google'
 import { loginGoogle, loginApple } from '../api'
 import bruceFace from '../assets/bruce-face.webp'
 
+// Google bloquea iniciar sesión dentro de los navegadores internos de otras apps
+// (error 403 disallowed_useragent). Pasa sobre todo al abrir el enlace desde
+// WhatsApp, Instagram o Facebook: ahí se ofrece abrir la página en el navegador.
+const UA = typeof navigator !== 'undefined' ? navigator.userAgent : ''
+const APP_INTERNA = (() => {
+  if (/WhatsApp/i.test(UA)) return 'WhatsApp'
+  if (/Instagram/i.test(UA)) return 'Instagram'
+  if (/FBAN|FBAV|FB_IAB|FBIOS/i.test(UA)) return 'Facebook'
+  if (/TikTok|musical_ly|BytedanceWebview/i.test(UA)) return 'TikTok'
+  if (/Snapchat/i.test(UA)) return 'Snapchat'
+  if (/\bLine\//i.test(UA)) return 'LINE'
+  if (/Android/i.test(UA) && /; wv\)/.test(UA)) return 'esta app'   // WebView genérico de Android
+  return null
+})()
+const ES_ANDROID = /Android/i.test(UA)
+
+function AvisoNavegadorInterno() {
+  const [copiado, setCopiado] = useState(false)
+  const url = window.location.origin + window.location.pathname
+  // En Android, un intent abre la misma página directamente en Chrome
+  const intentChrome = `intent://${window.location.host}${window.location.pathname}#Intent;scheme=https;package=com.android.chrome;end`
+  const copiar = async () => {
+    try { await navigator.clipboard.writeText(url); setCopiado(true) } catch { /* sin portapapeles */ }
+  }
+  return (
+    <div className='nf-card nf-reveal' style={{ padding: '16px', textAlign: 'center' }}>
+      <p className='nf-headline' style={{ marginBottom: '4px' }}>Abre NutriFit en tu navegador</p>
+      <p className='nf-footnote' style={{ marginBottom: '14px' }}>
+        Google no deja iniciar sesión dentro de {APP_INTERNA}.{' '}
+        {ES_ANDROID ? 'Ábrela en Chrome y entra desde ahí.' : 'Toca ··· o el ícono de compartir y elige "Abrir en Safari".'}
+      </p>
+      {ES_ANDROID && (
+        <a href={intentChrome} className='nf-btn nf-btn--primary nf-btn--lg nf-btn--block' style={{ marginBottom: '10px' }}>
+          Abrir en Chrome
+        </a>
+      )}
+      <button onClick={copiar} className='nf-btn nf-btn--tinted nf-btn--block'>
+        {copiado ? 'Enlace copiado' : 'Copiar enlace'}
+      </button>
+    </div>
+  )
+}
+
 export default function LoginScreen({ onLogin }) {
   const [cargando, setCargando] = useState(null)
   const [error, setError]       = useState(null)
@@ -80,7 +123,8 @@ export default function LoginScreen({ onLogin }) {
       <div className='nf-enter' style={{ animationDelay: '80ms', width: '100%', maxWidth: '380px', margin: '0 auto' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
 
-          {/* Google: capa visual propia, el botón oficial va invisible encima (entrega el id_token) */}
+          {APP_INTERNA ? <AvisoNavegadorInterno /> : (
+          /* Google: capa visual propia, el botón oficial va invisible encima (entrega el id_token) */
           <div style={{ position: 'relative', opacity: cargando && cargando !== 'google' ? 0.4 : 1 }}>
             <div
               aria-hidden='true'
@@ -103,6 +147,7 @@ export default function LoginScreen({ onLogin }) {
               />
             </div>
           </div>
+          )}
 
           <button
             onClick={handleApple}
