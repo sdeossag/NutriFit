@@ -681,6 +681,18 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 }
 .nf-collapse[data-open="true"] { grid-template-rows: 1fr; }
 .nf-collapse > * { min-height: 0; overflow: hidden; }
+/* El contenido llega un instante después del espacio y baja 4px: se lee
+   como algo que sale de la fila, no como una caja que se estira */
+.nf-collapse--fade > * > * {
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 150ms ease-out, transform var(--dur-fast) var(--ease-out);
+}
+.nf-collapse--fade[data-open="true"] > * > * {
+  opacity: 1;
+  transform: none;
+  transition-delay: 40ms;
+}
 
 /* ── Accesibilidad ───────────────────────────────────────────────────── */
 
@@ -690,6 +702,7 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
   .nf-dot { animation-name: nf-pulse; transform: none; }
   .nf-skeleton { animation: none; }
   .nf-seg-thumb, .nf-collapse, .nf-switch::after { transition-duration: 0ms; }
+  .nf-collapse--fade > * > * { transform: none; }
   .nf-toast { transition: opacity 200ms ease; }
   .nf-toast[data-state="enter"], .nf-toast[data-state="exit"] { transform: translate(-50%, 0); }
   button:not(:disabled):active, .nf-press:active { transform: none; opacity: 0.7; }

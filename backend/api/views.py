@@ -23,10 +23,11 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from . import chat_plan, estadisticas
+from .rutinas import foto_rutina
 from .models import (
     Comida, SesionGym, EjercicioLog, PesoCorporal, AlimentoAlacena,
     MensajeChat, SesionChat, Rutina, RutinaDia, EjercicioPersonalizado,
-    RegistroAgua,
+    RegistroAgua, UID_EJERCICIO,
 )
 from .serializers import (
     ComidaSerializer, SesionGymSerializer,
@@ -491,6 +492,7 @@ Responde ÚNICAMENTE con este JSON válido, sin texto adicional:
 # ──────────────────────────────────────────────
 
 MAX_EJERCICIOS = 40
+MAX_SERIES = 20
 
 
 def _a_bool(valor):
@@ -525,14 +527,51 @@ def _validar_ejercicio(item):
     peso, err = _numero(item.get('peso_kg'), 0, 1000, opcional=True)
     if err:
         return None, f'peso {err}'
+    reps = str(item.get('reps') or '10').strip()[:50]
+
+    detalle, err = _validar_series(item.get('series_detalle'))
+    if err:
+        return None, err
+    if detalle:
+        # El resumen sale de las series: así el historial y las gráficas siguen igual
+        series = len(detalle)
+        lista_reps = [d['reps'] for d in detalle if d['reps'] is not None]
+        if lista_reps:
+            reps = str(lista_reps[0]) if len(set(lista_reps)) == 1 else '-'.join(map(str, lista_reps))
+        pesos = [d['peso_kg'] for d in detalle if d['peso_kg'] is not None]
+        peso = max(pesos) if pesos else None
+
     return {
         'nombre':  nombre,
         'musculo': str(item.get('musculo') or '')[:100],
         'series':  series,
-        'reps':    str(item.get('reps') or '10').strip()[:50],
+        'reps':    reps,
         'peso_kg': peso,
         'notas':   str(item.get('notas') or '')[:500],
+        'series_detalle': detalle,
+        'ejercicio_uid':  uid if UID_EJERCICIO.fullmatch(uid := str(item.get('uid') or '')) else '',
     }, None
+
+
+def _validar_series(lista):
+    """Series hechas una a una: [{reps, peso_kg}]. Las vacías se descartan."""
+    if lista in (None, ''):
+        return [], None
+    if not isinstance(lista, list) or len(lista) > MAX_SERIES:
+        return None, f'máximo {MAX_SERIES} series'
+    limpias = []
+    for i, s in enumerate(lista):
+        if not isinstance(s, dict):
+            return None, f'serie {i + 1}: formato inválido'
+        reps, err = _numero(s.get('reps'), 0, 500, entero=True, opcional=True)
+        if err:
+            return None, f'serie {i + 1}: reps {err}'
+        peso, err = _numero(s.get('peso_kg'), 0, 1000, opcional=True)
+        if err:
+            return None, f'serie {i + 1}: peso {err}'
+        if reps is not None or peso is not None:
+            limpias.append({'reps': reps, 'peso_kg': peso})
+    return limpias, None
 
 
 # ──────────────────────────────────────────────
@@ -706,18 +745,28 @@ def registrar_sesion(request):
     else:
         completada = _a_bool(request.data.get('completada', False))
 
+    defaults = {
+        'rutina':     rutina,
+        'completada': completada,
+        'notas':      str(request.data.get('notas', ''))[:500],
+    }
+    # Hoy (o mañana) la copia sigue a la rutina; un día pasado conserva la que ya tenía
+    hoy = timezone.localdate()
+    if rutina_ref is not None and fecha >= hoy:
+        defaults['rutina_snapshot'] = foto_rutina(rutina_ref)
+
     with transaction.atomic():
         # Una sesión por rutina y día: el doble entreno guarda cada una aparte
         sesion, _ = SesionGym.objects.update_or_create(
             usuario=request.user,
             fecha=fecha,
             rutina_ref=rutina_ref,
-            defaults={
-                'rutina':     rutina,
-                'completada': completada,
-                'notas':      str(request.data.get('notas', ''))[:500],
-            },
+            defaults=defaults,
         )
+        if rutina_ref is not None and not sesion.rutina_snapshot:
+            # Registrar tarde un día pasado: se congela la versión con la que se registró
+            sesion.rutina_snapshot = foto_rutina(rutina_ref)
+            sesion.save(update_fields=['rutina_snapshot'])
         if registros is not None:
             sesion.ejercicios.all().delete()
             EjercicioLog.objects.bulk_create([EjercicioLog(sesion=sesion, **r) for r in registros])
@@ -1322,6 +1371,17 @@ def _contexto_dias(user, hoy):
     return '\n'.join(lineas)
 
 
+def _texto_cargas(e):
+    """'52kg×10, 52kg×8' con el detalle por serie; si no, '3x10 52 kg'."""
+    if e.series_detalle:
+        def serie(d):
+            kg = f"{d['peso_kg']:g}kg" if d.get('peso_kg') is not None else 'sin peso'
+            return f"{kg}×{d['reps']}" if d.get('reps') is not None else kg
+        return 'series ' + ', '.join(serie(d) for d in e.series_detalle)
+    peso = f' {e.peso_kg:g} kg' if e.peso_kg is not None else ''
+    return f'{e.series}x{e.reps}{peso}'
+
+
 def _contexto_entrenos(user, hoy, max_sesiones=4):
     """Las últimas sesiones con sus cargas y la comparación con la vez anterior
     de cada ejercicio. Sin esto Bruce no puede hablar de rendimiento."""
@@ -1331,18 +1391,26 @@ def _contexto_entrenos(user, hoy, max_sesiones=4):
     )
     if not sesiones:
         return 'ENTRENOS RECIENTES: no hay sesiones registradas en las últimas 3 semanas.'
+    # Una sola consulta para "la vez anterior" de todos los ejercicios (antes: una por ejercicio).
+    # Se mira hasta 6 meses atrás; más allá la comparación ya no dice mucho.
+    nombres = {e.nombre for s in sesiones for e in s.ejercicios.all()}
+    anteriores = {}
+    for log in (EjercicioLog.objects
+                .filter(sesion__usuario=user, nombre__in=nombres, peso_kg__isnull=False,
+                        sesion__fecha__gte=hoy - timedelta(days=180), sesion__fecha__lt=sesiones[0].fecha)
+                .select_related('sesion').order_by('-sesion__fecha', '-id')):
+        anteriores.setdefault(log.nombre, []).append(log)
+
     lineas = ['ENTRENOS RECIENTES (cargas registradas; "antes" = la vez anterior que hizo ese ejercicio):']
     for s in sesiones:
         partes = []
         for e in s.ejercicios.all():
-            if e.peso_kg is None:
+            if e.peso_kg is None and not e.series_detalle:
                 partes.append(f'{e.nombre} {e.series}x{e.reps}')
                 continue
-            previo = (EjercicioLog.objects
-                      .filter(sesion__usuario=user, nombre=e.nombre, sesion__fecha__lt=s.fecha, peso_kg__isnull=False)
-                      .select_related('sesion').order_by('-sesion__fecha').first())
-            antes = f' (antes {previo.peso_kg:g} kg {previo.series}x{previo.reps} el {_dia(previo.sesion.fecha)})' if previo else ''
-            partes.append(f'{e.nombre} {e.series}x{e.reps} {e.peso_kg:g} kg{antes}')
+            previo = next((x for x in anteriores.get(e.nombre, []) if x.sesion.fecha < s.fecha), None)
+            antes = f' (antes {_texto_cargas(previo)} el {_dia(previo.sesion.fecha)})' if previo else ''
+            partes.append(f'{e.nombre} {_texto_cargas(e)}{antes}')
         estado = '' if s.completada else ' [sin terminar]'
         lineas.append(f'• {_dia(s.fecha)} – {_nombre_sesion(s)}{estado}: ' + ('; '.join(partes) or 'sin ejercicios registrados'))
     return '\n'.join(lineas)
@@ -1744,6 +1812,7 @@ def historial_ejercicios(request):
         EjercicioLog.objects
         .filter(sesion__usuario=user, peso_kg__isnull=False)
         .select_related('sesion')
+        .only('nombre', 'musculo', 'reps', 'series', 'peso_kg', 'sesion__fecha')   # sin el detalle por serie
         .order_by('sesion__fecha')
     )
 

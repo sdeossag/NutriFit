@@ -95,6 +95,15 @@ function getEjercicioColor(ex, pool) {
   return null
 }
 
+// ─── UID DE EJERCICIO ──────────────────────────────────────────────────────────
+// Cada ejercicio de una rutina tiene un uid estable: lo marcado, las series y
+// las notas se guardan por uid, nunca por posición. Así borrar, mover o renombrar
+// un ejercicio no le pasa sus datos a otro. El servidor conserva los que mandamos.
+const nuevoUid = () => Array.from(crypto.getRandomValues(new Uint8Array(6)), b => b.toString(16).padStart(2, '0')).join('')
+const uidDe    = (ex, i) => ex.uid ?? `pos${i}`
+// Solo cuenta lo marcado que sigue existiendo en la rutina
+const hechosDe = (lista, rutina) => (lista ?? []).filter(u => rutina.ejercicios.some((ex, i) => uidDe(ex, i) === u))
+
 // ─── RESUMEN SEMANAL ───────────────────────────────────────────────────────────
 function ResumenSemanal({ semana, completados, rutinasDe, clave, pool, pasada }) {
   let diasActivos = 0
@@ -102,8 +111,8 @@ function ResumenSemanal({ semana, completados, rutinasDe, clave, pool, pasada })
   semana.forEach(({ fecha, dayOfWeek }) => {
     let activo = false
     for (const rutina of rutinasDe(fecha, dayOfWeek)) {
-      for (const idx of completados[clave(fecha, rutina.id)] ?? []) {
-        const ex = rutina.ejercicios[idx]
+      for (const uid of completados[clave(fecha, rutina.id)] ?? []) {
+        const ex = rutina.ejercicios.find((e, i) => uidDe(e, i) === uid)
         if (!ex) continue
         activo = true
         const musculo = ex.musculo || pool.find(p => p.nombre === ex.nombre)?.musculo
@@ -494,7 +503,7 @@ function RutinaEditor({ open, rutina, diasUso = [], pool, onSave, onClose, onEli
     return matchMus && matchBus && !yaEsta
   })
 
-  const agregarDelPool  = (ex) => { setEjercicios(prev => [...prev, { ...ex }]); haptic(6) }
+  const agregarDelPool  = (ex) => { setEjercicios(prev => [...prev, { ...ex, uid: nuevoUid() }]); haptic(6) }
   const quitarEjercicio = (idx) => setEjercicios(prev => prev.filter((_, i) => i !== idx))
 
   const moverEjercicio = (idx, dir) => {
@@ -625,7 +634,7 @@ function RutinaEditor({ open, rutina, diasUso = [], pool, onSave, onClose, onEli
           ) : (
             <div className='nf-card' style={{ overflow: 'hidden', background: 'var(--surface-3)' }}>
               {ejercicios.map((ex, i) => (
-                <div key={`${ex.nombre}-${i}`} className='nf-row' style={{ padding: '6px 4px 6px 4px', gap: '4px' }}>
+                <div key={uidDe(ex, i)} className='nf-row' style={{ padding: '6px 4px 6px 4px', gap: '4px' }}>
                   <div style={{ display: 'flex', flexDirection: 'column' }}>
                     <button onClick={() => moverEjercicio(i, -1)} disabled={i === 0} className='nf-icon-btn nf-icon-btn--sm' style={{ height: '28px', opacity: i === 0 ? 0.25 : 1 }} aria-label={`Subir ${ex.nombre}`}>
                       <IconChevronUp size={18} />
@@ -875,11 +884,174 @@ function PanelOtraRutina({ abierto, lib, delDia, fijas, onAlternar }) {
   )
 }
 
+// ─── SERIES ────────────────────────────────────────────────────────────────────
+// Cada ejercicio hecho guarda sus series una a una: [{ reps, peso }] como texto
+// mientras se editan; al guardar viajan como series_detalle.
+const MAX_SERIES = 20
+const numero = (v) => String(v ?? '').replace(',', '.').match(/\d+(\.\d+)?/)?.[0] ?? ''
+
+// La última vez antes de `fecha` que se hizo ese ejercicio. `historial` viene
+// con GET /rutinas/ (ultimos): por nombre en minúsculas, de viejo a nuevo.
+const ultimaVez = (historial, nombre, fecha) => {
+  const regs = historial[nombre.toLowerCase()] ?? []
+  for (let i = regs.length - 1; i >= 0; i--) if (regs[i].fecha < fecha) return regs[i]
+  return null
+}
+
+// Las series empiezan como la última vez; si nunca se hizo, como dice la rutina.
+// También convierte un registro guardado (con o sin detalle) en series editables.
+function seriesIniciales(ex, previo) {
+  if (previo?.series_detalle?.length) {
+    return previo.series_detalle.map(d => ({ reps: d.reps != null ? String(d.reps) : '', peso: d.peso_kg != null ? String(d.peso_kg) : '' }))
+  }
+  const base = previo ?? { series: ex?.series, reps: ex?.reps, peso_kg: numero(ex?.peso) }
+  const n    = Math.min(Math.max(Number(base.series) || 3, 1), MAX_SERIES)
+  const reps = String(base.reps ?? '').split('-')
+  const peso = base.peso_kg != null ? numero(base.peso_kg) : ''
+  return Array.from({ length: n }, (_, i) => ({ reps: numero(reps.length === n ? reps[i] : reps[0]), peso }))
+}
+
+const textoSerie = ({ reps, peso }) =>
+  peso && reps ? `${peso} kg × ${reps}` : peso ? `${peso} kg` : reps ? `${reps} reps` : 'Sin datos'
+
+const textoPrevio = (previo) => previo.series_detalle?.length
+  ? previo.series_detalle.map(d => d.peso_kg != null && d.reps != null ? `${d.peso_kg}×${d.reps}` : d.peso_kg != null ? `${d.peso_kg} kg` : `${d.reps} reps`).join(' · ')
+  : `${previo.series}×${previo.reps}${previo.peso_kg != null ? ` · ${previo.peso_kg} kg` : ''}`
+
+// Las series de un ejercicio: cada una se despliega para editar reps y peso.
+// Solo una abierta a la vez, como un acordeón de iOS.
+function ListaSeries({ series, onCambiar, color, activa, previo }) {
+  const [abierta, setAbierta] = useState(null)
+  const tab = activa ? 0 : -1
+
+  const cambiar = (i, campo, valor) => onCambiar(series.map((x, n) => (n === i ? { ...x, [campo]: valor } : x)))
+
+  const agregar = () => {
+    if (series.length >= MAX_SERIES) return
+    haptic(6)
+    // La nueva copia la anterior: casi siempre se repite carga y reps
+    onCambiar([...series, { ...(series.at(-1) ?? { reps: '', peso: '' }) }])
+    setAbierta(series.length)
+  }
+
+  const quitar = (i, fila) => {
+    haptic(10)
+    const borrar = () => {
+      onCambiar(series.filter((_, n) => n !== i))
+      setAbierta(null)
+    }
+    if (prefersReducedMotion() || !fila?.animate) return borrar()
+    // Se encoge y se desvanece antes de salir: nada desaparece de golpe
+    fila.style.overflow = 'hidden'
+    fila.animate(
+      [{ height: `${fila.offsetHeight}px`, opacity: 1 }, { height: '0px', opacity: 0, marginTop: '-6px' }],
+      { duration: 200, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' },
+    ).onfinish = () => { fila.style.overflow = ''; borrar() }
+  }
+
+  return (
+    <div>
+      {previo && (
+        <p className='nf-caption nf-num' style={{ margin: '0 0 8px 4px' }}>
+          La última vez: <span style={{ color: 'var(--label-2)' }}>{textoPrevio(previo)}</span>
+        </p>
+      )}
+      <ol style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        {series.map((serie, i) => {
+          const open = abierta === i
+          return (
+            <li key={i} className='nf-reveal' style={{
+              background: 'var(--surface-2)', borderRadius: '12px',
+              boxShadow: open ? `inset 0 0 0 1px color-mix(in srgb, ${color} 35%, transparent)` : 'inset 0 0 0 0.5px var(--separator)',
+              transition: 'box-shadow 200ms ease',
+            }}>
+              <button
+                onClick={() => { haptic(4); setAbierta(open ? null : i) }}
+                aria-expanded={open}
+                tabIndex={tab}
+                className='nf-press-soft'
+                style={{ width: '100%', minHeight: '44px', padding: '0 10px 0 8px', display: 'flex', alignItems: 'center', gap: '10px', textAlign: 'left' }}
+              >
+                <span className='nf-num' style={{
+                  width: '24px', height: '24px', borderRadius: '50%', flexShrink: 0,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '12px', fontWeight: 700,
+                  background: `color-mix(in srgb, ${color} 18%, transparent)`, color,
+                }}>{i + 1}</span>
+                <span style={{ flex: 1, fontSize: '15px', fontWeight: 500 }}>Serie {i + 1}</span>
+                <span className='nf-num' style={{ fontSize: '15px', color: serie.peso || serie.reps ? 'var(--label)' : 'var(--label-3)' }}>
+                  {textoSerie(serie)}
+                </span>
+                <IconChevronRight size={16} color='var(--label-4)' aria-hidden='true' style={{
+                  flexShrink: 0, transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 200ms var(--ease-out)',
+                }} />
+              </button>
+
+              <div className='nf-collapse nf-collapse--fade' data-open={open}>
+                <div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 44px', gap: '8px', alignItems: 'end', padding: '2px 8px 10px' }}>
+                    <label>
+                      <span className='nf-caption' style={{ display: 'block', margin: '0 0 4px 4px', fontWeight: 600 }}>Peso (kg)</span>
+                      <input
+                        type='text' inputMode='decimal' enterKeyHint='next'
+                        aria-label={`Peso de la serie ${i + 1} en kg`}
+                        className='nf-input nf-num'
+                        tabIndex={open ? tab : -1}
+                        value={serie.peso}
+                        placeholder='0'
+                        onChange={e => cambiar(i, 'peso', e.target.value)}
+                        style={{ '--tint': color, minHeight: '42px', padding: '9px 12px' }}
+                      />
+                    </label>
+                    <label>
+                      <span className='nf-caption' style={{ display: 'block', margin: '0 0 4px 4px', fontWeight: 600 }}>Reps</span>
+                      <input
+                        type='text' inputMode='numeric' enterKeyHint='done'
+                        aria-label={`Repeticiones de la serie ${i + 1}`}
+                        className='nf-input nf-num'
+                        tabIndex={open ? tab : -1}
+                        value={serie.reps}
+                        placeholder='0'
+                        onChange={e => cambiar(i, 'reps', e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.currentTarget.blur(); setAbierta(null) } }}
+                        style={{ '--tint': color, minHeight: '42px', padding: '9px 12px' }}
+                      />
+                    </label>
+                    <button
+                      onClick={e => quitar(i, e.currentTarget.closest('li'))}
+                      className='nf-icon-btn'
+                      tabIndex={open ? tab : -1}
+                      aria-label={`Quitar serie ${i + 1}`}
+                      style={{ color: 'var(--red)', height: '42px' }}
+                    >
+                      <IconTrash size={18} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </li>
+          )
+        })}
+      </ol>
+      {series.length < MAX_SERIES && (
+        <button
+          onClick={agregar}
+          tabIndex={tab}
+          className='nf-btn nf-btn--sm nf-btn--tinted'
+          style={{ '--tint': color, marginTop: '8px' }}
+        >
+          <IconPlus size={15} /> Añadir serie
+        </button>
+      )}
+    </div>
+  )
+}
+
 // ─── TARJETA DE UNA RUTINA DEL DÍA ─────────────────────────────────────────────
 // Con doble entreno hay una por rutina. El chevron la recoge o la despliega.
 function TarjetaRutina({
   rutina, fecha, pool, recogida, onRecoger, onEditar,
-  hechos, log, onToggle, onLog, guardando, guardado, onGuardar, bloqueada,
+  hechos, log, onToggle, onLog, guardando, guardado, onGuardar, bloqueada, historial,
 }) {
   const [expandido, setExpandido]       = useState({})
   const [timerAbierto, setTimerAbierto] = useState(null)
@@ -889,9 +1061,9 @@ function TarjetaRutina({
   const completa  = total > 0 && hechos.length === total
   const idLista   = `lista-${fecha}-${rutina.id}`
 
-  const alternar = (j) => {
-    const terminaAhora = !hechos.includes(j) && hechos.length + 1 === total
-    onToggle(j)
+  const alternar = (id) => {
+    const terminaAhora = !hechos.includes(id) && hechos.length + 1 === total
+    onToggle(id)
     if (terminaAhora) {
       setConfetti(true)
       haptic(30)
@@ -934,29 +1106,35 @@ function TarjetaRutina({
             flexShrink: 0, transform: recogida ? 'rotate(-90deg)' : 'none', transition: 'transform 200ms var(--ease-out)',
           }} />
         </button>
-        <button onClick={onEditar} className='nf-icon-btn' aria-label={`Editar ${rutina.nombre}`} style={{ color: colores.text }}>
-          <IconPencil size={18} />
-        </button>
+        {onEditar && (
+          <button onClick={onEditar} className='nf-icon-btn' aria-label={`Editar ${rutina.nombre}`} style={{ color: colores.text }}>
+            <IconPencil size={18} />
+          </button>
+        )}
       </div>
 
       <div id={idLista} className='nf-collapse' data-open={!recogida}>
         <div>
           <ul style={{ listStyle: 'none' }}>
             {rutina.ejercicios.map((ex, j) => {
-              const hecho      = hechos.includes(j)
-              const isExpanded = expandido[j] ?? false
-              const logEx      = log[j] ?? {}
-              const timerOpen  = timerAbierto === j
+              const id         = uidDe(ex, j)
+              const hecho      = hechos.includes(id)
+              const isExpanded = expandido[id] ?? false
+              const logEx      = log[id] ?? {}
+              const timerOpen  = timerAbierto === id
               const exColor    = getEjercicioColor(ex, pool)
               const musculo    = ex.musculo || pool.find(p => p.nombre === ex.nombre)?.musculo || ''
               const tab        = recogida ? -1 : 0
+              const previo     = ultimaVez(historial, ex.nombre, fecha)
+              const series     = logEx.series
+              const maxPeso    = series ? Math.max(0, ...series.map(x => Number(numero(x.peso)) || 0)) : 0
 
               return (
-                <li key={j} className='nf-row' style={{ display: 'block', padding: 0, '--row-inset': '60px' }}>
+                <li key={id} className='nf-row' style={{ display: 'block', padding: 0, '--row-inset': '60px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px' }}>
                     {/* Check: 44px de área táctil */}
                     <button
-                      onClick={() => alternar(j)}
+                      onClick={() => alternar(id)}
                       role='checkbox'
                       aria-checked={hecho}
                       aria-label={`Marcar ${ex.nombre}`}
@@ -979,7 +1157,11 @@ function TarjetaRutina({
 
                     {/* Info: toca para registrar peso/reps */}
                     <button
-                      onClick={() => setExpandido(prev => ({ ...prev, [j]: !isExpanded }))}
+                      onClick={() => {
+                        // Al abrirlo por primera vez se rellena como la última vez
+                        if (!isExpanded && !series) onLog(id, 'series', seriesIniciales(ex, previo))
+                        setExpandido(prev => ({ ...prev, [id]: !isExpanded }))
+                      }}
                       aria-expanded={isExpanded}
                       className='nf-press-soft'
                       tabIndex={tab}
@@ -998,7 +1180,11 @@ function TarjetaRutina({
                           {exColor && musculo && <span className='nf-badge' style={{ '--tint': exColor.text, height: '20px', fontSize: '11px' }}>{musculo}</span>}
                           <span className='nf-caption nf-num'>
                             {ex.series}×{ex.reps} · {ex.peso}
-                            {logEx.peso && <span style={{ color: colores.text, marginLeft: '4px', fontWeight: 700 }}>→ {logEx.peso} kg</span>}
+                            {series && hecho && (
+                              <span style={{ color: colores.text, marginLeft: '4px', fontWeight: 700 }}>
+                                → {series.length} {series.length === 1 ? 'serie' : 'series'}{maxPeso > 0 && ` · ${maxPeso} kg`}
+                              </span>
+                            )}
                           </span>
                         </span>
                       </span>
@@ -1006,7 +1192,7 @@ function TarjetaRutina({
                     </button>
 
                     <button
-                      onClick={() => setTimerAbierto(prev => prev === j ? null : j)}
+                      onClick={() => setTimerAbierto(prev => prev === id ? null : id)}
                       className='nf-icon-btn'
                       aria-label={`Temporizador de descanso para ${ex.nombre}`}
                       aria-pressed={timerOpen}
@@ -1021,32 +1207,15 @@ function TarjetaRutina({
                   <div className='nf-collapse' data-open={isExpanded}>
                     <div>
                       <div style={{ padding: '4px 16px 16px 52px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                          <label>
-                            <span className='nf-caption' style={{ display: 'block', margin: '0 0 4px 4px', fontWeight: 600 }}>Peso real (kg)</span>
-                            <input
-                              type='number' step='0.5' inputMode='decimal'
-                              className='nf-input nf-num'
-                              tabIndex={isExpanded && !recogida ? 0 : -1}
-                              value={logEx.peso ?? ''}
-                              placeholder={ex.peso}
-                              onChange={e => onLog(j, 'peso', e.target.value)}
-                              style={{ '--tint': colores.text }}
-                            />
-                          </label>
-                          <label>
-                            <span className='nf-caption' style={{ display: 'block', margin: '0 0 4px 4px', fontWeight: 600 }}>Reps reales</span>
-                            <input
-                              type='text' inputMode='numeric'
-                              className='nf-input nf-num'
-                              tabIndex={isExpanded && !recogida ? 0 : -1}
-                              value={logEx.reps ?? ''}
-                              placeholder={ex.reps}
-                              onChange={e => onLog(j, 'reps', e.target.value)}
-                              style={{ '--tint': colores.text }}
-                            />
-                          </label>
-                        </div>
+                        {series && (
+                          <ListaSeries
+                            series={series}
+                            previo={previo}
+                            color={colores.text}
+                            activa={isExpanded && !recogida}
+                            onCambiar={nuevas => onLog(id, 'series', nuevas)}
+                          />
+                        )}
                         <input
                           type='text'
                           className='nf-input'
@@ -1054,7 +1223,7 @@ function TarjetaRutina({
                           aria-label='Nota del ejercicio'
                           value={logEx.nota ?? ''}
                           placeholder='Nota: ej. "sentí el hombro raro"'
-                          onChange={e => onLog(j, 'nota', e.target.value)}
+                          onChange={e => onLog(id, 'nota', e.target.value)}
                           style={{ '--tint': colores.text }}
                         />
                       </div>
@@ -1071,7 +1240,7 @@ function TarjetaRutina({
             })}
           </ul>
 
-          {hechos.length > 0 && (
+          {hechos.length > 0 && !bloqueada && (
             <div className='nf-reveal' style={{ boxShadow: 'inset 0 0.5px 0 var(--separator)', padding: '14px 16px 16px' }}>
               <div style={{ height: '4px', background: 'rgba(255,255,255,0.07)', borderRadius: '2px', overflow: 'hidden', marginBottom: '12px' }}>
                 <div style={{
@@ -1129,6 +1298,12 @@ export default function GymScreen({ t, screen }) {
   // Claves por sesión: `${fecha}|${rutinaId}`
   const [completados, setCompletados]   = useState({})
   const [logData, setLogData]           = useState({})
+  // Versiones anteriores del plan ([{desde, semana}]) y la rutina congelada de cada
+  // sesión pasada (por clave): cambiar algo hoy no reescribe los días pasados
+  const [planes, setPlanes]             = useState([])
+  const [fotos, setFotos]               = useState({})
+  // Últimos registros por ejercicio: rellenan las series "como la última vez"
+  const [historial, setHistorial]       = useState({})
   const [guardando, setGuardando]       = useState(null)
   const [guardado, setGuardado]         = useState({})
   const [recogidas, setRecogidas]       = useState(leerRecogidas)
@@ -1152,11 +1327,25 @@ export default function GymScreen({ t, screen }) {
 
   const clave = (fecha, id) => `${fecha}|${id}`
 
-  // Las del plan de ese día, más las que ya se hicieron esa fecha aunque luego se hayan movido
+  // El plan que valía esa fecha: hoy y después, el actual; antes, la versión de entonces
+  const planPara = (fecha) => {
+    if (fecha >= hoy) return plan
+    let vigente = null
+    for (const p of planes) if (p.desde <= fecha) vigente = p.semana
+    return vigente ?? plan
+  }
+
+  // Las del plan de ese día, más las que ya se hicieron esa fecha aunque luego se hayan movido.
+  // En días pasados, una rutina con sesión guardada se dibuja como era ese día.
   const rutinasDe = (fecha, dow) => {
-    const ids = [...(plan?.[dow] ?? [])]
+    const ids = [...(planPara(fecha)?.[dow] ?? [])]
     for (const id of [...(hechasPorFecha[fecha] ?? []), ...(extrasPorFecha[fecha] ?? [])]) if (!ids.includes(id)) ids.push(id)
-    return ids.map(id => lib[id]).filter(Boolean)
+    return ids.map(id => (fecha < hoy && fotos[clave(fecha, id)]) || lib[id]).filter(Boolean)
+  }
+
+  // La primera vez que cambia el plan, lo de antes queda como la versión del pasado
+  const anotarPlanAnterior = (anterior) => {
+    if (anterior) setPlanes(prev => (prev.length ? prev : [{ desde: '2000-01-01', semana: anterior }]))
   }
   const diasDeRutina = (id) => (plan ? Object.keys(plan).map(Number).filter(d => plan[d].includes(id)).sort() : [])
 
@@ -1169,6 +1358,8 @@ export default function GymScreen({ t, screen }) {
     ])
       .then(([datos, sesiones, biblioteca]) => {
         if (cancelado) return
+        setHistorial(datos.ultimos ?? {})
+        setPlanes(datos.planes ?? [])
         const nuevaLib  = Object.fromEntries(datos.rutinas.map(r => [r.id, r]))
         const nuevoPlan = Object.fromEntries(Object.entries(datos.semana).map(([d, ids]) => [Number(d), ids ?? []]))
         setLib(nuevaLib)
@@ -1176,7 +1367,7 @@ export default function GymScreen({ t, screen }) {
         setPool(Array.isArray(biblioteca) ? biblioteca : [])
 
         // Marca lo que ya se registró esta semana, sesión por sesión
-        const hechas = {}, marcados = {}, logs = {}
+        const hechas = {}, marcados = {}, logs = {}, congeladas = {}
         for (const s of Array.isArray(sesiones) ? sesiones : []) {
           const nombres = (s.ejercicios ?? []).map(e => e.nombre)
           if (!nombres.length) continue
@@ -1185,28 +1376,36 @@ export default function GymScreen({ t, screen }) {
           // Las sesiones guardadas antes de existir rutina_ref se enlazan con
           // la rutina que contiene esos ejercicios (primero las del plan del día)
           const contiene = (r) => r && nombres.every(n => r.ejercicios.some(ex => ex.nombre === n))
-          const rutina = nuevaLib[s.rutina_ref]
+          // Un día pasado se ve con la rutina tal como era; si ya se borró, queda solo para ver
+          const foto = s.fecha < hoy && s.rutina_snapshot?.ejercicios
+            ? { ...s.rutina_snapshot, id: s.rutina_ref ?? `eliminada-${s.id}`, eliminada: s.rutina_ref == null }
+            : null
+          const rutina = foto
+            ?? nuevaLib[s.rutina_ref]
             ?? (nuevoPlan[dow] ?? []).map(id => nuevaLib[id]).find(contiene)
             ?? Object.values(nuevaLib).find(contiene)
           if (!rutina) continue
+          if (foto) congeladas[clave(s.fecha, rutina.id)] = foto
           hechas[s.fecha] = [...(hechas[s.fecha] ?? []), rutina.id]
-          const k = clave(s.fecha, rutina.id), idxs = [], log = {}
+          const k = clave(s.fecha, rutina.id), ids = [], log = {}
           for (const ej of s.ejercicios) {
-            const idx = rutina.ejercicios.findIndex(ex => ex.nombre === ej.nombre)
-            if (idx === -1) continue
-            idxs.push(idx)
-            log[idx] = { peso: ej.peso_kg != null ? String(ej.peso_kg) : '', reps: ej.reps ?? '', nota: ej.notas ?? '' }
+            const idx = rutina.ejercicios.findIndex(ex => (ej.ejercicio_uid ? ex.uid === ej.ejercicio_uid : ex.nombre === ej.nombre))
+            if (idx === -1) continue   // ese ejercicio ya no está en la rutina
+            const id = uidDe(rutina.ejercicios[idx], idx)
+            ids.push(id)
+            log[id] = { series: seriesIniciales(rutina.ejercicios[idx], ej), nota: ej.notas ?? '' }
           }
-          marcados[k] = idxs
+          marcados[k] = ids
           logs[k] = log
         }
+        setFotos(congeladas)
         setHechasPorFecha(hechas)
         setCompletados(marcados)
         setLogData(logs)
       })
       .catch(() => { if (!cancelado) toast.error('No se pudieron cargar tus rutinas.') })
     return () => { cancelado = true }
-  }, [])
+  }, [hoy])   // hoy no cambia: se fija al montar
 
   const recoger = (id) => {
     haptic(6)
@@ -1218,20 +1417,21 @@ export default function GymScreen({ t, screen }) {
     })
   }
 
-  const toggleEjercicio = (k, idx) => {
+  const toggleEjercicio = (k, id) => {
     haptic(8)
     setCompletados(prev => {
       const lista = prev[k] ?? []
-      return { ...prev, [k]: lista.includes(idx) ? lista.filter(i => i !== idx) : [...lista, idx] }
+      return { ...prev, [k]: lista.includes(id) ? lista.filter(x => x !== id) : [...lista, id] }
     })
     setGuardado(prev => (prev[k] ? sinClave(prev, k) : prev))
   }
 
-  const updateLog = (k, idx, field, value) => {
+  const updateLog = (k, id, field, value) => {
     setLogData(prev => ({
       ...prev,
-      [k]: { ...(prev[k] ?? {}), [idx]: { ...(prev[k]?.[idx] ?? {}), [field]: value } },
+      [k]: { ...(prev[k] ?? {}), [id]: { ...(prev[k]?.[id] ?? {}), [field]: value } },
     }))
+    setGuardado(prev => (prev[k] ? sinClave(prev, k) : prev))
   }
 
   const guardarSesion = async (fecha, rutina) => {
@@ -1239,27 +1439,46 @@ export default function GymScreen({ t, screen }) {
     setGuardando(k)
     // Un solo envío por rutina: el servidor reemplaza sus ejercicios de ese día
     // y la marca como hecha. O se guarda todo o nada.
-    const ejercicios = (completados[k] || [])
-      .map(idx => {
-        const ejercicio = rutina.ejercicios[idx]
-        if (!ejercicio) return null
-        const logEx = logData[k]?.[idx] ?? {}
-        const m = String(logEx.peso || ejercicio.peso || '').replace(',', '.').match(/\d+(\.\d+)?/)
+    const ejercicios = hechosDe(completados[k], rutina)
+      .map(id => {
+        const ejercicio = rutina.ejercicios.find((ex, i) => uidDe(ex, i) === id)
+        const logEx  = logData[k]?.[id] ?? {}
+        // Si no se abrió, se guarda como la última vez (o como dice la rutina)
+        const series = logEx.series ?? seriesIniciales(ejercicio, ultimaVez(historial, ejercicio.nombre, fecha))
+        const peso   = numero(ejercicio.peso)
         return {
+          uid:     ejercicio.uid,
           nombre:  ejercicio.nombre,
           musculo: ejercicio.musculo || '',
-          series:  ejercicio.series,
-          reps:    logEx.reps || ejercicio.reps,
-          peso_kg: m ? parseFloat(m[0]) : null,
+          series:  series.length || ejercicio.series,
+          reps:    ejercicio.reps,
+          peso_kg: peso ? Number(peso) : null,
           notas:   logEx.nota || '',
+          // El servidor saca el resumen (series, reps, carga máxima) de aquí
+          series_detalle: series.map(x => ({ reps: numero(x.reps) || null, peso_kg: numero(x.peso) || null })),
         }
       })
-      .filter(Boolean)
     try {
       await registrarSesion({
         fecha, rutina_ref: rutina.id, ejercicios,
         notas: `${ejercicios.length}/${rutina.ejercicios.length} ejercicios`,
       })
+      // Lo recién guardado pasa a ser "la última vez" para los días siguientes
+      setHistorial(prev => {
+        const nuevo = { ...prev }
+        for (const e of ejercicios) {
+          const n = e.nombre.toLowerCase()
+          const registro = {
+            fecha, series: e.series, reps: e.reps,
+            peso_kg: Math.max(0, ...e.series_detalle.map(x => Number(x.peso_kg) || 0)) || null,
+            series_detalle: e.series_detalle.filter(x => x.reps != null || x.peso_kg != null)
+              .map(x => ({ reps: x.reps != null ? Number(x.reps) : null, peso_kg: x.peso_kg != null ? Number(x.peso_kg) : null })),
+          }
+          nuevo[n] = [...(prev[n] ?? []).filter(r => r.fecha !== fecha), registro].sort((a, b) => a.fecha.localeCompare(b.fecha))
+        }
+        return nuevo
+      })
+      if (fecha < hoy) setFotos(prev => (prev[k] ? prev : { ...prev, [k]: rutina }))
       setHechasPorFecha(prev => {
         const sinEsta = (prev[fecha] ?? []).filter(id => id !== rutina.id)
         return { ...prev, [fecha]: ejercicios.length ? [...sinEsta, rutina.id] : sinEsta }
@@ -1278,6 +1497,7 @@ export default function GymScreen({ t, screen }) {
   // Cambia el plan al instante y lo confirma con el servidor; si falla, vuelve.
   const cambiarPlan = async (cambios, { deshacer } = {}) => {
     const anterior = plan
+    anotarPlanAnterior(anterior)
     setPlan(prev => ({ ...prev, ...cambios }))
     haptic(10)
     try {
@@ -1355,7 +1575,8 @@ export default function GymScreen({ t, screen }) {
 
     setLib(prev => ({ ...prev, [rutina.id]: { ...prev[rutina.id], ...datos } }))
     try {
-      await editarRutina(rutina.id, datos)
+      const guardada = await editarRutina(rutina.id, datos)
+      setLib(prev => ({ ...prev, [rutina.id]: guardada }))
       toast.success('Rutina guardada')
     } catch (e) {
       setLib(prev => ({ ...prev, [rutina.id]: rutina }))
@@ -1368,6 +1589,7 @@ export default function GymScreen({ t, screen }) {
     setEditorAbierto(false)
     try {
       const datos = await eliminarRutina(rutina.id)
+      anotarPlanAnterior(plan)
       setLib(Object.fromEntries(datos.rutinas.map(r => [r.id, r])))
       setPlan(Object.fromEntries(Object.entries(datos.semana).map(([d, ids]) => [Number(d), ids ?? []])))
       toast(`Eliminaste ${rutina.nombre}`)
@@ -1377,6 +1599,7 @@ export default function GymScreen({ t, screen }) {
   }
 
   const aplicarRutinas = (datos) => {
+    anotarPlanAnterior(plan)
     setLib(Object.fromEntries(datos.rutinas.map(r => [r.id, r])))
     setPlan(Object.fromEntries(Object.entries(datos.semana).map(([d, ids]) => [Number(d), ids ?? []])))
   }
@@ -1425,7 +1648,7 @@ export default function GymScreen({ t, screen }) {
   const ayer = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return fechaLocal(d) })()
   const rutinasAyer = !cargandoPlan && semana[0].fecha === hoy && offsetSemana === 0 ? rutinasDe(ayer, 6) : []
   const mostrarAvisoAyer = !avisoAyerCerrado && rutinasAyer.length > 0 &&
-    !rutinasAyer.some(r => (completados[clave(ayer, r.id)] ?? []).length > 0)
+    !rutinasAyer.some(r => hechosDe(completados[clave(ayer, r.id)], r).length > 0)
 
   return (
     <div style={{ padding: 'calc(var(--safe-top) + 20px) 16px 0' }}>
@@ -1525,7 +1748,7 @@ export default function GymScreen({ t, screen }) {
             const esHoy          = fecha === hoy
             const futuro         = fecha > hoy
             const total          = rutinas.reduce((n, r) => n + r.ejercicios.length, 0)
-            const hechos         = rutinas.reduce((n, r) => n + (completados[clave(fecha, r.id)] ?? []).length, 0)
+            const hechos         = rutinas.reduce((n, r) => n + hechosDe(completados[clave(fecha, r.id)], r).length, 0)
             const pct            = total > 0 ? hechos / total : 0
             const terminado      = total > 0 && hechos === total
             const nombres        = rutinas.map(r => r.nombre).join(' y ') || 'Descanso'
@@ -1608,7 +1831,7 @@ export default function GymScreen({ t, screen }) {
                 abierto={cambiarAbierto}
                 lib={lib}
                 delDia={rutinasDelDia.map(r => r.id)}
-                fijas={[...(plan?.[diaSeleccionado.dayOfWeek] ?? []), ...(hechasPorFecha[selectedFecha] ?? [])]}
+                fijas={[...(planPara(selectedFecha)?.[diaSeleccionado.dayOfWeek] ?? []), ...(hechasPorFecha[selectedFecha] ?? [])]}
                 onAlternar={alternarExtra}
               />
             ) : <PanelCambiar
@@ -1644,15 +1867,16 @@ export default function GymScreen({ t, screen }) {
               pool={pool}
               recogida={recogidas.has(rutina.id)}
               onRecoger={() => recoger(rutina.id)}
-              onEditar={() => abrirEditor(rutina)}
-              hechos={completados[k] ?? []}
+              onEditar={lib[rutina.id] ? () => abrirEditor(lib[rutina.id]) : null}
+              hechos={hechosDe(completados[k], rutina)}
               log={logData[k] ?? {}}
-              onToggle={(j) => toggleEjercicio(k, j)}
-              onLog={(j, campo, valor) => updateLog(k, j, campo, valor)}
+              onToggle={(id) => toggleEjercicio(k, id)}
+              onLog={(id, campo, valor) => updateLog(k, id, campo, valor)}
               guardando={guardando === k}
               guardado={Boolean(guardado[k])}
               onGuardar={() => guardarSesion(selectedFecha, rutina)}
-              bloqueada={esFuturo ? `Se registra el ${NOMBRES_DIA[diaSeleccionado.dayOfWeek]}` : null}
+              historial={historial}
+              bloqueada={rutina.eliminada ? 'Rutina eliminada' : esFuturo ? `Se registra el ${NOMBRES_DIA[diaSeleccionado.dayOfWeek]}` : null}
             />
           )
         })}

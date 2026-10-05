@@ -10,13 +10,18 @@ Un día puede tener varias rutinas (doble entreno); una lista vacía es descanso
 """
 import re
 
+from datetime import date, timedelta
+
 from django.db import transaction
+from django.db.models import F, Window
+from django.db.models.functions import Lower, RowNumber
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .models import Rutina, RutinaDia
+from .models import CambioPlan, EjercicioLog, Rutina, RutinaDia
 
 MAX_EJERCICIOS = 40
 MAX_RUTINAS    = 30
@@ -74,6 +79,7 @@ def limpiar_ejercicios(lista):
         except (TypeError, ValueError):
             series = 3
         item = {
+            'uid':     str(e.get('uid') or '')[:16],   # el modelo valida y repone los que falten
             'nombre':  _texto(e.get('nombre'), 200),
             'musculo': _texto(e.get('musculo'), 100),
             'series':  min(max(series, 1), 50),
@@ -119,6 +125,33 @@ def _semana_dict(user):
     return semana
 
 
+# El plan que había antes del primer cambio registrado vale para todo el pasado
+PLAN_INICIAL = date(2000, 1, 1)
+
+
+def foto_rutina(r):
+    """Copia de la rutina para congelarla en una sesión."""
+    return {'nombre': r.nombre, 'emoji': r.emoji, 'color': r.color, 'ejercicios': r.ejercicios}
+
+
+def guardar_historial_plan(user, antes):
+    """Llamar justo después de cambiar RutinaDia, con la semana de antes del cambio.
+    La primera vez guarda también esa semana como la que valía hasta hoy."""
+    if not CambioPlan.objects.filter(usuario=user).exists():
+        CambioPlan.objects.create(usuario=user, desde=PLAN_INICIAL, semana=antes)
+    CambioPlan.objects.update_or_create(usuario=user, desde=timezone.localdate(),
+                                        defaults={'semana': _semana_dict(user)})
+
+
+def planes_desde(user, desde):
+    """Las versiones del plan que tocan días desde `desde`: la vigente ese día y
+    las posteriores. Lista vacía si nunca cambió (entonces vale la semana actual)."""
+    qs = CambioPlan.objects.filter(usuario=user)
+    previa = qs.filter(desde__lte=desde).order_by('-desde').values_list('desde', flat=True).first()
+    return [{'desde': p['desde'].isoformat(), 'semana': p['semana']}
+            for p in qs.filter(desde__gte=previa or desde).values('desde', 'semana')]
+
+
 def asegurar_semana(user):
     """Las cuentas nuevas empiezan con la semana vacía: la arman ellas o se la
     arma Bruce (POST /rutinas/generar/). RUTINAS_POR_DEFECTO queda solo para
@@ -135,13 +168,49 @@ def _respuesta_completa(user):
     }
 
 
+def ultimos_registros(user, desde):
+    """Para rellenar las series "como la última vez" sin bajar todo el historial.
+
+    Por ejercicio (por nombre, así comparte historial aunque esté en dos rutinas):
+    el último registro anterior a `desde` y todos los que hay desde `desde`, que es
+    lo que el Gym deja ver (esta semana y la pasada). Dos consultas en total.
+    → {"press banca": [{fecha, series, reps, peso_kg, series_detalle}, ...]} de viejo a nuevo
+    """
+    campos = ('nombre', 'sesion__fecha', 'series', 'reps', 'peso_kg', 'series_detalle')
+    base = EjercicioLog.objects.filter(sesion__usuario=user)
+    previos = (
+        base.filter(sesion__fecha__lt=desde)
+        .annotate(n=Window(RowNumber(), partition_by=[Lower('nombre')],
+                           order_by=[F('sesion__fecha').desc(), F('id').desc()]))
+        .filter(n=1)
+        .values(*campos)
+    )
+    recientes = base.filter(sesion__fecha__gte=desde).order_by('sesion__fecha', 'id').values(*campos)
+    salida = {}
+    for r in [*sorted(previos, key=lambda x: x['sesion__fecha']), *recientes]:
+        salida.setdefault(r['nombre'].lower(), []).append({
+            'fecha':   r['sesion__fecha'].isoformat(),
+            'series':  r['series'],
+            'reps':    r['reps'],
+            'peso_kg': r['peso_kg'],
+            'series_detalle': r['series_detalle'],
+        })
+    return salida
+
+
 # ── Vistas ─────────────────────────────────────────────────────────────────
 
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
 def rutinas(request):
     if request.method == 'GET':
-        return Response(_respuesta_completa(request.user))
+        datos = _respuesta_completa(request.user)
+        hoy = timezone.localdate()
+        # Desde el lunes de la semana pasada: lo más viejo que se puede ver en el Gym
+        desde = hoy - timedelta(days=hoy.weekday() + 7)
+        datos['ultimos'] = ultimos_registros(request.user, desde)
+        datos['planes'] = planes_desde(request.user, desde)
+        return Response(datos)
 
     if Rutina.objects.filter(usuario=request.user).count() >= MAX_RUTINAS:
         return Response({'error': f'Máximo {MAX_RUTINAS} rutinas'}, status=status.HTTP_400_BAD_REQUEST)
@@ -160,7 +229,11 @@ def rutina_detalle(request, pk):
         return Response(status=status.HTTP_404_NOT_FOUND)
 
     if request.method == 'DELETE':
-        rutina.delete()  # se quita de los días que la usaban (CASCADE)
+        with transaction.atomic():
+            antes = _semana_dict(request.user)
+            rutina.delete()  # se quita de los días que la usaban (CASCADE)
+            if antes != _semana_dict(request.user):
+                guardar_historial_plan(request.user, antes)
         return Response(_respuesta_completa(request.user))
 
     campos, error = _datos_rutina(request.data, parcial=True)
@@ -196,11 +269,14 @@ def semana(request):
 
     with transaction.atomic():
         asegurar_semana(request.user)
+        antes = _semana_dict(request.user)
         for d, ids in asignar.items():
             RutinaDia.objects.filter(usuario=request.user, dia_semana=d).delete()
             RutinaDia.objects.bulk_create([
                 RutinaDia(usuario=request.user, dia_semana=d, rutina_id=rid, orden=i) for i, rid in enumerate(ids)
             ])
+        if antes != _semana_dict(request.user):
+            guardar_historial_plan(request.user, antes)
     return Response({'semana': _semana_dict(request.user)})
 
 
@@ -238,8 +314,10 @@ def rutinas_dia(request):
     with transaction.atomic():
         r = primera.get(d)
         if r is None:
+            antes = _semana_dict(request.user)
             r = Rutina.objects.create(usuario=request.user, nombre=campos.pop('nombre', 'Rutina'), **campos)
             RutinaDia.objects.create(usuario=request.user, dia_semana=d, rutina=r)
+            guardar_historial_plan(request.user, antes)
         else:
             for k, v in campos.items():
                 setattr(r, k, v)
@@ -360,8 +438,10 @@ def generar(request):
                                                        series=e['series'], reps=e['reps'], peso='—', color='', custom=True)
         EjercicioPersonalizado.objects.bulk_create(nuevos.values())
         # Días elegidos: su rutina. Los demás: descanso.
+        antes = _semana_dict(request.user)
         RutinaDia.objects.filter(usuario=request.user).delete()
         RutinaDia.objects.bulk_create([
             RutinaDia(usuario=request.user, dia_semana=d, rutina=creadas[c], orden=0) for d, c in semana.items()
         ])
+        guardar_historial_plan(request.user, antes)
     return Response({**_respuesta_completa(request.user), 'explicacion': _texto(datos.get('explicacion'), 300)})

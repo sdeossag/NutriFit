@@ -373,7 +373,7 @@ export default function PlanBruce({ visible, onRegistrada }) {
     <>
       <TarjetaPlan datos={planes[hoy]} onAbrir={() => setAbierto(true)} />
 
-      <input ref={fotoRef} type='file' accept='image/*' capture='environment' hidden onChange={e => analizarFoto(e.target.files?.[0])} />
+      <input ref={fotoRef} type='file' accept='image/*' hidden onChange={e => analizarFoto(e.target.files?.[0])} />
 
       <Sheet
         open={abierto}

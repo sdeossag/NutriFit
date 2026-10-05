@@ -303,6 +303,9 @@ class SesionGym(models.Model):
     fecha      = models.DateField(default=timezone.localdate)
     completada = models.BooleanField(default=False)
     notas      = models.TextField(blank=True)
+    # La rutina tal como era ese día ({nombre, emoji, color, ejercicios}): editarla
+    # o borrarla después no cambia lo que se ve en los días pasados
+    rutina_snapshot = models.JSONField(default=dict, blank=True)
 
     class Meta:
         ordering    = ['-fecha']
@@ -319,9 +322,13 @@ class EjercicioLog(models.Model):
     musculo    = models.CharField(max_length=100, blank=True, default='')
     series     = models.IntegerField(default=3)
     reps       = models.CharField(max_length=50)
-    peso_kg    = models.FloatField(null=True, blank=True)
+    peso_kg    = models.FloatField(null=True, blank=True)   # con detalle: la carga más alta
     notas      = models.TextField(blank=True)
     completado = models.BooleanField(default=False)
+    # Cada serie tal como se hizo: [{"reps": 10, "peso_kg": 52}, ...]
+    series_detalle = models.JSONField(default=list, blank=True)
+    # uid del ejercicio en su rutina ('' en registros que no se pudieron enlazar)
+    ejercicio_uid  = models.CharField(max_length=16, blank=True, default='')
 
     def __str__(self):
         return f"{self.nombre} — {self.peso_kg}kg"
@@ -403,10 +410,33 @@ class MensajeChat(models.Model):
 #  RUTINAS PERSONALIZADAS POR DÍA
 # ──────────────────────────────────────────────
 
+UID_EJERCICIO = re.compile(r'[a-z0-9]{6,16}')
+
+
+def nuevo_uid():
+    return uuid.uuid4().hex[:12]
+
+
+def asegurar_uids(ejercicios):
+    """Cada ejercicio de una rutina lleva un uid propio y estable: lo que se
+    registra en el gym se une por uid, no por posición ni por nombre. Conserva
+    los válidos y únicos; repone los que faltan o se repiten. Devuelve si cambió algo."""
+    vistos, cambio = set(), False
+    for e in ejercicios:
+        if not isinstance(e, dict):
+            continue
+        uid = str(e.get('uid') or '')
+        if not UID_EJERCICIO.fullmatch(uid) or uid in vistos:
+            uid = nuevo_uid()
+            e['uid'], cambio = uid, True
+        vistos.add(uid)
+    return cambio
+
+
 class Rutina(models.Model):
     """Una rutina completa (el "paquete"): se asigna a uno o varios días de la semana.
 
-    ejercicios: lista de { nombre, musculo, series, reps, peso, custom, color }
+    ejercicios: lista de { uid, nombre, musculo, series, reps, peso, custom, color }
     """
     usuario     = models.ForeignKey('Usuario', on_delete=models.CASCADE, related_name='rutinas')
     nombre      = models.CharField(max_length=100)
@@ -418,6 +448,11 @@ class Rutina(models.Model):
 
     class Meta:
         ordering = ['creado_en', 'id']
+
+    def save(self, *args, **kwargs):
+        # Cualquier camino que guarde la rutina (editor, Bruce, biblioteca) deja los uid listos
+        asegurar_uids(self.ejercicios)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.usuario} — {self.nombre}"
@@ -440,6 +475,22 @@ class RutinaDia(models.Model):
 
     def __str__(self):
         return f"{self.usuario} — Día {self.dia_semana}: {self.rutina}"
+
+
+class CambioPlan(models.Model):
+    """Historial del plan semanal: desde qué fecha valió cada versión.
+
+    Cambiar la semana vale de hoy en adelante; los días pasados se dibujan con
+    la versión que había entonces. semana: {"0": [rutina_id, ...], ..., "6": []}
+    Solo se escribe cuando la persona cambia su semana (pocas filas al mes).
+    """
+    usuario = models.ForeignKey('Usuario', on_delete=models.CASCADE, related_name='cambios_plan')
+    desde   = models.DateField()
+    semana  = models.JSONField(default=dict)
+
+    class Meta:
+        ordering    = ['desde']
+        constraints = [models.UniqueConstraint(fields=['usuario', 'desde'], name='un_plan_por_fecha')]
 
 
 class EjercicioPersonalizado(models.Model):

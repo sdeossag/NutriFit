@@ -52,6 +52,28 @@ class GuardarSesionTests(Base):
         self.assertTrue(s.completada)
         self.assertEqual(s.ejercicios.get().peso_kg, 60)
 
+    def test_series_una_a_una_dan_el_resumen(self):
+        r = self.api.post('/api/sesiones/registrar/', {
+            'fecha': '2026-09-22',
+            'ejercicios': [{'nombre': 'Chest press', 'series': 3, 'reps': '10', 'peso_kg': 40, 'series_detalle': [
+                {'reps': 12, 'peso_kg': 45}, {'reps': '10', 'peso_kg': '52,5'}, {'reps': 8, 'peso_kg': 52.5},
+                {'reps': '', 'peso_kg': None},                       # vacía: se descarta
+            ]}],
+        }, format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        log = EjercicioLog.objects.get()
+        self.assertEqual((log.series, log.reps, log.peso_kg), (3, '12-10-8', 52.5))
+        self.assertEqual(log.series_detalle[1], {'reps': 10, 'peso_kg': 52.5})
+        self.assertEqual(r.data['ejercicios'][0]['series_detalle'][0], {'reps': 12, 'peso_kg': 45})
+
+    def test_series_iguales_resumen_simple_y_errores_400(self):
+        self.api.post('/api/sesiones/registrar/', {'fecha': '2026-09-22', 'ejercicios': [{'nombre': 'Remo', 'series_detalle': [
+            {'reps': 10, 'peso_kg': 30}, {'reps': 10, 'peso_kg': 30}]}]}, format='json')
+        self.assertEqual(EjercicioLog.objects.get().reps, '10')
+        for malo in ([{'reps': -1}], [{'peso_kg': 'mucho'}], ['x'], [{'reps': 1}] * 21):
+            r = self.api.post('/api/sesiones/registrar/', {'fecha': '2026-09-22', 'ejercicios': [{'nombre': 'A', 'series_detalle': malo}]}, format='json')
+            self.assertEqual(r.status_code, 400, malo)
+
     def test_volver_a_guardar_reemplaza_lo_desmarcado(self):
         url = '/api/sesiones/registrar/'
         self.api.post(url, {'fecha': '2026-09-22', 'ejercicios': [{'nombre': 'A'}, {'nombre': 'B'}]}, format='json')
@@ -351,6 +373,153 @@ class RutinasTests(Base):
             self.assertFalse(self.api.get('/api/resumen/').data['es_dia_descanso'])
             self.api.put('/api/rutinas/semana/', {'semana': {'1': None}}, format='json')
             self.assertTrue(self.api.get('/api/resumen/').data['es_dia_descanso'])
+
+
+class UidEjercicioTests(Base):
+    """Cada ejercicio de una rutina tiene un uid estable: los registros se unen por él."""
+
+    def crear(self, ejercicios):
+        return self.api.post('/api/rutinas/', {'nombre': 'Pecho', 'ejercicios': ejercicios}, format='json').data
+
+    def test_se_asignan_y_se_conservan_al_editar(self):
+        r = self.crear([{'nombre': 'Press'}, {'nombre': 'Aperturas'}, {'nombre': 'Fondos'}])
+        uids = [e['uid'] for e in r['ejercicios']]
+        self.assertEqual(len(set(uids)), 3)
+        # Se borra el del medio y se reordena: los demás conservan su uid
+        sin_medio = [r['ejercicios'][2], r['ejercicios'][0]]
+        r2 = self.api.patch(f"/api/rutinas/{r['id']}/", {'ejercicios': sin_medio}, format='json').data
+        self.assertEqual([e['uid'] for e in r2['ejercicios']], [uids[2], uids[0]])
+
+    def test_uid_invalido_o_repetido_se_repone(self):
+        r = self.crear([{'nombre': 'A', 'uid': 'abc123def456'}, {'nombre': 'B', 'uid': 'abc123def456'},
+                        {'nombre': 'C', 'uid': '<script>'}])
+        uids = [e['uid'] for e in r['ejercicios']]
+        self.assertEqual(uids[0], 'abc123def456')
+        self.assertEqual(len(set(uids)), 3)
+        self.assertRegex(uids[2], r'^[a-z0-9]{12}$')
+
+    def test_la_sesion_guarda_el_uid_del_ejercicio(self):
+        r = self.crear([{'nombre': 'Press'}])
+        uid = r['ejercicios'][0]['uid']
+        self.api.post('/api/sesiones/registrar/', {'fecha': '2026-09-22', 'rutina_ref': r['id'], 'ejercicios': [
+            {'uid': uid, 'nombre': 'Press', 'peso_kg': 40}, {'uid': 'NO VALIDO', 'nombre': 'Otro'}]}, format='json')
+        self.assertEqual(dict(EjercicioLog.objects.values_list('nombre', 'ejercicio_uid')), {'Press': uid, 'Otro': ''})
+
+    def test_migracion_enlaza_registros_viejos_por_nombre(self):
+        import importlib
+        from django.apps import apps
+        mig = importlib.import_module('api.migrations.0025_uid_ejercicios')
+        rutina = Rutina.objects.create(usuario=self.user, nombre='Pecho', ejercicios=[{'nombre': 'Press'}])
+        Rutina.objects.filter(pk=rutina.pk).update(ejercicios=[{'nombre': 'Press'}])   # como antes: sin uid
+        sesion = SesionGym.objects.create(usuario=self.user, fecha=HOY, rutina='A', rutina_ref=rutina)
+        EjercicioLog.objects.create(sesion=sesion, nombre='press', reps='10')
+        mig.asignar_uids(apps, None)
+        uid = Rutina.objects.get().ejercicios[0]['uid']
+        self.assertEqual(EjercicioLog.objects.get().ejercicio_uid, uid)
+
+
+class UltimosRegistrosTests(Base):
+    """El Gym recibe solo lo necesario para "la última vez", no todo el historial."""
+
+    def log(self, fecha, nombre, peso):
+        sesion = SesionGym.objects.get_or_create(usuario=self.user, fecha=fecha, rutina='A')[0]
+        EjercicioLog.objects.create(sesion=sesion, nombre=nombre, reps='10', peso_kg=peso)
+
+    def test_ultimo_previo_mas_la_ventana_visible(self):
+        from .rutinas import ultimos_registros
+        desde = HOY - timedelta(days=7)                       # lunes de la semana pasada
+        for dias, peso in ((60, 20), (30, 25), (20, 30)):     # antes de la ventana: solo cuenta el último
+            self.log(HOY - timedelta(days=dias), 'Press banca', peso)
+        self.log(HOY - timedelta(days=3), 'press banca', 35)  # mismo ejercicio aunque cambie la mayúscula
+        self.log(HOY, 'Press banca', 40)
+        self.log(HOY - timedelta(days=40), 'Remo', 50)
+        with CaptureQueriesContext(connection) as consultas:
+            datos = ultimos_registros(self.user, desde)
+        self.assertEqual(len(consultas), 2)
+        self.assertEqual([r['peso_kg'] for r in datos['press banca']], [30, 35, 40])
+        self.assertEqual([r['peso_kg'] for r in datos['remo']], [50])
+
+    def test_get_rutinas_trae_los_ultimos(self):
+        self.log(HOY - timedelta(days=1), 'Remo', 50)
+        with en(HOY):
+            r = self.api.get('/api/rutinas/')
+        self.assertEqual(r.data['ultimos']['remo'][0]['peso_kg'], 50)
+
+    def test_contexto_de_bruce_con_consultas_fijas(self):
+        from .views import _contexto_entrenos
+        for i in range(4):
+            sesion = self.sesion(HOY - timedelta(days=i * 2))
+            for n in range(8):
+                EjercicioLog.objects.create(sesion=sesion, nombre=f'Ej {n}', reps='10', peso_kg=20 + i)
+        with CaptureQueriesContext(connection) as consultas:
+            texto = _contexto_entrenos(self.user, HOY)
+        self.assertLessEqual(len(consultas), 4)                 # antes: una más por cada ejercicio (~32)
+        self.assertIn('Ej 0 3x10 20 kg (antes 3x10 21 kg', texto)
+
+
+class HistorialPlanTests(Base):
+    """Cambiar la semana vale de hoy en adelante: el pasado queda como estaba."""
+
+    def rutina(self, nombre, ejercicios=None):
+        return self.api.post('/api/rutinas/', {'nombre': nombre, 'ejercicios': ejercicios or [{'nombre': 'Press'}]}, format='json').data
+
+    def test_cambiar_el_plan_guarda_la_version_anterior(self):
+        pecho, pierna = self.rutina('Pecho')['id'], self.rutina('Pierna')['id']
+        with en(HOY - timedelta(days=10)):
+            self.api.put('/api/rutinas/semana/', {'semana': {'0': [pecho]}}, format='json')
+        with en(HOY):
+            self.api.put('/api/rutinas/semana/', {'semana': {'0': [pierna]}}, format='json')
+            self.api.put('/api/rutinas/semana/', {'semana': {'0': [pierna]}}, format='json')   # sin cambios: no escribe
+            r = self.api.get('/api/rutinas/')
+        planes = r.data['planes']
+        # Vigente al inicio de la semana pasada (pecho) y la de hoy (pierna); la inicial ya no hace falta
+        self.assertEqual([(p['desde'], p['semana']['0']) for p in planes],
+                         [((HOY - timedelta(days=10)).isoformat(), [pecho]), (HOY.isoformat(), [pierna])])
+
+    def test_la_primera_vez_guarda_la_semana_de_antes(self):
+        from .models import CambioPlan
+        pecho = self.rutina('Pecho')['id']
+        with en(HOY):
+            self.api.put('/api/rutinas/semana/', {'semana': {'2': [pecho]}}, format='json')
+        filas = list(CambioPlan.objects.values_list('desde', 'semana'))
+        self.assertEqual(filas[0][1]['2'], [])          # antes: descanso, para todo el pasado
+        self.assertEqual(filas[1], (HOY, {**{str(d): [] for d in range(7)}, '2': [pecho]}))
+
+    def test_borrar_rutina_queda_en_el_historial(self):
+        pecho = self.rutina('Pecho')['id']
+        with en(HOY - timedelta(days=3)):
+            self.api.put('/api/rutinas/semana/', {'semana': {'0': [pecho]}}, format='json')
+        with en(HOY):
+            self.api.delete(f'/api/rutinas/{pecho}/')
+            planes = self.api.get('/api/rutinas/').data['planes']
+        self.assertEqual(planes[-2]['semana']['0'], [pecho])
+        self.assertEqual(planes[-1]['semana']['0'], [])
+
+    def test_sesion_pasada_conserva_la_rutina_de_ese_dia(self):
+        r = self.rutina('Pecho', [{'nombre': 'Press'}, {'nombre': 'Fondos'}])
+        ayer = (HOY - timedelta(days=1)).isoformat()
+        with en(HOY):
+            self.api.post('/api/sesiones/registrar/', {'fecha': ayer, 'rutina_ref': r['id'], 'ejercicios': [{'nombre': 'Press'}]}, format='json')
+            # Se edita la rutina y se vuelve a guardar el día pasado: la copia no cambia
+            self.api.patch(f"/api/rutinas/{r['id']}/", {'nombre': 'Pecho 2', 'ejercicios': [{'nombre': 'Aperturas'}]}, format='json')
+            self.api.post('/api/sesiones/registrar/', {'fecha': ayer, 'rutina_ref': r['id'], 'ejercicios': [{'nombre': 'Press'}]}, format='json')
+        foto = SesionGym.objects.get().rutina_snapshot
+        self.assertEqual((foto['nombre'], [e['nombre'] for e in foto['ejercicios']]), ('Pecho', ['Press', 'Fondos']))
+
+    def test_sesion_de_hoy_sigue_a_la_rutina(self):
+        r = self.rutina('Pecho')
+        with en(HOY):
+            self.api.post('/api/sesiones/registrar/', {'fecha': HOY.isoformat(), 'rutina_ref': r['id'], 'ejercicios': [{'nombre': 'Press'}]}, format='json')
+            self.api.patch(f"/api/rutinas/{r['id']}/", {'ejercicios': [{'nombre': 'Press'}, {'nombre': 'Fondos'}]}, format='json')
+            self.api.post('/api/sesiones/registrar/', {'fecha': HOY.isoformat(), 'rutina_ref': r['id'], 'ejercicios': [{'nombre': 'Press'}]}, format='json')
+        self.assertEqual(len(SesionGym.objects.get().rutina_snapshot['ejercicios']), 2)
+
+    def test_get_rutinas_con_consultas_fijas(self):
+        for i in range(5):
+            self.rutina(f'R{i}')
+        with en(HOY), CaptureQueriesContext(connection) as consultas:
+            self.api.get('/api/rutinas/')
+        self.assertLessEqual(len(consultas), 8)
 
 
 class DobleEntrenoTests(Base):
@@ -951,4 +1120,13 @@ class ContextoBruceTests(Base):
             texto = _contexto_semana(self.user, HOY)
         self.assertIn('lun 21/09: 1850 kcal, 95 g prot', texto)
         self.assertIn('dom 20/09: sin comida registrada', texto)          # no anotó ≠ comió 0
-        self.assertIn('Chest press 3x8 52 kg (antes 64 kg 3x10 el lun 14/09)', texto)
+        self.assertIn('Chest press 3x8 52 kg (antes 3x10 64 kg el lun 14/09)', texto)
+
+    def test_cargas_serie_por_serie(self):
+        from .views import _contexto_semana
+        ayer = self.sesion(HOY - timedelta(days=1))
+        EjercicioLog.objects.create(sesion=ayer, nombre='Curl', series=2, reps='12-8', peso_kg=10,
+                                    series_detalle=[{'reps': 12, 'peso_kg': 8}, {'reps': 8, 'peso_kg': 10}])
+        with en(HOY):
+            texto = _contexto_semana(self.user, HOY)
+        self.assertIn('Curl series 8kg×12, 10kg×8', texto)

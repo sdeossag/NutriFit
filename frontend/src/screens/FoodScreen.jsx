@@ -554,8 +554,8 @@ export default function FoodScreen({ screen }) {
         ))}
       </div>
 
-      <input ref={fileInputPlato}    type='file' accept='image/*' capture='environment' hidden onChange={e => procesarFoto(e.target.files[0], 'plato')} />
-      <input ref={fileInputEtiqueta} type='file' accept='image/*' capture='environment' hidden onChange={e => procesarFoto(e.target.files[0], 'etiqueta')} />
+      <input ref={fileInputPlato}    type='file' accept='image/*' hidden onChange={e => procesarFoto(e.target.files[0], 'plato')} />
+      <input ref={fileInputEtiqueta} type='file' accept='image/*' hidden onChange={e => procesarFoto(e.target.files[0], 'etiqueta')} />
 
       {resultado && (
         <ResultadoIA
