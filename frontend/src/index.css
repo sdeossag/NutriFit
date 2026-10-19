@@ -572,6 +572,16 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 }
 .nf-scroll-edge[data-hidden="true"] { opacity: 0; }
 
+/* Borde superior: la barra de estado de iOS es negra y opaca (meta "black", ver
+   index.html). En vez de cortar el contenido en seco contra ella, se funde en
+   ese mismo negro: la barra y la app se leen como una sola superficie. */
+.nf-scroll-edge--top {
+  top: 0;
+  bottom: auto;
+  height: 28px;
+  background: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.6) 45%, rgba(0, 0, 0, 0) 100%);
+}
+
 #app-shell {
   transform-origin: 50% 0;
   will-change: auto;
