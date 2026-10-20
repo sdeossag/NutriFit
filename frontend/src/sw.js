@@ -1,6 +1,15 @@
 import { precacheAndRoute } from 'workbox-precaching'
+import { registerRoute, NavigationRoute } from 'workbox-routing'
+import { NetworkFirst } from 'workbox-strategies'
+
+// La página (index.html) siempre se pide primero a la red: así una versión nueva
+// llega en la primera apertura y no en la segunda, y las etiquetas que iOS lee al
+// instalar (barra de estado) son las del último deploy. Sin red o si tarda más de
+// 3 s, se usa la última que se guardó. Va antes del precache para ganarle la ruta "/".
+registerRoute(new NavigationRoute(new NetworkFirst({ cacheName: 'paginas', networkTimeoutSeconds: 3 })))
 
 // Inyecta el listado de archivos para precaching — requerido por VitePWA injectManifest
+// (JS, CSS e imágenes llevan hash en el nombre: servirlos desde caché es seguro)
 precacheAndRoute(self.__WB_MANIFEST)
 
 self.addEventListener('install', () => self.skipWaiting())
