@@ -201,7 +201,6 @@ export default function App() {
           </div>
         </main>
 
-        <div className='nf-scroll-edge nf-scroll-edge--top' aria-hidden='true' data-hidden={esChat} />
         <div className='nf-scroll-edge' aria-hidden='true' data-hidden={esChat || tecladoAbierto} />
 
         <TabBar

@@ -68,6 +68,16 @@ html {
   color-scheme: dark;
 }
 
+/* App instalada en iOS 26 con barra translúcida: si la página mide menos que la
+   pantalla, iOS deja el área visible más corta (por el alto de la barra de estado)
+   y lo fijado abajo queda flotando (WebKit 301108). Con la página al menos del alto
+   de la pantalla, iOS da el área completa. El min() evita scroll de más donde la
+   barra es opaca (ahí el inset es 0 y 100lvh ya es la pantalla, WebKit 316008).
+   Solo aplica instalada: en Safari normal no cambia nada. */
+@media (display-mode: standalone) {
+  html { min-height: min(100lvh, calc(100% + env(safe-area-inset-top))); }
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, 'Segoe UI', Roboto, sans-serif;
   font-size: 15px;
@@ -571,16 +581,6 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
   transition: opacity 200ms ease;
 }
 .nf-scroll-edge[data-hidden="true"] { opacity: 0; }
-
-/* Borde superior: la barra de estado de iOS es negra y opaca (meta "black", ver
-   index.html). En vez de cortar el contenido en seco contra ella, se funde en
-   ese mismo negro: la barra y la app se leen como una sola superficie. */
-.nf-scroll-edge--top {
-  top: 0;
-  bottom: auto;
-  height: 28px;
-  background: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.6) 45%, rgba(0, 0, 0, 0) 100%);
-}
 
 #app-shell {
   transform-origin: 50% 0;
