@@ -89,6 +89,8 @@ class Usuario(AbstractUser):
     restricciones_dieta    = models.JSONField(default=list, blank=True)
     # Alergias: el filtro más estricto (ni como ingrediente menor ni en la preparación)
     alergias               = models.JSONField(default=list, blank=True)
+    # Lesiones o condiciones que Bruce debe respetar al recomendar ejercicios o comida
+    lesiones               = models.TextField(blank=True, default='')
     # Qué notificaciones recibe y a qué hora (se combina con los valores por defecto)
     ajustes_notif          = models.JSONField(default=dict, blank=True)
     # ej: ["vegetariano", "sin_gluten", "sin_lacteos", "sin_cerdo", "halal"]
@@ -399,6 +401,8 @@ class MensajeChat(models.Model):
     # Lo que Bruce hizo en la app al responder (cambiar una comida, armar el plan…)
     acciones  = models.JSONField(default=list, blank=True)
     creado_en = models.DateTimeField(auto_now_add=True)
+    # 👍 (1) / 👎 (-1) de la persona a una respuesta de Bruce: dice qué falla de verdad
+    valoracion = models.SmallIntegerField(null=True, blank=True)
 
     class Meta:
         ordering = ['creado_en']

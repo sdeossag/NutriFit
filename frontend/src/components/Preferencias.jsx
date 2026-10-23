@@ -3,7 +3,7 @@
 // derecha y vuelve por el mismo camino. Los cambios se guardan al instante
 // (sin botón "Guardar"); si el servidor falla, vuelve el valor anterior.
 import { useState } from 'react'
-import { IconChevronLeft, IconChevronRight, IconPlus, IconX, IconAlertTriangle, IconHeart, IconMoodSad, IconLeaf } from '@tabler/icons-react'
+import { IconChevronLeft, IconChevronRight, IconPlus, IconX, IconAlertTriangle, IconHeart, IconMoodSad, IconLeaf, IconFirstAidKit, IconCheck } from '@tabler/icons-react'
 import { ALERGIAS_OPCIONES, ALIMENTOS_OPCIONES, NO_GUSTADOS_OPCIONES, RESTRICCIONES_OPCIONES } from '../constants/alimentacion'
 import { haptic } from '../lib/motion'
 
@@ -24,12 +24,17 @@ const PAGINAS = {
     titulo: 'Restricciones', icono: IconLeaf, tint: 'var(--blue)',
     ayuda: 'Se cumplen siempre en tu plan y en los consejos de Bruce.',
   },
+  lesiones: {
+    titulo: 'Lesiones y condiciones', icono: IconFirstAidKit, tint: 'var(--red)',
+    ayuda: 'Bruce lo tiene en cuenta en cada consejo de ejercicio. No reemplaza lo que te diga tu fisioterapeuta o médico.',
+  },
 }
 
 const etiquetaRestriccion = (id) => RESTRICCIONES_OPCIONES.find(r => r.id === id)?.label ?? id
 
 // Lo que se ve a la derecha de cada fila: cuántos hay o cuáles
 function resumenPreferencia(campo, valores = []) {
+  if (campo === 'lesiones') return valores.trim() ? 'Registradas' : 'Ninguna'
   if (!valores.length) return 'Ninguna'
   if (campo === 'restricciones_dieta') return valores.map(etiquetaRestriccion).join(', ')
   return valores.length <= 2 ? valores.join(', ') : `${valores.length} alimentos`
@@ -146,6 +151,49 @@ function ListaRestricciones({ valores, onCambiar }) {
   )
 }
 
+// Texto libre (lesiones): se guarda al salir del campo o con "Guardar"
+const MAX_LESIONES = 600
+function TextoLibre({ valor, onCambiar }) {
+  const [texto, setTexto] = useState(valor)
+  const [guardado, setGuardado] = useState(false)
+  const cambio = texto.trim() !== valor.trim()
+
+  const guardar = () => {
+    if (!cambio) return
+    haptic(10)
+    onCambiar(texto.trim())
+    setGuardado(true)
+    setTimeout(() => setGuardado(false), 1600)
+  }
+
+  return (
+    <div className='nf-card' style={{ padding: '14px' }}>
+      <textarea
+        className='nf-input'
+        value={texto}
+        onChange={e => { setTexto(e.target.value.slice(0, MAX_LESIONES)); setGuardado(false) }}
+        onBlur={guardar}
+        rows={5}
+        placeholder='Ej.: trasplante de cartílago en la rodilla izquierda (julio 2026). Nada de carga axial fuerte ni saltos.'
+        aria-label='Lesiones y condiciones'
+        style={{ resize: 'none', lineHeight: 1.45 }}
+      />
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '10px' }}>
+        <span className='nf-caption nf-num'>{texto.length}/{MAX_LESIONES}</span>
+        <button
+          onClick={guardar}
+          disabled={!cambio && !guardado}
+          className='nf-btn nf-btn--sm nf-btn--tinted'
+          style={{ '--tint': 'var(--green)', minWidth: '92px' }}
+          aria-live='polite'
+        >
+          {guardado ? <><IconCheck size={15} /> Guardado</> : 'Guardar'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // Página de un grupo. Entra desde la derecha (push) como en Ajustes de iOS.
 export function PaginaPreferencia({ campo, valores, onCambiar, onVolver }) {
   const { titulo, ayuda } = PAGINAS[campo]
@@ -156,9 +204,11 @@ export function PaginaPreferencia({ campo, valores, onCambiar, onVolver }) {
       </button>
       <h2 className='nf-title-2' style={{ margin: '6px 4px 4px' }}>{titulo}</h2>
       <p className='nf-footnote' style={{ margin: '0 4px 16px' }}>{ayuda}</p>
-      {campo === 'restricciones_dieta'
-        ? <ListaRestricciones valores={valores} onCambiar={onCambiar} />
-        : <ListaAlimentos campo={campo} valores={valores} onCambiar={onCambiar} />}
+      {campo === 'lesiones'
+        ? <TextoLibre valor={typeof valores === 'string' ? valores : ''} onCambiar={onCambiar} />
+        : campo === 'restricciones_dieta'
+          ? <ListaRestricciones valores={valores} onCambiar={onCambiar} />
+          : <ListaAlimentos campo={campo} valores={valores} onCambiar={onCambiar} />}
     </div>
   )
 }

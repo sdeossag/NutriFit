@@ -1106,6 +1106,71 @@ class GastoRealTests(Base):
         self.assertEqual(r.data['proyeccion']['tendencia_kg_semana'], -0.5)
 
 
+class FaseUnoBruceTests(Base):
+    """Lo que Bruce sabe de la persona y la frase de Inicio con datos del servidor."""
+
+    def test_perfil_completo_y_lesiones(self):
+        from .views import _perfil_bruce
+        self.user.sexo, self.user.estatura_cm, self.user.lesiones = 'M', 165, 'Rodilla izquierda operada'
+        self.user.save()
+        texto = _perfil_bruce(self.user)
+        self.assertIn('hombre', texto)
+        self.assertIn('165 cm', texto)
+        self.assertIn('LESIONES Y CONDICIONES', texto)
+        self.assertIn('Rodilla izquierda operada', texto)
+
+    def test_lesiones_se_guardan_desde_preferencias(self):
+        r = self.api.patch('/api/auth/perfil/preferencias/', {'lesiones': '  Hombro derecho  '}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data['lesiones'], 'Hombro derecho')
+        r = self.api.patch('/api/auth/perfil/preferencias/', {'lesiones': 'x' * 601}, format='json')
+        self.assertEqual(r.status_code, 400)
+
+    def test_frase_usa_datos_del_servidor_redondeados(self):
+        from datetime import datetime
+        from django.utils import timezone as tz
+        Comida.objects.create(usuario=self.user, nombre='x', calorias=516, proteina=43.7, fecha=HOY)
+        self.user.meta_calorias, self.user.meta_proteina = 1870, 140
+        self.user.save()
+        ahora = tz.make_aware(datetime(HOY.year, HOY.month, HOY.day, 20, 30))
+        with mock.patch('django.utils.timezone.now', return_value=ahora),                 mock.patch('api.views._groq_chat', return_value='"Dale, parcero."') as groq:
+            r = self.api.post('/api/bruce/frase/', {'calorias_hoy': 99999, 'proteina_hoy': 1.234}, format='json')
+        prompt = groq.call_args[0][0]['messages'][0]['content']
+        self.assertEqual(r.data['frase'], 'Dale, parcero.')
+        self.assertIn('Lleva 516 de 1870 kcal', prompt)        # lo del servidor, no lo que mande la app
+        self.assertIn('44 de 140 g', prompt)                    # redondeado
+        self.assertIn('Es de noche y le falta bastante', prompt)
+        self.assertNotIn('99999', prompt)
+
+    def test_frase_de_noche_con_todo_comido_no_pide_bajar(self):
+        from datetime import datetime
+        from django.utils import timezone as tz
+        Comida.objects.create(usuario=self.user, nombre='x', calorias=1860, proteina=94, fecha=HOY)
+        self.user.meta_calorias, self.user.meta_proteina = 1794, 140
+        self.user.save()
+        ahora = tz.make_aware(datetime(HOY.year, HOY.month, HOY.day, 20, 35))
+        with mock.patch('django.utils.timezone.now', return_value=ahora),                 mock.patch('api.views._groq_chat', return_value='ok') as groq:
+            self.api.post('/api/bruce/frase/', {}, format='json')
+        self.assertIn('NUNCA le pidas comer menos', groq.call_args[0][0]['messages'][0]['content'])
+
+    def test_valorar_respuesta_de_bruce(self):
+        from .models import MensajeChat, SesionChat
+        sesion = SesionChat.objects.create(usuario=self.user)
+        bruce = MensajeChat.objects.create(sesion=sesion, rol='bruce', contenido='hola')
+        yo = MensajeChat.objects.create(sesion=sesion, rol='user', contenido='hey')
+        self.assertEqual(self.api.post(f'/api/chat/mensajes/{bruce.id}/valorar/', {'valor': -1}, format='json').status_code, 200)
+        bruce.refresh_from_db()
+        self.assertEqual(bruce.valoracion, -1)
+        self.api.post(f'/api/chat/mensajes/{bruce.id}/valorar/', {'valor': 0}, format='json')
+        bruce.refresh_from_db()
+        self.assertIsNone(bruce.valoracion)
+        self.assertEqual(self.api.post(f'/api/chat/mensajes/{yo.id}/valorar/', {'valor': 1}, format='json').status_code, 404)
+        self.assertEqual(self.api.post(f'/api/chat/mensajes/{bruce.id}/valorar/', {'valor': 5}, format='json').status_code, 400)
+        otro = User.objects.create_user('beto', 'b@t.com', 'x')
+        ajena = MensajeChat.objects.create(sesion=SesionChat.objects.create(usuario=otro), rol='bruce', contenido='x')
+        self.assertEqual(self.api.post(f'/api/chat/mensajes/{ajena.id}/valorar/', {'valor': 1}, format='json').status_code, 404)
+
+
 class ContextoBruceTests(Base):
     """Lo que Bruce recibe para no inventar datos."""
 

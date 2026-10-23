@@ -202,6 +202,7 @@ export const crearSesionChat       = ()        => post('/chat/', {})
 export const getSesionChat         = (id)      => get(`/chat/${id}/`)
 export const eliminarSesionChat    = (id)      => del_(`/chat/${id}/`)
 export const enviarMensajeBruce    = (id, msg) => post(`/chat/${id}/mensaje/`, { mensaje: msg })
+export const valorarMensajeBruce   = (id, valor) => post(`/chat/mensajes/${id}/valorar/`, { valor })
 // sesionDeHoy ya existe en tu api.js
 export const getHistorialEjercicios = () => get('/ejercicios/historial/')
 

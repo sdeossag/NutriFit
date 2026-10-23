@@ -1,8 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
-import { IconArrowUp, IconChevronLeft, IconTrash, IconEdit, IconChevronRight, IconArrowBackUp, IconToolsKitchen2 } from '@tabler/icons-react'
+import {
+  IconArrowUp, IconChevronLeft, IconTrash, IconEdit, IconChevronRight, IconArrowBackUp, IconToolsKitchen2,
+  IconThumbUp, IconThumbUpFilled, IconThumbDown, IconThumbDownFilled,
+} from '@tabler/icons-react'
 import {
   getSesionesChatBruce, crearSesionChat, getSesionChat,
-  eliminarSesionChat, enviarMensajeBruce, deshacerComidaPlan,
+  eliminarSesionChat, enviarMensajeBruce, deshacerComidaPlan, valorarMensajeBruce,
 } from '../api'
 import { toast } from '../lib/toast'
 import { haptic } from '../lib/motion'
@@ -111,6 +114,46 @@ function Accion({ accion }) {
   )
 }
 
+// ── 👍/👎: dice qué respuestas fallan de verdad ───────────────────────────
+// Cambia al instante y se confirma por detrás; tocar el mismo otra vez lo quita.
+function Valorar({ msg }) {
+  const [valor, setValor] = useState(msg.valoracion ?? 0)
+  if (typeof msg.id !== 'number') return null
+
+  const elegir = (nuevo) => {
+    const final = valor === nuevo ? 0 : nuevo
+    const anterior = valor
+    setValor(final)
+    haptic(8)
+    valorarMensajeBruce(msg.id, final)
+      .then(() => { if (final === -1) toast('Gracias. Con esto mejoramos a Bruce.') })
+      .catch(() => { setValor(anterior); toast.error('No se pudo guardar tu opinión.') })
+  }
+
+  const boton = (n, Normal, Lleno, etiqueta, color) => {
+    const activo = valor === n
+    const Icono = activo ? Lleno : Normal
+    return (
+      <button
+        onClick={() => elegir(n)}
+        aria-label={etiqueta}
+        aria-pressed={activo}
+        className='nf-icon-btn nf-icon-btn--sm'
+        style={{ color: activo ? color : 'var(--label-4)', transition: 'color 150ms ease' }}
+      >
+        <Icono size={16} />
+      </button>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', gap: '2px', marginLeft: '32px', marginTop: '2px' }}>
+      {boton(1, IconThumbUp, IconThumbUpFilled, 'Buena respuesta', 'var(--green)')}
+      {boton(-1, IconThumbDown, IconThumbDownFilled, 'Mala respuesta', 'var(--orange)')}
+    </div>
+  )
+}
+
 // ── Burbuja ───────────────────────────────────────────────────────────────
 function Mensaje({ msg, agrupado, animar }) {
   const esBruce = msg.rol === 'bruce'
@@ -154,6 +197,7 @@ function Mensaje({ msg, agrupado, animar }) {
       </div>
     </div>
     {esBruce && (msg.acciones ?? []).map((a, i) => <Accion key={i} accion={a} />)}
+    {esBruce && <Valorar msg={msg} />}
     </div>
   )
 }

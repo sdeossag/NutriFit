@@ -37,7 +37,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
             # Objetivo
             'objetivo', 'velocidad_objetivo', 'nivel_actividad',
             # Preferencias
-            'alimentos_gustados', 'alimentos_no_gustados', 'restricciones_dieta', 'alergias',
+            'alimentos_gustados', 'alimentos_no_gustados', 'restricciones_dieta', 'alergias', 'lesiones',
             # Control
             'onboarding_completo',
             'date_joined',
@@ -122,7 +122,13 @@ class PreferenciasSerializer(serializers.ModelSerializer):
     """Gustos, lo que no le gusta, restricciones y alergias (Ajustes → Alimentación)."""
     class Meta:
         model  = User
-        fields = ['alimentos_gustados', 'alimentos_no_gustados', 'restricciones_dieta', 'alergias']
+        fields = ['alimentos_gustados', 'alimentos_no_gustados', 'restricciones_dieta', 'alergias', 'lesiones']
+
+    def validate_lesiones(self, v):
+        v = str(v or '').strip()
+        if len(v) > 600:
+            raise serializers.ValidationError('Máximo 600 caracteres.')
+        return v
 
     def validate_alimentos_gustados(self, v):
         return _lista_de_alimentos(v)
@@ -263,7 +269,7 @@ class AlimentoAlacenaSerializer(serializers.ModelSerializer):
 class MensajeChatSerializer(serializers.ModelSerializer):
     class Meta:
         model  = MensajeChat
-        fields = ['id', 'rol', 'contenido', 'acciones', 'creado_en']
+        fields = ['id', 'rol', 'contenido', 'acciones', 'creado_en', 'valoracion']
 
 class SesionChatSerializer(serializers.ModelSerializer):
     mensajes = MensajeChatSerializer(many=True, read_only=True)

@@ -72,6 +72,7 @@ urlpatterns = [
     path('chat/',                       views.sesiones_chat,        name='chat-sesiones'),
     path('chat/<int:pk>/',              views.sesion_chat_detalle,  name='chat-detalle'),
     path('chat/<int:pk>/mensaje/',      views.bruce_chat,           name='chat-mensaje'),
+    path('chat/mensajes/<int:pk>/valorar/', views.valorar_mensaje,  name='chat-valorar'),
 
     # ───────────────────────── AGUA ─────────────────────────
     path('agua/',                          views.agua,               name='agua'),

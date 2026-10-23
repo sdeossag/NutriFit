@@ -927,99 +927,126 @@ def alacena_usar(request, pk):
     return Response(ComidaSerializer(comida).data, status=status.HTTP_201_CREATED)
 
 
+SEXO = {'M': 'hombre', 'F': 'mujer'}
+OBJETIVO_TEXTO = {'perder': 'perder grasa', 'mantener': 'mantener peso', 'ganar': 'ganar músculo'}
+
+
+def _lista(valores, vacio):
+    return ', '.join(valores or []) or vacio
+
+
+def _perfil_bruce(user):
+    """Quién es la persona: lo mismo para el chat y la frase de Inicio."""
+    edad = user.get_edad()
+    cuerpo = ', '.join(x for x in (
+        SEXO.get(user.sexo, ''),
+        f'{edad} años' if edad else '',
+        f'{user.estatura_cm} cm' if user.estatura_cm else '',
+        f'{user.peso_actual()} kg' if user.peso_actual() else 'peso no registrado',
+    ) if x)
+    objetivo = OBJETIVO_TEXTO.get(user.objetivo, 'mantener peso')
+    if user.velocidad_objetivo:
+        objetivo += f' (ritmo {user.velocidad_objetivo})'
+    lineas = [
+        f'• {cuerpo}. Actividad: {user.nivel_actividad or "no indicada"}.',
+        f'• Objetivo: {objetivo}' + (f' | Peso objetivo: {user.peso_objetivo_kg} kg' if user.peso_objetivo_kg else ''),
+        f'• Le gusta: {_lista(user.alimentos_gustados, "variado")}',
+        f'• NO le gusta: {_lista(user.alimentos_no_gustados, "nada en particular")}',
+        f'• Restricciones de dieta: {_lista(user.restricciones_dieta, "ninguna")}',
+        f'• ALERGIAS (peligroso: nunca, ni como ingrediente menor): {_lista(user.alergias, "ninguna")}',
+    ]
+    if user.lesiones:
+        lineas.append(f'• LESIONES Y CONDICIONES (respétalas siempre al hablar de ejercicio): {user.lesiones}')
+    return '\n'.join(lineas)
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def bruce_frase(request):
+    """La frase de Bruce en Inicio. Los datos salen del servidor (no de lo que
+    mande la app): mismos números que el chat, redondeados, y la hora real."""
     import random
+    user  = request.user
+    hoy   = timezone.localdate()
+    hora  = timezone.localtime().hour
+    t = Comida.objects.filter(usuario=user, fecha=hoy).aggregate(
+        cal=models.Sum('calorias'), prot=models.Sum('proteina'), carb=models.Sum('carbos'))
+    kcal, prot, carb = round(t['cal'] or 0), round(t['prot'] or 0), round(t['carb'] or 0)
+    meta_kcal, meta_prot = user.meta_calorias or 0, user.meta_proteina or 0
+    pct_cal  = round(kcal / meta_kcal * 100) if meta_kcal else 0
+    pct_prot = round(prot / meta_prot * 100) if meta_prot else 0
+    falta_kcal, falta_prot = max(meta_kcal - kcal, 0), max(meta_prot - prot, 0)
+    fue_al_gym = SesionGym.objects.filter(usuario=user, fecha=hoy, completada=True).exists()
+    es_dia_gym = hoy.weekday() not in estadisticas.dias_descanso(user)
+    racha_gym  = estadisticas.racha_gym(user, hoy)
+    nombre     = (user.first_name or 'parcero').split(' ')[0]
 
-    calorias_hoy    = request.data.get('calorias_hoy', 0)
-    meta_calorias   = request.data.get('meta_calorias', 1900)
-    proteina_hoy    = request.data.get('proteina_hoy', 0)
-    meta_proteina   = request.data.get('meta_proteina', 140)
-    carbos_hoy      = request.data.get('carbos_hoy', 0)
-    meta_carbos     = request.data.get('meta_carbos', 200)
-    fue_al_gym      = request.data.get('fue_al_gym', False)
-    es_dia_gym      = request.data.get('es_dia_gym', True)
-    hora            = request.data.get('hora', 12)
-    racha_gym       = request.data.get('racha_gym', 0)
-    racha_comida    = request.data.get('racha_comida', 0)
-    nombre_usuario  = request.data.get('nombre_usuario') or request.user.first_name or 'parcero'
-    objetivo        = request.data.get('objetivo', 'mantener')
-
-    pct_calorias  = round((calorias_hoy / meta_calorias) * 100) if meta_calorias else 0
-    pct_proteina  = round((proteina_hoy / meta_proteina) * 100) if meta_proteina else 0
-
-    if hora < 12:   momento = 'mañana'
-    elif hora < 18: momento = 'tarde'
-    else:           momento = 'noche'
-
-    if pct_calorias >= 95 and pct_proteina >= 90 and (fue_al_gym or not es_dia_gym):
+    if pct_cal >= 95 and pct_prot >= 90 and (fue_al_gym or not es_dia_gym):
         pose = 'muyfeliz'
-    elif pct_calorias >= 75 and fue_al_gym:
+    elif pct_cal >= 75 and fue_al_gym:
         pose = 'sonrisa'
-    elif pct_calorias < 25 and hora >= 19:
+    elif pct_cal < 25 and hora >= 19:
         pose = 'triste'
     elif not fue_al_gym and es_dia_gym and hora >= 16:
         pose = 'determinado'
-    elif pct_calorias >= 40 and pct_calorias < 80:
+    elif 40 <= pct_cal < 80:
         pose = 'pensando'
     else:
         pose = 'normal'
 
-    objetivo_texto = {'perder': 'perder grasa', 'ganar': 'ganar músculo'}.get(objetivo, 'mantener peso')
+    # Qué tiene sentido decir a esta hora
+    if hora < 11:
+        momento = ('Es de mañana. No juzgues lo poco que lleva: el día apenas empieza. '
+                   'Ayúdalo a arrancar (desayuno con proteína' + (', el gym de hoy' if es_dia_gym and not fue_al_gym else '') + ').')
+    elif hora < 19:
+        momento = 'Es de tarde. Enfócate en lo que le falta para el resto del día, empezando por lo más atrasado.'
+    elif pct_cal >= 90:
+        momento = ('Es de noche y ya comió casi todo o todo lo del día. NUNCA le pidas comer menos, "bajar" calorías '
+                   'ni quemar lo que ya comió: eso ya pasó. Si le falta proteína y cabe, sugiere algo ligero y alto en proteína; '
+                   'si no, habla del descanso o de mañana.')
+    else:
+        momento = 'Es de noche y le falta bastante. Sugiérele una cena concreta que cuadre con lo que le falta.'
+    if not es_dia_gym:
+        gym = 'Hoy es día de descanso: no menciones el gym ni entrenar.'
+    elif fue_al_gym:
+        gym = 'Ya entrenó hoy.'
+    else:
+        gym = 'Hoy le toca gym y todavía no ha ido.' + (f' Lleva {racha_gym} sesiones seguidas.' if racha_gym >= 3 else '')
 
-    gym_estado = (
-        'Sí, ya entrenó hoy' if fue_al_gym
-        else ('No ha ido aún — debería ir' if es_dia_gym
-        else 'Día de descanso')
-    )
+    prompt = f"""Eres Bruce, un dachshund salchicha que es el coach personal de {nombre}. \
+Hablas como parcero colombiano: directo, con humor y cariño, sin rodeos. Nunca usas emojis.
 
-    racha_info = ''
-    if racha_gym >= 3:
-        racha_info = f'Lleva {racha_gym} días seguidos de gym. '
-    if racha_comida >= 5:
-        racha_info += f'Lleva {racha_comida} días registrando comida sin falla.'
+QUIÉN ES:
+{_perfil_bruce(user)}
 
-    prompt = f"""Eres Bruce, un dachshund salchicha que es el coach personal de {nombre_usuario}. \
-Hablas como parcero colombiano — directo, sarcástico con cariño, sin rodeos. \
-Usas vocabulario de fitness natural ("macros", "déficit", "proteína", "racha"). \
-NUNCA usas emojis. NUNCA predicas ni repites consejos genéricos.
+HOY ({hora}:00):
+• Lleva {kcal} de {meta_kcal} kcal ({pct_cal} %) y {prot} de {meta_prot} g de proteína ({pct_prot} %).
+• Le falta: {falta_kcal} kcal y {falta_prot} g de proteína.
+• {gym}
 
-OBJETIVO DEL USUARIO: {objetivo_texto}
-RESTRICCIONES DE DIETA (nunca sugieras algo que las viole): {', '.join(request.user.restricciones_dieta or []) or 'ninguna'}
-ALERGIAS (peligroso, jamás las sugieras): {', '.join(request.user.alergias or []) or 'ninguna'}
-NO LE GUSTA (no lo sugieras): {', '.join(request.user.alimentos_no_gustados or []) or 'nada en particular'}
+QUÉ DECIR:
+- {momento}
+- Si le falta más proteína que calorías, habla de la proteína.
+- Si cumplió todo, celébralo sin pedirle nada más.
+- Si sugieres un alimento, elige de lo que le gusta, con una cantidad concreta, y respeta restricciones, alergias y lo que no le gusta.
 
-SITUACIÓN REAL DE HOY ({momento}, {hora}h):
-- Calorías: {calorias_hoy}/{meta_calorias} kcal ({pct_calorias}%)
-- Proteína: {proteina_hoy}g/{meta_proteina}g ({pct_proteina}%)
-- Carbos: {carbos_hoy}g/{meta_carbos}g
-- Gym: {gym_estado}
-{f'- {racha_info}' if racha_info else ''}
-
-REGLAS ABSOLUTAS:
-1. Exactamente 1 a 2 oraciones. Directas. Sin preámbulos.
-2. Si es día de descanso: JAMÁS menciones el gym. Habla de nutrición, recuperación o sueño.
-3. Basa la frase en los números reales de hoy — no en generalidades.
-4. Varía el inicio: no siempre empieces igual.
-5. Si cumplió todo: celebra con actitud pero sin exagerar.
-6. Si le falta proteína más que calorías: menciona eso específicamente.
-7. Si sugieres un alimento, que respete sus restricciones y alergias (vegetariano: nada de carne, pollo ni pescado; vegano: además nada de huevo, lácteos ni whey de leche; sin_vegetales: nada de ensaladas ni verduras a la vista).
-
-Solo la frase. Sin comillas. Sin explicaciones."""
+FORMA:
+- Exactamente 1 o 2 oraciones cortas, sin preámbulos.
+- Números redondos, sin decimales.
+- Solo la frase, sin comillas."""
 
     payload = {
         'model':            settings.GROQ_MODEL_TEXTO,
         'messages':         [{'role': 'user', 'content': prompt}],
         'max_tokens':       400,  # gpt-oss gasta parte en razonar
-        'temperature':      0.9,
+        'temperature':      0.6,
         'reasoning_effort': 'none',
     }
-
     try:
-        frase = _groq_chat(payload, timeout=15).strip('"').strip("'")
-        # Por si acaso el modelo dejó algún <think> residual
-        frase = _THINK_RE.sub('', frase).strip()
+        frase = _THINK_RE.sub('', _groq_chat(payload, timeout=15)).strip().strip('"').strip("'").strip('«»').strip()
+        frase = re.sub(r'\s+', ' ', frase)
+        if not frase:
+            raise ValueError('frase vacía')
         return Response({'frase': frase, 'pose': pose})
     except Exception:
         frases_fallback = [
@@ -1410,7 +1437,8 @@ def _contexto_entrenos(user, hoy, max_sesiones=4):
                 continue
             previo = next((x for x in anteriores.get(e.nombre, []) if x.sesion.fecha < s.fecha), None)
             antes = f' (antes {_texto_cargas(previo)} el {_dia(previo.sesion.fecha)})' if previo else ''
-            partes.append(f'{e.nombre} {_texto_cargas(e)}{antes}')
+            nota = f' (nota: "{e.notas[:80]}")' if e.notas else ''
+            partes.append(f'{e.nombre} {_texto_cargas(e)}{antes}{nota}')
         estado = '' if s.completada else ' [sin terminar]'
         lineas.append(f'• {_dia(s.fecha)} – {_nombre_sesion(s)}{estado}: ' + ('; '.join(partes) or 'sin ejercicios registrados'))
     return '\n'.join(lineas)
@@ -1449,8 +1477,11 @@ def _contexto_semana(user, hoy):
     if ajuste:
         lineas.append(f'• Gasto real (ajuste del {ajuste.fecha:%d/%m}): {texto_ajuste(ajuste)}')
 
-    rutinas_hoy = list(RutinaDia.objects.filter(usuario=user, dia_semana=hoy.weekday()).values_list('rutina__nombre', flat=True))
-    lineas.append(f'• Rutina de hoy: {", ".join(rutinas_hoy) if rutinas_hoy else "descanso"}.')
+    por_dia = {}
+    for d, nombre in RutinaDia.objects.filter(usuario=user).order_by('dia_semana', 'orden').values_list('dia_semana', 'rutina__nombre'):
+        por_dia.setdefault(d, []).append(nombre)
+    lineas.append(f'• Rutina de hoy: {" y ".join(por_dia.get(hoy.weekday(), [])) or "descanso"}.')
+    lineas.append('• Su semana: ' + '; '.join(f'{DIAS_CORTOS[d]} {" y ".join(por_dia.get(d, [])) or "descanso"}' for d in range(7)) + '.')
 
     plan = PlanDia.objects.filter(usuario=user, fecha=hoy).first()
     if plan and plan.comidas:
@@ -1516,9 +1547,10 @@ def bruce_chat(request, pk):
     comidas = Comida.objects.filter(usuario=user, fecha=hoy)
     totales = {
         'calorias': sum(c.calorias for c in comidas),
-        'proteina': round(sum(c.proteina for c in comidas), 1),
-        'carbos':   round(sum(c.carbos   for c in comidas), 1),
-        'grasas':   round(sum(c.grasas   for c in comidas), 1),
+        # Redondos: a Bruce no se le pegan los "43.7 g"
+        'proteina': round(sum(c.proteina for c in comidas)),
+        'carbos':   round(sum(c.carbos   for c in comidas)),
+        'grasas':   round(sum(c.grasas   for c in comidas)),
     }
     metas = {
         'calorias': user.meta_calorias,
@@ -1528,41 +1560,28 @@ def bruce_chat(request, pk):
     }
     sesion_gym  = SesionGym.objects.filter(usuario=user, fecha=hoy).first()
     fue_al_gym  = sesion_gym.completada if sesion_gym else False
-    ultimo_peso = PesoCorporal.objects.filter(usuario=user).order_by('-fecha').first()
 
     racha_gym    = estadisticas.racha_gym(user, hoy)
     racha_comida = estadisticas.racha_comida(user, hoy)
-
-    objetivo_texto = {
-        'perder':   'perder grasa',
-        'mantener': 'mantener peso',
-        'ganar':    'ganar músculo',
-    }.get(getattr(user, 'objetivo', 'mantener'), 'mantener peso')
 
     nombre = user.first_name or user.email.split('@')[0]
 
     pct_cal  = round((totales['calorias'] / metas['calorias']) * 100) if metas['calorias'] else 0
     pct_prot = round((totales['proteina'] / metas['proteina']) * 100) if metas['proteina'] else 0
 
-    gustados      = ', '.join(getattr(user, 'alimentos_gustados',    None) or []) or 'variado'
-    no_gustados   = ', '.join(getattr(user, 'alimentos_no_gustados', None) or []) or 'ninguno'
-    restricciones = ', '.join(getattr(user, 'restricciones_dieta',   None) or []) or 'ninguna'
-    peso_objetivo = f'{user.peso_objetivo_kg} kg' if getattr(user, 'peso_objetivo_kg', None) else 'no establecido'
+    agua_hoy  = RegistroAgua.objects.filter(usuario=user, fecha=hoy).aggregate(t=models.Sum('cantidad_ml'))['t'] or 0
+    meta_agua = user.meta_agua_ml()
 
-    contexto_dia = f"""PERFIL DE {nombre.upper()}:
-• Objetivo: {objetivo_texto}
-• Peso actual: {f'{ultimo_peso.peso_kg} kg' if ultimo_peso else 'no registrado'} | Peso objetivo: {peso_objetivo}
-• Alimentos que le gustan: {gustados}
-• Alimentos que NO le gustan: {no_gustados}
-• Restricciones dieta: {restricciones}
-• ALERGIAS (peligroso: nunca, ni como ingrediente menor): {', '.join(user.alergias or []) or 'ninguna'}
-• Metas: {metas['calorias']} kcal | {metas['proteina']}g prot | {metas['carbos']}g carbos | {metas['grasas']}g grasas
+    contexto_dia = f"""PERFIL DE {nombre.upper()} (ya lo sabes: no le preguntes estos datos):
+{_perfil_bruce(user)}
+• Metas diarias: {metas['calorias']} kcal | {metas['proteina']}g prot | {metas['carbos']}g carbos | {metas['grasas']}g grasas | {meta_agua} ml de agua
 
 HOY ({_dia(hoy)}, son las {timezone.localtime():%H:%M}; el día va en curso):
 • Calorías: {totales['calorias']}/{metas['calorias']} kcal ({pct_cal}%)
 • Proteína: {totales['proteina']}g/{metas['proteina']}g ({pct_prot}%)
 • Carbos: {totales['carbos']}g/{metas['carbos']}g | Grasas: {totales['grasas']}g/{metas['grasas']}g
 • Le falta por comer hoy (ya calculado; el día no ha terminado, así que NO es un déficit todavía): {max(metas['calorias'] - totales['calorias'], 0)} kcal y {max(round(metas['proteina'] - totales['proteina']), 0)} g de proteína
+• Agua: {agua_hoy} de {meta_agua} ml (le faltan {max(meta_agua - agua_hoy, 0)} ml)
 • Gym hoy: {'completó la sesión' if fue_al_gym else 'no fue'}
 • Racha gym: {racha_gym} días | Racha registro comida: {racha_comida} días
 
@@ -1621,6 +1640,7 @@ SEGURIDAD:
 - Sus alergias, restricciones de dieta y lo que no le gusta se respetan siempre, sin excepción. Sin vegetales significa: nada de ensaladas ni verduras a la vista; sí frutas, legumbres y verduras escondidas en sopas, guisos o cremas.
 - Si pregunta qué comer, propón comidas concretas con cantidades que cuadren con lo que le falta HOY; también puede pedirle el "Plan de Bruce" en la pestaña Comidas.
 - Nada de diagnósticos ni dietas extremas: si menciona dolor, lesión, mareos o algo médico, recomiéndale ir a un profesional.
+- Si su perfil tiene LESIONES Y CONDICIONES, cada consejo de ejercicio las respeta aunque no las mencione en el mensaje: evita lo que pueda agravarlas, propone alternativas seguras y recuérdale seguir a su fisioterapeuta o médico.
 
 PLAN DEL DÍA (tienes herramientas):
 - Si pide cambiar una comida del plan, armarle el plan de hoy o mañana, o pregunta qué le toca comer, USA las herramientas en vez de inventar un plan en texto. Se aplican de una vez y la persona puede deshacer.
@@ -1658,6 +1678,22 @@ PLAN DEL DÍA (tienes herramientas):
         'mensaje_usuario': MensajeChatSerializer(msg_user).data,
         'mensaje_bruce':   MensajeChatSerializer(msg_bruce).data,
     }, status=status.HTTP_201_CREATED)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def valorar_mensaje(request, pk):
+    """👍/👎 a una respuesta de Bruce. Body: { valor: 1 | -1 | 0 } (0 la quita)."""
+    try:
+        valor = int(request.data.get('valor'))
+    except (TypeError, ValueError):
+        valor = None
+    if valor not in (1, -1, 0):
+        return Response({'error': 'valor debe ser 1, -1 o 0'}, status=status.HTTP_400_BAD_REQUEST)
+    hechos = MensajeChat.objects.filter(pk=pk, rol='bruce', sesion__usuario=request.user).update(valoracion=valor or None)
+    if not hechos:
+        return Response(status=status.HTTP_404_NOT_FOUND)
+    return Response({'id': pk, 'valoracion': valor or None})
 
 
 @api_view(['GET'])

@@ -2,3 +2,5 @@
 .env
 *.env
 backend/.env
+# Resultados locales de la evaluación de Bruce
+backend/evals_resultados/

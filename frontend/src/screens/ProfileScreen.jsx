@@ -482,6 +482,10 @@ export default function ProfileScreen({ setUsuario, onLogout, lang, setLang }) {
         ))}
       </Section>
 
+      <Section label='Salud' footer='Bruce lo tiene en cuenta en el chat y en los consejos de entrenamiento.'>
+        <FilaPreferencia campo='lesiones' valores={perfil?.lesiones ?? ''} onAbrir={() => irA('lesiones')} />
+      </Section>
+
       <Section
         label='Preferencias'
       >
