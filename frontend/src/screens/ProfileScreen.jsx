@@ -12,6 +12,7 @@ import Segmented from '../components/Segmented'
 import UserAvatar from '../components/UserAvatar'
 import { FilaPreferencia, PaginaPreferencia } from '../components/Preferencias'
 import { FilaNotificaciones, PaginaNotificaciones } from '../components/Notificaciones'
+import { FilaMemorias, PaginaMemorias } from '../components/MemoriasBruce'
 import { fotoAJpeg } from '../lib/imagen'
 
 // ── helpers UI ────────────────────────────────────────────────────────────
@@ -286,6 +287,8 @@ export default function ProfileScreen({ setUsuario, onLogout, lang, setLang }) {
       <div ref={raizRef} style={{ padding: '0 16px calc(var(--safe-bottom) + 32px)' }}>
         {pagina === 'notificaciones' ? (
           <PaginaNotificaciones onVolver={() => irA(null)} />
+        ) : pagina === 'memorias' ? (
+          <PaginaMemorias onVolver={() => irA(null)} />
         ) : (
           <PaginaPreferencia
             campo={pagina}
@@ -484,6 +487,10 @@ export default function ProfileScreen({ setUsuario, onLogout, lang, setLang }) {
 
       <Section label='Salud' footer='Bruce lo tiene en cuenta en el chat y en los consejos de entrenamiento.'>
         <FilaPreferencia campo='lesiones' valores={perfil?.lesiones ?? ''} onAbrir={() => irA('lesiones')} />
+      </Section>
+
+      <Section label='Bruce' footer='Lo que le cuentas en el chat y sirve en otras conversaciones.'>
+        <FilaMemorias onAbrir={() => irA('memorias')} />
       </Section>
 
       <Section

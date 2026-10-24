@@ -1151,7 +1151,8 @@ class FaseUnoBruceTests(Base):
         ahora = tz.make_aware(datetime(HOY.year, HOY.month, HOY.day, 20, 35))
         with mock.patch('django.utils.timezone.now', return_value=ahora),                 mock.patch('api.views._groq_chat', return_value='ok') as groq:
             self.api.post('/api/bruce/frase/', {}, format='json')
-        self.assertIn('NUNCA le pidas comer menos', groq.call_args[0][0]['messages'][0]['content'])
+        prompt = groq.call_args[0][0]['messages'][0]['content']
+        self.assertIn('NO sugieras comer nada más', prompt)
 
     def test_valorar_respuesta_de_bruce(self):
         from .models import MensajeChat, SesionChat
@@ -1169,6 +1170,100 @@ class FaseUnoBruceTests(Base):
         otro = User.objects.create_user('beto', 'b@t.com', 'x')
         ajena = MensajeChat.objects.create(sesion=SesionChat.objects.create(usuario=otro), rol='bruce', contenido='x')
         self.assertEqual(self.api.post(f'/api/chat/mensajes/{ajena.id}/valorar/', {'valor': 1}, format='json').status_code, 404)
+
+
+class MemoriaBruceTests(Base):
+    """Bruce recuerda datos duraderos entre conversaciones."""
+
+    def test_recordar_y_olvidar(self):
+        from . import chat_plan
+        from .models import MemoriaBruce
+        res, accion = chat_plan.ejecutar(self.user, 'recordar', {'texto': '  Entrena a las   6 am '})
+        self.assertEqual(accion['tipo'], 'memoria_guardada')
+        self.assertEqual(MemoriaBruce.objects.get().texto, 'Entrena a las 6 am')
+        _, repetida = chat_plan.ejecutar(self.user, 'recordar', {'texto': 'entrena a las 6 AM'})
+        self.assertIsNone(repetida)                                        # no duplica
+        _, accion = chat_plan.ejecutar(self.user, 'olvidar', {'id': res['id']})
+        self.assertEqual(accion['tipo'], 'memoria_olvidada')
+        self.assertFalse(MemoriaBruce.objects.exists())
+        res, accion = chat_plan.ejecutar(self.user, 'olvidar', {'id': 999})
+        self.assertIn('error', res)
+
+    def test_tope_olvida_la_mas_vieja(self):
+        from . import chat_plan
+        from .models import MemoriaBruce
+        for i in range(MemoriaBruce.MAXIMO + 2):
+            chat_plan.ejecutar(self.user, 'recordar', {'texto': f'dato {i}'})
+        textos = list(MemoriaBruce.objects.values_list('texto', flat=True))
+        self.assertEqual(len(textos), MemoriaBruce.MAXIMO)
+        self.assertNotIn('dato 0', textos)
+        self.assertIn(f'dato {MemoriaBruce.MAXIMO + 1}', textos)
+
+    def test_recuerdos_llegan_al_chat_y_no_se_mezclan(self):
+        from .models import MemoriaBruce, SesionChat
+        MemoriaBruce.objects.create(usuario=self.user, texto='No le gusta el salmón')
+        otro = User.objects.create_user('beto', 'b@t.com', 'x')
+        MemoriaBruce.objects.create(usuario=otro, texto='Secreto de Beto')
+        sesion = SesionChat.objects.create(usuario=self.user)
+        with mock.patch('api.views._groq_mensaje', return_value={'content': 'ok'}) as groq:
+            self.api.post(f'/api/chat/{sesion.id}/mensaje/', {'mensaje': 'hola'}, format='json')
+        sistema = groq.call_args[0][0]['messages'][0]['content']
+        self.assertIn('No le gusta el salmón', sistema)
+        self.assertNotIn('Secreto de Beto', sistema)
+
+    def test_endpoints_ver_y_borrar(self):
+        from .models import MemoriaBruce
+        m = MemoriaBruce.objects.create(usuario=self.user, texto='Tiene mancuernas en casa')
+        r = self.api.get('/api/bruce/memorias/')
+        self.assertEqual([x['texto'] for x in r.data], ['Tiene mancuernas en casa'])
+        self.assertEqual(self.api.delete(f'/api/bruce/memorias/{m.id}/').status_code, 204)
+        self.assertEqual(self.api.delete(f'/api/bruce/memorias/{m.id}/').status_code, 404)
+
+
+class HerramientasBruceTests(Base):
+    """Bruce registra comida y agua, y consulta historial que no cabe en el contexto."""
+
+    def test_registrar_comida_y_agua(self):
+        from . import chat_plan
+        from .models import RegistroAgua
+        with en(HOY):
+            res, accion = chat_plan.ejecutar(self.user, 'registrar_comida', {
+                'nombre': '2 arepas con queso', 'calorias': 520, 'proteina': 18, 'carbos': 60, 'grasas': 22})
+            self.assertEqual(accion['tipo'], 'comida_registrada')
+            self.assertEqual(Comida.objects.get().fecha, HOY)
+            self.assertEqual(res['lleva_hoy']['calorias'], 520)
+            res, accion = chat_plan.ejecutar(self.user, 'registrar_agua', {'ml': 500})
+            self.assertEqual((accion['ml'], accion['total']), (500, 500))
+            self.assertEqual(RegistroAgua.objects.get().fecha, HOY)
+
+    def test_datos_absurdos_no_se_registran(self):
+        from . import chat_plan
+        res, accion = chat_plan.ejecutar(self.user, 'registrar_comida', {'nombre': 'x', 'calorias': 99999, 'proteina': 1, 'carbos': 1, 'grasas': 1})
+        self.assertIn('error', res)
+        self.assertIsNone(accion)
+        res, _ = chat_plan.ejecutar(self.user, 'registrar_agua', {'ml': 'mucha'})
+        self.assertIn('error', res)
+        self.assertFalse(Comida.objects.exists())
+
+    def test_consultar_ejercicio_y_comidas(self):
+        from . import chat_plan
+        for dias, kg in ((40, 8), (20, 10), (6, 12.5)):
+            s = self.sesion(HOY - timedelta(days=dias))
+            EjercicioLog.objects.create(sesion=s, nombre='Press banca plano', series=4, reps='10', peso_kg=kg)
+        Comida.objects.create(usuario=self.user, nombre='arroz con pollo', calorias=700, proteina=40, fecha=HOY - timedelta(days=2))
+        with en(HOY):
+            res, _ = chat_plan.ejecutar(self.user, 'consultar_ejercicio', {'nombre': 'press banca', 'semanas': 4})
+            self.assertEqual([r['kg_max'] for r in res['registros']], [10, 12.5])     # la de hace 40 días queda fuera
+            res, _ = chat_plan.ejecutar(self.user, 'consultar_comidas', {'desde': str(HOY - timedelta(days=3)), 'hasta': str(HOY)})
+        dias = {d['fecha']: d for d in res['dias']}
+        self.assertEqual(dias[str(HOY - timedelta(days=2))]['comio'], ['arroz con pollo'])
+        self.assertIn('sin comida registrada', dias[str(HOY - timedelta(days=3))]['registro'])
+
+    def test_rango_de_comidas_se_limita_a_31_dias(self):
+        from . import chat_plan
+        with en(HOY):
+            res, _ = chat_plan.ejecutar(self.user, 'consultar_comidas', {'desde': '2020-01-01', 'hasta': str(HOY)})
+        self.assertEqual(len(res['dias']), 31)
 
 
 class ContextoBruceTests(Base):

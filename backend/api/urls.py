@@ -73,6 +73,8 @@ urlpatterns = [
     path('chat/<int:pk>/',              views.sesion_chat_detalle,  name='chat-detalle'),
     path('chat/<int:pk>/mensaje/',      views.bruce_chat,           name='chat-mensaje'),
     path('chat/mensajes/<int:pk>/valorar/', views.valorar_mensaje,  name='chat-valorar'),
+    path('bruce/memorias/',             views.memorias_bruce,       name='bruce-memorias'),
+    path('bruce/memorias/<int:pk>/',    views.memoria_bruce_detalle, name='bruce-memoria'),
 
     # ───────────────────────── AGUA ─────────────────────────
     path('agua/',                          views.agua,               name='agua'),

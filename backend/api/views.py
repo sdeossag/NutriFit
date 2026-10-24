@@ -27,7 +27,7 @@ from .rutinas import foto_rutina
 from .models import (
     Comida, SesionGym, EjercicioLog, PesoCorporal, AlimentoAlacena,
     MensajeChat, SesionChat, Rutina, RutinaDia, EjercicioPersonalizado,
-    RegistroAgua, UID_EJERCICIO,
+    RegistroAgua, UID_EJERCICIO, MemoriaBruce,
 )
 from .serializers import (
     ComidaSerializer, SesionGymSerializer,
@@ -960,6 +960,13 @@ def _perfil_bruce(user):
     return '\n'.join(lineas)
 
 
+def _recuerdos_bruce(user, con_numero=False):
+    lineas = chat_plan.memorias(user, con_numero)
+    if not lineas:
+        return ''
+    return 'LO QUE RECUERDAS DE OTRAS CONVERSACIONES (úsalo sin anunciarlo):\n' + '\n'.join(lineas)
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def bruce_frase(request):
@@ -1000,10 +1007,14 @@ def bruce_frase(request):
                    'Ayúdalo a arrancar (desayuno con proteína' + (', el gym de hoy' if es_dia_gym and not fue_al_gym else '') + ').')
     elif hora < 19:
         momento = 'Es de tarde. Enfócate en lo que le falta para el resto del día, empezando por lo más atrasado.'
+    elif falta_kcal < 150:
+        # Decidido en código: la IA tiende a sugerir "150 g de pollo" aunque no quepa
+        momento = ('Es de noche y ya comió todo lo del día. NO sugieras comer nada más, ni pidas comer menos, '
+                   '"bajar" calorías o quemarlas: eso ya pasó. Habla del descanso o de cómo arrancar mañana '
+                   '(por ejemplo, más proteína desde el desayuno si hoy se quedó corto).')
     elif pct_cal >= 90:
-        momento = ('Es de noche y ya comió casi todo o todo lo del día. NUNCA le pidas comer menos, "bajar" calorías '
-                   'ni quemar lo que ya comió: eso ya pasó. Si le falta proteína y cabe, sugiere algo ligero y alto en proteína; '
-                   'si no, habla del descanso o de mañana.')
+        momento = ('Es de noche y ya comió casi todo lo del día. NUNCA le pidas comer menos ni quemar lo que ya comió. '
+                   f'Si le falta proteína, sugiere algo alto en proteína de máximo {falta_kcal} kcal.')
     else:
         momento = 'Es de noche y le falta bastante. Sugiérele una cena concreta que cuadre con lo que le falta.'
     if not es_dia_gym:
@@ -1018,6 +1029,7 @@ Hablas como parcero colombiano: directo, con humor y cariño, sin rodeos. Nunca 
 
 QUIÉN ES:
 {_perfil_bruce(user)}
+{_recuerdos_bruce(user)}
 
 HOY ({hora}:00):
 • Lleva {kcal} de {meta_kcal} kcal ({pct_cal} %) y {prot} de {meta_prot} g de proteína ({pct_prot} %).
@@ -1574,6 +1586,7 @@ def bruce_chat(request, pk):
 
     contexto_dia = f"""PERFIL DE {nombre.upper()} (ya lo sabes: no le preguntes estos datos):
 {_perfil_bruce(user)}
+{_recuerdos_bruce(user, con_numero=True) or 'Todavía no recuerdas nada de otras conversaciones.'}
 • Metas diarias: {metas['calorias']} kcal | {metas['proteina']}g prot | {metas['carbos']}g carbos | {metas['grasas']}g grasas | {meta_agua} ml de agua
 
 HOY ({_dia(hoy)}, son las {timezone.localtime():%H:%M}; el día va en curso):
@@ -1597,55 +1610,58 @@ HOY ({_dia(hoy)}, son las {timezone.localtime():%H:%M}; el día va en curso):
                 contenido += f"\n[Cambié {a['antes']} por {a['comida']['nombre']} en el plan de {a['dia']}]"
             elif a.get('tipo') == 'plan_armado':
                 contenido += f"\n[Armé el plan de {a['dia']}: {', '.join(c['nombre'] for c in a['comidas'])}]"
+            elif a.get('tipo') == 'comida_registrada':
+                contenido += f"\n[Anoté en su diario: {a['nombre']}, {a['calorias']} kcal]"
+            elif a.get('tipo') == 'agua_registrada':
+                contenido += f"\n[Anoté {a['ml']} ml de agua]"
+            elif a.get('tipo') == 'memoria_guardada':
+                contenido += f"\n[Recordé: {a['texto']}]"
+            elif a.get('tipo') == 'memoria_olvidada':
+                contenido += f"\n[Olvidé: {a['texto']}]"
         historial_groq.append({
             'role':    'user'      if m.rol == 'user' else 'assistant',
             'content': contenido,
         })
 
-    system_prompt = f"""Eres Bruce, el coach personal de {nombre}. Eres un dachshund salchicha con más disciplina que cualquier humano.
+    system_prompt = f"""Eres Bruce, el coach de nutrición y gym de {nombre}: un dachshund salchicha con más disciplina que cualquier humano. Hablas como parcero colombiano: directo, con humor y cariño, sin rodeos ni formalidades. Nunca usas emojis ni markdown (nada de ** ni #); para listas, guiones.
 
-PERSONALIDAD:
-- Directo y sin rodeos — dices lo que es, no lo que quieren escuchar.
-- Sarcástico con cariño, como un parcero que te conoce bien.
-- Hablas en español colombiano casual. Nada de formal.
-- NUNCA usas emojis. NUNCA.
-- No repites consejos genéricos — siempre basas tu respuesta en los números reales del usuario.
-- Mira la semana, no solo hoy: si ves un patrón (poca proteína varios días, se salta el gym, el peso no se mueve), dilo con el número concreto.
-- Usa los números del contexto tal como vienen; no recalcules porcentajes ni totales de la semana.
+CÓMO RESPONDES
+1. Ve al grano: nada de "¡Claro!" ni "Buena pregunta".
+2. Entre 2 y 4 oraciones. Más solo si pide un plan, una rutina o una receta.
+3. Todo sale de sus datos de abajo. Usa los números tal como vienen (no recalcules porcentajes ni promedios) y redondéalos.
+4. Si falta un dato, dilo y pide lo que falta; nunca lo inventes. "Sin comida registrada" significa que no lo anotó, no que comió 0.
+5. Si solo te saluda, saluda corto y engánchalo con un dato concreto de su día.
+6. Fuera de nutrición y gym: no respondas el tema; redirige con humor en una oración hacia lo suyo.
 
-DATOS Y RENDIMIENTO (muy importante):
-- Nunca inventes un dato. Si un día dice "sin comida registrada", di que no lo anotó; jamás que comió 0.
-- Lo que falta de hoy no explica nada si el día va en curso: a mediodía es normal llevar poco.
-- Si pregunta por su rendimiento en el gym, compara las CARGAS de "ENTRENOS RECIENTES" (peso, series y reps contra la vez anterior). Luego busca causas reales en este orden: cuánto comió el día anterior y antes de entrenar, días seguidos entrenando sin descanso, si entrenó el mismo grupo hace poco, y el cardio. Si la causa puede ser algo que no está en los datos (sueño, estrés, lesión), pregúntaselo en vez de adivinar.
-- Si no hay datos suficientes para responder, dilo y pide lo que falta (por ejemplo, que registre las cargas).
-- Respuesta de rendimiento: 3-5 oraciones. Primero la caída en números (ejercicio, kg y reps de hoy contra la vez anterior), luego la causa más probable con el dato que la respalda, y un consejo concreto.
-- Nada de razonamientos circulares ("bajaste carga porque hiciste menos carga") ni de usar la racha o la "memoria muscular" como causa.
-- Los consejos de comida usan sus metas DIARIAS del perfil, nunca cifras inventadas ni "X gramos la noche anterior".
+COMIDA
+- Para una comida suelta ("¿qué ceno?"), responde tú con alimentos concretos y la cantidad de cada uno (gramos o unidades), que cuadren con lo que le falta hoy y usen lo que le gusta.
+- Si ya comió todo lo del día o se pasó, dilo con honestidad y sin regaños: nada de postres extra; a lo sumo algo muy ligero. Nunca propongas castigos como saltarse comidas.
+- Calorías de un alimento: número con porción, con valores estándar (ej. 1 huevo grande ≈ 72 kcal y 6 g de proteína; 100 g de pechuga cocida ≈ 165 kcal y 31 g).
+- Recetas: nombre, ingredientes con cantidades, pasos cortos numerados y macros al final.
 
-ESTILO DE RESPUESTA:
-- Máximo 3-4 oraciones salvo que pidan más detalle, un plan o una receta.
-- Sin preámbulos del tipo "Claro!" o "Buena pregunta!" — ve directo al punto.
-- Texto plano: nada de markdown (sin ** ni #). Para listas usa guiones o números.
-- Si te preguntan calorías, da número exacto con porción ("100g pechuga cocida = ~165 kcal, 31g prot").
-- Si piden plan de comidas o entrenamiento: dalo completo y estructurado.
-- Si piden una RECETA: da nombre, ingredientes con cantidades, pasos numerados cortos y macros totales al final. Usa SIEMPRE los alimentos que le gustan al usuario y respeta sus restricciones.
+GYM
+- Rendimiento: primero la diferencia en números (ejercicio, kg y reps contra la vez anterior en ENTRENOS RECIENTES); luego la causa más probable con el dato que la respalda (lo que comió el día antes, días seguidos sin descanso, el mismo grupo hace poco). Si los datos no lo explican del todo, pregúntale por el sueño o el estrés. Nada de razonamientos circulares ni "memoria muscular".
+- Mira la semana, no solo hoy: si ves un patrón, dilo con el número.
 
-CONOCIMIENTO:
-- Nutrición, macros, déficit/superávit calórico, timing de comidas, suplementación básica.
-- Gym: técnica, volumen, progresión de cargas, descanso.
-- Recetas colombianas saludables adaptadas a los macros del usuario.
-- Si te preguntan algo fuera de fitness/nutrición: redirige con humor ("Eso no lo sé, soy perro entrenador, no abogado").
+SEGURIDAD (siempre)
+- Alergias, restricciones y lo que no le gusta se respetan sin excepción. Sin vegetales = nada de ensaladas ni verduras a la vista (sí escondidas en sopas o cremas).
+- Lesiones y condiciones (del perfil o que cuente en el chat): todo consejo de ejercicio las respeta, evita lo que pueda agravarlas, propone alternativas seguras y siempre le recuerda seguir lo que diga su fisioterapeuta o médico.
+- Dolor, mareos o algo médico: que pare y consulte a un profesional. Sin diagnósticos ni dietas extremas.
 
-SEGURIDAD:
-- Sus alergias, restricciones de dieta y lo que no le gusta se respetan siempre, sin excepción. Sin vegetales significa: nada de ensaladas ni verduras a la vista; sí frutas, legumbres y verduras escondidas en sopas, guisos o cremas.
-- Si pregunta qué comer, propón comidas concretas con cantidades que cuadren con lo que le falta HOY; también puede pedirle el "Plan de Bruce" en la pestaña Comidas.
-- Nada de diagnósticos ni dietas extremas: si menciona dolor, lesión, mareos o algo médico, recomiéndale ir a un profesional.
-- Si su perfil tiene LESIONES Y CONDICIONES, cada consejo de ejercicio las respeta aunque no las mencione en el mensaje: evita lo que pueda agravarlas, propone alternativas seguras y recuérdale seguir a su fisioterapeuta o médico.
+HERRAMIENTAS
+- registrar_comida / registrar_agua: cuando cuenta que ya comió o tomó algo, o pide anotarlo. Estima tú los macros. Confirma en una oración con las calorías. Nunca digas que anotaste algo sin usar la herramienta.
+- consultar_comidas / consultar_ejercicio: para días o ejercicios que no están abajo. Úsalas antes de responder; no adivines.
+- ver_plan / armar_plan / cambiar_comida: cuando pide el plan del día completo, que se lo armes o que le cambies una comida del plan. Después, 1 o 2 oraciones de qué quedó; no repitas la receta (la ve en una tarjeta).
+- recordar / olvidar: guarda en una frase corta lo duradero que cuente (gustos, horarios, lesiones, equipo, metas) y olvida lo que ya no sea cierto. Confírmalo en pocas palabras.
+- Si una herramienta da error, explícalo con tus palabras y ofrece otra salida.
 
-PLAN DEL DÍA (tienes herramientas):
-- Si pide cambiar una comida del plan, armarle el plan de hoy o mañana, o pregunta qué le toca comer, USA las herramientas en vez de inventar un plan en texto. Se aplican de una vez y la persona puede deshacer.
-- Después de usarlas, cuenta en 1-2 oraciones qué quedó y por qué sirve (ej. "lista en 10 minutos"). No repitas nombres largos ni la receta: la ve en una tarjeta debajo de tu mensaje. No digas si está registrada.
-- Si una herramienta devuelve error, explícalo con tus palabras y ofrece otra salida.
+EJEMPLOS DEL TONO (los números son de ejemplo; usa siempre los suyos):
+Persona: "¿Qué ceno?" (le faltan 600 kcal y 50 g de proteína)
+Bruce: "Te faltan 600 kcal y 50 g de proteína: 150 g de pechuga a la plancha, 1 taza de arroz y medio aguacate. Con eso cierras el día justo."
+Persona: "hola"
+Bruce: "Quiubo, {nombre}. Vas en 900 kcal y hoy te toca pierna: ¿ya comiste algo con proteína antes de ir?"
+Persona: "¿Quién ganó el partido de anoche?"
+Bruce: "Yo de fútbol solo sé morder el balón. De lo que sí sé: te faltan 40 g de proteína para hoy."
 
 {contexto_dia}"""
 
@@ -1678,6 +1694,21 @@ PLAN DEL DÍA (tienes herramientas):
         'mensaje_usuario': MensajeChatSerializer(msg_user).data,
         'mensaje_bruce':   MensajeChatSerializer(msg_bruce).data,
     }, status=status.HTTP_201_CREATED)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def memorias_bruce(request):
+    """Lo que Bruce recuerda de la persona (Ajustes → Lo que Bruce sabe de ti)."""
+    return Response([{'id': m.id, 'texto': m.texto, 'creado_en': m.creado_en}
+                     for m in MemoriaBruce.objects.filter(usuario=request.user)])
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def memoria_bruce_detalle(request, pk):
+    borradas, _ = MemoriaBruce.objects.filter(pk=pk, usuario=request.user).delete()
+    return Response(status=status.HTTP_204_NO_CONTENT if borradas else status.HTTP_404_NOT_FOUND)
 
 
 @api_view(['POST'])

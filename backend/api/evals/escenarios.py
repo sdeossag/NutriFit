@@ -84,6 +84,10 @@ def registro_comida(r, ctx):
     return None if ctx['comidas_nuevas'] > 0 else 'no registró la comida (falta la herramienta)'
 
 
+def guardo_recuerdo(r, ctx):
+    return None if ctx.get('memorias_nuevas', 0) > 0 else 'no guardó el dato en su memoria'
+
+
 def armo_plan(r, ctx):
     return None if any(a.get('tipo') == 'plan_armado' for a in ctx['acciones']) else 'no usó la herramienta de armar el plan'
 
@@ -208,6 +212,13 @@ ESCENARIOS = [
         'mensaje': 'Dame una idea de almuerzo con pescado.',
         'reglas': [no_menciona('salmón', 'salmon')],
         'rubrica': ['Recuerda algo que dijo en otra conversación: no le sugiere salmón.'],
+    },
+    {
+        'id': 'chat_recordar_dato',
+        'tipo': 'chat', 'hora': '12:00',
+        'mensaje': 'Para que sepas: entreno siempre a las 6 de la mañana, antes de la universidad.',
+        'reglas': [guardo_recuerdo, max_oraciones(4)],
+        'rubrica': ['Lo confirma en pocas palabras y, si da un consejo, encaja con entrenar temprano (por ejemplo qué comer antes o después).'],
     },
     {
         'id': 'chat_rendimiento',

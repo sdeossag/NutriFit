@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   IconArrowUp, IconChevronLeft, IconTrash, IconEdit, IconChevronRight, IconArrowBackUp, IconToolsKitchen2,
-  IconThumbUp, IconThumbUpFilled, IconThumbDown, IconThumbDownFilled,
+  IconThumbUp, IconThumbUpFilled, IconThumbDown, IconThumbDownFilled, IconBrain, IconDroplet, IconCheck,
 } from '@tabler/icons-react'
 import {
   getSesionesChatBruce, crearSesionChat, getSesionChat,
-  eliminarSesionChat, enviarMensajeBruce, deshacerComidaPlan, valorarMensajeBruce,
+  eliminarSesionChat, enviarMensajeBruce, deshacerComidaPlan, valorarMensajeBruce, borrarMemoriaBruce,
+  eliminarComida, eliminarAgua,
 } from '../api'
 import { toast } from '../lib/toast'
 import { haptic } from '../lib/motion'
@@ -54,6 +55,87 @@ function Avatar({ size = 28 }) {
 // ── Lo que Bruce hizo en el plan ─────────────────────────────────────────
 const MOMENTO = { desayuno: 'Desayuno', almuerzo: 'Almuerzo', merienda: 'Merienda', cena: 'Cena' }
 const verPlan = (dia) => window.dispatchEvent(new CustomEvent('nf:navegar', { detail: { destino: 'plan', dia } }))
+
+// Lo que Bruce guardó (u olvidó) de la persona: discreto, con la opción de olvidarlo
+function Recuerdo({ accion }) {
+  const [olvidado, setOlvidado] = useState(accion.tipo === 'memoria_olvidada')
+  const [borrando, setBorrando] = useState(false)
+  const guardado = accion.tipo === 'memoria_guardada'
+
+  const olvidar = async () => {
+    setBorrando(true)
+    try {
+      await borrarMemoriaBruce(accion.id)
+      haptic(10)
+      setOlvidado(true)
+    } catch (e) {
+      toast.error(e.mensaje || 'No se pudo olvidar')
+    } finally {
+      setBorrando(false)
+    }
+  }
+
+  return (
+    <div style={{
+      marginTop: '6px', marginLeft: '36px', borderRadius: '14px', padding: '8px 8px 8px 12px',
+      background: 'var(--surface-2)', boxShadow: 'inset 0 0 0 0.5px var(--separator)',
+      display: 'flex', alignItems: 'center', gap: '8px',
+    }}>
+      <IconBrain size={16} color='var(--purple)' aria-hidden='true' style={{ flexShrink: 0 }} />
+      <p className='nf-footnote' style={{ flex: 1, minWidth: 0, transition: 'opacity 200ms var(--ease-out)', opacity: olvidado ? 0.55 : 1 }}>
+        <span style={{ color: 'var(--label-2)' }}>{olvidado ? 'Olvidado: ' : 'Bruce recordará: '}</span>
+        <span style={{ color: 'var(--label)', textDecoration: olvidado && guardado ? 'line-through' : 'none' }}>{accion.texto}</span>
+      </p>
+      {guardado && !olvidado && (
+        <button onClick={olvidar} disabled={borrando} className='nf-btn nf-btn--plain nf-btn--sm' style={{ flexShrink: 0 }}>
+          {borrando ? '…' : 'Olvidar'}
+        </button>
+      )}
+    </div>
+  )
+}
+
+// Comida o agua que Bruce anotó en el diario: se puede deshacer al instante
+function Registro({ accion }) {
+  const [estado, setEstado] = useState('hecho')   // hecho | deshaciendo | deshecho
+  const esAgua = accion.tipo === 'agua_registrada'
+  const deshecho = estado === 'deshecho'
+
+  const deshacer = async () => {
+    setEstado('deshaciendo')
+    try {
+      await (esAgua ? eliminarAgua(accion.id) : eliminarComida(accion.id))
+      haptic(15)
+      setEstado('deshecho')
+    } catch (e) {
+      setEstado('hecho')
+      toast.error(e.mensaje || 'No se pudo deshacer')
+    }
+  }
+
+  return (
+    <div style={{
+      marginTop: '6px', marginLeft: '36px', borderRadius: '14px', padding: '8px 8px 8px 12px',
+      background: 'var(--surface-2)', boxShadow: 'inset 0 0 0 0.5px var(--separator)',
+      display: 'flex', alignItems: 'center', gap: '8px',
+    }}>
+      {esAgua
+        ? <IconDroplet size={16} color='var(--cyan)' aria-hidden='true' style={{ flexShrink: 0 }} />
+        : <IconCheck size={16} color='var(--green)' strokeWidth={2.6} aria-hidden='true' style={{ flexShrink: 0 }} />}
+      <p className='nf-footnote nf-num' style={{ flex: 1, minWidth: 0, transition: 'opacity 200ms var(--ease-out)', opacity: deshecho ? 0.55 : 1 }}>
+        <span style={{ color: 'var(--label-2)' }}>{deshecho ? 'Quitado: ' : 'Anotado: '}</span>
+        <span style={{ color: 'var(--label)', textDecoration: deshecho ? 'line-through' : 'none' }}>
+          {esAgua ? `${accion.ml} ml de agua` : `${accion.nombre} · ${Math.round(accion.calorias)} kcal`}
+        </span>
+      </p>
+      {!deshecho && (
+        <button onClick={deshacer} disabled={estado === 'deshaciendo'} className='nf-btn nf-btn--plain nf-btn--sm' style={{ flexShrink: 0, gap: '4px' }}>
+          <IconArrowBackUp size={15} /> {estado === 'deshaciendo' ? '…' : 'Deshacer'}
+        </button>
+      )}
+    </div>
+  )
+}
 
 function Accion({ accion }) {
   const [estado, setEstado] = useState('hecho')   // hecho | deshaciendo | deshecho
@@ -196,7 +278,11 @@ function Mensaje({ msg, agrupado, animar }) {
         </p>
       </div>
     </div>
-    {esBruce && (msg.acciones ?? []).map((a, i) => <Accion key={i} accion={a} />)}
+    {esBruce && (msg.acciones ?? []).map((a, i) => (
+      a.tipo?.startsWith('memoria') ? <Recuerdo key={i} accion={a} />
+        : a.tipo?.endsWith('_registrada') ? <Registro key={i} accion={a} />
+          : <Accion key={i} accion={a} />
+    ))}
     {esBruce && <Valorar msg={msg} />}
     </div>
   )

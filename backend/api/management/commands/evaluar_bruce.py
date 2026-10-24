@@ -103,6 +103,7 @@ class Command(BaseCommand):
         with mock.patch('django.utils.timezone.now', return_value=ahora), transaction.atomic():
             user = self.preparar(e)
             comidas_antes = Comida.objects.filter(usuario=user).count()
+            memorias_antes = self.contar_memorias(user)
             api = APIClient()
             api.force_authenticate(user)
             # El plan gratis de Groq limita los tokens por minuto: si Bruce responde con su
@@ -119,7 +120,8 @@ class Command(BaseCommand):
                     break
                 self.stdout.write(f"        (límite de Groq en {e['id']}, espero 60 s)")
                 time.sleep(60)
-            ctx = {'acciones': acciones, 'comidas_nuevas': Comida.objects.filter(usuario=user).count() - comidas_antes}
+            ctx = {'acciones': acciones, 'comidas_nuevas': Comida.objects.filter(usuario=user).count() - comidas_antes,
+                   'memorias_nuevas': self.contar_memorias(user) - memorias_antes}
             situacion = self.situacion(user, e)
             transaction.set_rollback(True)
 
@@ -135,6 +137,14 @@ class Command(BaseCommand):
             'fallos': fallos, 'criterios': criterios,
             'pasa': not fallos and not respuesta.startswith('[ERROR]'),
         }
+
+    @staticmethod
+    def contar_memorias(user):
+        try:
+            from api.models import MemoriaBruce
+        except ImportError:
+            return 0
+        return MemoriaBruce.objects.filter(usuario=user).count()
 
     @staticmethod
     def es_limite(respuesta):
@@ -225,7 +235,7 @@ class Command(BaseCommand):
         if e.get('perfil', {}).get('lesiones'):
             lineas.append(f"Lesión registrada en su perfil: {e['perfil']['lesiones']}")
         if e.get('agua_ml'):
-            lineas.append(f"Agua hoy: {e['agua_ml']} ml.")
+            lineas.append(f"Agua hoy: {e['agua_ml']} ml de una meta de {user.meta_agua_ml()} ml.")
         for dias, kcal_d, prot_d, *_ in e.get('comidas', []):
             if dias:
                 lineas.append(f"Hace {dias} día(s) comió {kcal_d} kcal y {prot_d} g de proteína.")

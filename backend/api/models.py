@@ -393,6 +393,23 @@ class SesionChat(models.Model):
         return f"{self.usuario} — {self.titulo or 'Sin título'}"
 
 
+class MemoriaBruce(models.Model):
+    """Lo que Bruce recuerda de la persona entre conversaciones: datos duraderos
+    que contó en el chat (gustos, horarios, lesiones, equipo que tiene…). Los guarda
+    la IA con la herramienta "recordar"; la persona los ve y borra en Ajustes."""
+    usuario   = models.ForeignKey('Usuario', on_delete=models.CASCADE, related_name='memorias_bruce')
+    texto     = models.CharField(max_length=200)
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    MAXIMO = 40   # al pasarse, se olvida la más vieja
+
+    class Meta:
+        ordering = ['creado_en', 'id']
+
+    def __str__(self):
+        return f'{self.usuario} — {self.texto[:50]}'
+
+
 class MensajeChat(models.Model):
     ROL_CHOICES = [('user', 'Usuario'), ('bruce', 'Bruce')]
     sesion    = models.ForeignKey(SesionChat, on_delete=models.CASCADE, related_name='mensajes')
