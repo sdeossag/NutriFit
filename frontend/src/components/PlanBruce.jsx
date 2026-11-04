@@ -339,7 +339,7 @@ export default function PlanBruce({ visible, onRegistrada }) {
     if (!file || i == null) return
     setTrabajo({ indice: i, tipo: 'foto' })
     try {
-      const imagen = await fotoABase64(file, 1280)
+      const imagen = await fotoABase64(file, 800)   // el servidor la usa a 768
       const r = await fotoComidaPlan(fecha, i, imagen)
       setRevision({ indice: i, r })
       haptic(10)

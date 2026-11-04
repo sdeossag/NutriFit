@@ -1299,6 +1299,66 @@ class RespaldoGroqTests(Base):
                 _groq_chat({'model': settings.GROQ_MODEL_TEXTO, 'messages': []})
 
 
+class AnalisisFotoTests(Base):
+    """Fotos: reanalizar sin volver a mandar la imagen y errores claros."""
+
+    JSON_OK = '{"es_comida": true, "nombre": "x", "alimentos": [{"nombre": "arepa", "cantidad": "2", "gramos": 200, "calorias": 400, "proteina": 10, "carbos": 70, "grasas": 8}], "confianza": "media", "descripcion": "2 arepas"}'
+
+    def test_reanalizar_es_texto_y_sin_imagen(self):
+        from django.conf import settings
+        with mock.patch('api.views._groq_chat', return_value=self.JSON_OK) as groq:
+            r = self.api.post('/api/analizar-foto/', {
+                'correccion': 'arepa de choclo', 'nombre_anterior': 'arepa',
+                'analisis_anterior': {'descripcion': '2 arepas', 'alimentos': [{'nombre': 'arepa', 'cantidad': '2', 'gramos': 200}]},
+            }, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data['nombre'], 'arepa de choclo')
+        payload = groq.call_args[0][0]
+        self.assertEqual(payload['model'], settings.GROQ_MODEL_TEXTO)
+        self.assertIsInstance(payload['messages'][0]['content'], str)      # sin image_url
+        self.assertIn('200', payload['messages'][0]['content'])            # usa los gramos ya estimados
+        self.assertEqual(groq.call_count, 1)                               # una sola llamada
+
+    def test_primer_analisis_usa_vision_con_margen(self):
+        from django.conf import settings
+        with mock.patch('api.views._groq_chat', return_value=self.JSON_OK) as groq:
+            self.api.post('/api/analizar-foto/', {'imagen': 'aGVsbG8='}, format='json')
+        payload = groq.call_args[0][0]
+        self.assertEqual(payload['model'], settings.GROQ_MODEL)
+        self.assertGreaterEqual(payload['max_tokens'], 1500)
+
+    def test_limite_dice_cuantos_segundos(self):
+        import requests as rq
+        err = rq.HTTPError(response=mock.Mock(status_code=429, headers={'retry-after': '42'}))
+        with mock.patch('api.views._groq_chat', side_effect=err):
+            r = self.api.post('/api/analizar-foto/', {'imagen': 'aGVsbG8='}, format='json')
+        self.assertEqual(r.status_code, 429)
+        self.assertIn('42 segundos', r.data['error'])
+
+    def test_respuesta_cortada_da_mensaje_claro(self):
+        with mock.patch('api.views._groq_chat', return_value='{"es_comida": tr'):
+            r = self.api.post('/api/analizar-foto/', {'imagen': 'aGVsbG8='}, format='json')
+        self.assertEqual(r.status_code, 502)
+        self.assertIn('Intenta de nuevo', r.data['error'])
+
+    def test_corregir_etiqueta_no_reenvia_la_foto(self):
+        from django.conf import settings
+        with mock.patch('api.views._groq_chat', return_value='{"nombre": "Yogur", "calorias": 100, "proteina": 5, "carbos": 12, "grasas": 3}') as groq:
+            r = self.api.post('/api/analizar-etiqueta/', {'correccion': 'Yogur griego', 'nombre_anterior': 'Yogur'}, format='json')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(groq.call_args[0][0]['model'], settings.GROQ_MODEL_TEXTO)
+
+    def test_respaldo_no_aplica_a_vision(self):
+        from django.conf import settings
+        from .views import _groq_chat
+        lleno = mock.Mock(status_code=429, headers={'retry-after': '60'})
+        lleno.raise_for_status = mock.Mock(side_effect=Exception('429'))
+        with mock.patch('api.views.requests.post', return_value=lleno) as post:
+            with self.assertRaises(Exception):
+                _groq_chat({'model': settings.GROQ_MODEL, 'messages': []})
+        self.assertEqual(post.call_count, 1)        # no se reintenta con un modelo sin visión
+
+
 class ContextoBruceTests(Base):
     """Lo que Bruce recibe para no inventar datos."""
 

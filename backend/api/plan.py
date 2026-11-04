@@ -578,7 +578,7 @@ def _analizar_foto_ia(c, imagen_b64):
             {'type': 'text', 'text': _prompt_foto(c)},
             {'type': 'image_url', 'image_url': {'url': _preparar_imagen(imagen_b64)}},
         ]}],
-        'max_tokens':  700,
+        'max_tokens':  1200,   # el razonamiento cuenta aquí: con 700 a veces se cortaba
         'temperature': 0.1,
         'reasoning_effort': 'default',
         'reasoning_format': 'hidden',

@@ -150,7 +150,7 @@ def _groq_post(payload, timeout):
             time.sleep(espera)
             resp = requests.post(GROQ_URL, headers=headers, json=_adaptar_payload(payload), timeout=timeout)
     respaldo = settings.GROQ_MODEL_RAPIDO
-    if resp.status_code == 429 and respaldo and payload.get('model') != respaldo:
+    if resp.status_code == 429 and respaldo and payload.get('model') == settings.GROQ_MODEL_TEXTO:
         logger.warning('groq_respaldo %s -> %s', payload.get('model'), respaldo)
         resp = requests.post(GROQ_URL, headers=headers, json=_adaptar_payload({**payload, 'model': respaldo}), timeout=timeout)
     resp.raise_for_status()
@@ -1072,55 +1072,6 @@ FORMA:
         return Response({'frase': random.choice(frases_fallback), 'pose': 'normal'})
 
 
-# ── Helper búsqueda nutricional ───────────────────────────────────────────
-
-def _buscar_info_nutricional(nombre_alimento):
-    """Estima información nutricional de un alimento usando conocimiento del modelo."""
-    payload = {
-        'model': settings.GROQ_MODEL_TEXTO,
-        'messages': [
-            {
-                'role': 'system',
-                'content': (
-                    'Eres un nutricionista con base de datos nutricional extensa, '
-                    'especializado en alimentos colombianos y latinoamericanos. '
-                    'Conoces los macros exactos de preparaciones típicas colombianas '
-                    '(bandeja paisa, ajiaco, arepa, changua, etc.) y productos de supermercado. '
-                    'Respondes solo con JSON válido.'
-                ),
-            },
-            {
-                'role': 'user',
-                'content': f"""Dame la información nutricional de: {nombre_alimento}
-
-Usa tus conocimientos nutricionales para dar valores precisos por porción típica colombiana.
-
-Responde ÚNICAMENTE con JSON válido:
-{{
-  "encontrado": true,
-  "fuente": "base de conocimiento nutricional",
-  "calorias": 000,
-  "proteina": 00.0,
-  "carbos": 00.0,
-  "grasas": 00.0,
-  "porcion": "descripción de la porción usada, ej: 1 plato mediano (350g)"
-}}
-
-Si es un alimento completamente desconocido o imposible de estimar, usa encontrado: false.""",
-            },
-        ],
-        'max_tokens':       700,  # gpt-oss gasta parte en razonar
-        'temperature':      0.1,
-        'reasoning_effort': 'none',
-    }
-
-    try:
-        contenido = _groq_chat(payload, timeout=20)
-        return _extraer_json(contenido)
-    except Exception:
-        return {'encontrado': False}
-
-
 # ── Analizar foto de plato ────────────────────────────────────────────────
 
 def _preparar_imagen(imagen_b64, lado_max=768):
@@ -1145,12 +1096,20 @@ def _preparar_imagen(imagen_b64, lado_max=768):
     return f'data:image/jpeg;base64,{datos}'
 
 
-def _respuesta_error_groq(e, ocupado='Bruce está atendiendo muchas fotos. Intenta de nuevo en un minuto.'):
+def _respuesta_error_groq(e, ocupado='Bruce está atendiendo muchas fotos.'):
     """Traduce errores de Groq a algo que la app pueda mostrar. El detalle
     técnico va al log del servidor, no a la pantalla."""
-    codigo = getattr(getattr(e, 'response', None), 'status_code', None)
+    respuesta = getattr(e, 'response', None)
+    codigo = getattr(respuesta, 'status_code', None)
     if codigo == 429:
-        return Response({'error': ocupado}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+        try:
+            espera = max(5, min(int(float(respuesta.headers.get('retry-after', 60))), 600))
+        except (TypeError, ValueError):
+            espera = 60
+        cuando = f'en {espera} segundos' if espera < 90 else f'en unos {round(espera / 60)} minutos'
+        logger.warning('groq_429 %s', ocupado)
+        return Response({'error': f'{ocupado} Intenta de nuevo {cuando}.', 'reintentar_en': espera},
+                        status=status.HTTP_429_TOO_MANY_REQUESTS)
     logger.warning('Error de Groq (%s): %s', codigo, e)
     return Response({'error': 'Bruce no pudo responder ahora. Intenta de nuevo.'}, status=status.HTTP_502_BAD_GATEWAY)
 
@@ -1237,63 +1196,85 @@ PASO 4 — Calcula los macros de cada alimento con valores nutricionales estánd
 """ + _FORMATO_ANALISIS
 
 
+def _porciones_previas(anterior):
+    """Lo que ya se estimó de la foto (alimentos con cantidad y gramos), para
+    reanalizar sin volver a mandarla. None si no llegó nada útil."""
+    if not isinstance(anterior, dict):
+        return None
+    alimentos = [
+        {k: a.get(k) for k in ('nombre', 'cantidad', 'gramos') if a.get(k) not in (None, '')}
+        for a in (anterior.get('alimentos') or [])[:12] if isinstance(a, dict)
+    ]
+    alimentos = [a for a in alimentos if a]
+    if not alimentos and not anterior.get('descripcion'):
+        return None
+    return {'descripcion': str(anterior.get('descripcion') or '')[:300], 'alimentos': alimentos}
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def analizar_foto(request):
     imagen_b64  = request.data.get('imagen')
-    correccion  = request.data.get('correccion', '').strip()
-    nombre_prev = request.data.get('nombre_anterior', '').strip()
+    correccion  = str(request.data.get('correccion') or '').strip()[:200]
+    nombre_prev = str(request.data.get('nombre_anterior') or '').strip()[:200]
+    previas     = _porciones_previas(request.data.get('analisis_anterior'))
 
-    if not imagen_b64:
-        return Response({'error': 'Se requiere campo "imagen"'}, status=status.HTTP_400_BAD_REQUEST)
+    if correccion and previas:
+        # Reanalizar: la porción ya se estimó de la foto; con la corrección basta
+        # una llamada de texto. Más rápida y sin gastar el límite del modelo de visión.
+        prompt = f"""Analizaste la foto de una comida como "{nombre_prev or 'otra cosa'}", con estas porciones:
+{json.dumps(previas, ensure_ascii=False)}
 
-    info_web = None
-    if correccion:
-        # La persona corrige qué es: se respeta su palabra y la foto sirve para la porción
-        info_web = _buscar_info_nutricional(correccion)
-        info_str = (
-            'Referencia nutricional disponible: ' + json.dumps(info_web, ensure_ascii=False)
-            if info_web and info_web.get('encontrado')
-            else 'No hay referencia externa: usa valores nutricionales estándar (USDA o ICBF).'
-        )
-        prompt = f"""Antes identificaste esta foto como "{nombre_prev or 'otra cosa'}", pero la persona corrige: es "{correccion}".
-Confía en la corrección para saber QUÉ es, y usa la foto solo para estimar CUÁNTO hay (unidades, tamaño del plato, porción visible).
-
-{info_str}
-
-Calcula los macros de la porción que se ve. Verifica que calorias ≈ 4×proteina + 4×carbos + 9×grasas. Usa "{correccion}" como nombre.
+La persona corrige: es "{correccion}". Confía en su corrección para saber QUÉ es. Mantén las cantidades y gramos que estimaste de la foto, salvo que la corrección diga otra porción (por ejemplo "eran 2"). Calcula los macros con valores nutricionales estándar (USDA o tabla del ICBF) y verifica que calorias ≈ 4×proteina + 4×carbos + 9×grasas. Usa "{correccion}" como nombre.
 
 """ + _FORMATO_ANALISIS
+        payload = {
+            'model': settings.GROQ_MODEL_TEXTO,
+            'messages': [{'role': 'user', 'content': prompt}],
+            'max_tokens': 1200,
+            'temperature': 0.1,
+            'reasoning_effort': 'none',
+            'response_format': {'type': 'json_object'},
+        }
     else:
-        prompt = _PROMPT_FOTO
+        if not imagen_b64:
+            return Response({'error': 'Se requiere campo "imagen"'}, status=status.HTTP_400_BAD_REQUEST)
+        if correccion:
+            prompt = f"""Antes identificaste esta foto como "{nombre_prev or 'otra cosa'}", pero la persona corrige: es "{correccion}".
+Confía en la corrección para saber QUÉ es, y usa la foto solo para estimar CUÁNTO hay (unidades, tamaño del plato, porción visible).
+Calcula los macros de la porción que se ve con valores estándar (USDA o ICBF). Verifica que calorias ≈ 4×proteina + 4×carbos + 9×grasas. Usa "{correccion}" como nombre.
 
-    payload = {
-        'model':       settings.GROQ_MODEL,
-        'messages':    [{'role': 'user', 'content': [
-            {'type': 'text', 'text': prompt},
-            {'type': 'image_url', 'image_url': {'url': _preparar_imagen(imagen_b64)}},
-        ]}],
-        'max_tokens':  900,
-        'temperature': 0.1,
-        # Razona antes de responder (mejora la identificación) pero sin mezclar
-        # ese razonamiento en el texto: la respuesta llega como JSON limpio.
-        'reasoning_effort': 'default',
-        'reasoning_format': 'hidden',
-        'response_format':  {'type': 'json_object'},
-    }
+""" + _FORMATO_ANALISIS
+        else:
+            prompt = _PROMPT_FOTO
+        payload = {
+            'model':       settings.GROQ_MODEL,
+            'messages':    [{'role': 'user', 'content': [
+                {'type': 'text', 'text': prompt},
+                {'type': 'image_url', 'image_url': {'url': _preparar_imagen(imagen_b64)}},
+            ]}],
+            # El razonamiento cuenta dentro de este máximo: con 900 a veces no
+            # quedaba espacio para el JSON y la respuesta llegaba cortada
+            'max_tokens':  1500,
+            'temperature': 0.1,
+            # Razona antes de responder (mejora la identificación) pero sin mezclar
+            # ese razonamiento en el texto: la respuesta llega como JSON limpio.
+            'reasoning_effort': 'default',
+            'reasoning_format': 'hidden',
+            'response_format':  {'type': 'json_object'},
+        }
 
     try:
         data = _extraer_json(_groq_chat(payload, timeout=45))
         resultado = _sumar_alimentos(data)
         if correccion:
             resultado['nombre'] = correccion
-            if info_web and info_web.get('encontrado'):
-                resultado['fuente'] = 'internet'
         return Response(resultado)
     except requests.RequestException as e:
         return _respuesta_error_groq(e)
     except json.JSONDecodeError:
-        return Response({'error': 'Groq no devolvió JSON válido'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        logger.warning('foto_json_invalido')
+        return Response({'error': 'Bruce no alcanzó a leer bien la foto. Intenta de nuevo.'}, status=status.HTTP_502_BAD_GATEWAY)
 
 
 # ── Analizar etiqueta nutricional ─────────────────────────────────────────
@@ -1302,25 +1283,16 @@ Calcula los macros de la porción que se ve. Verifica que calorias ≈ 4×protei
 @permission_classes([IsAuthenticated])
 def analizar_etiqueta(request):
     imagen_b64  = request.data.get('imagen')
-    correccion  = request.data.get('correccion', '').strip()
-    nombre_prev = request.data.get('nombre_anterior', '').strip()
+    correccion  = str(request.data.get('correccion') or '').strip()[:200]
+    nombre_prev = str(request.data.get('nombre_anterior') or '').strip()[:200]
 
-    if not imagen_b64:
+    if not imagen_b64 and not correccion:
         return Response({'error': 'Se requiere campo "imagen"'}, status=status.HTTP_400_BAD_REQUEST)
 
-    info_web = None
     if correccion:
-        info_web = _buscar_info_nutricional(correccion)
-
-    if correccion and nombre_prev:
-        info_str = (
-            'Referencia nutricional: ' + json.dumps(info_web, ensure_ascii=False)
-            if info_web and info_web.get('encontrado')
-            else 'Sin referencia externa — estima con tu conocimiento del producto.'
-        )
-        prompt = f"""Leíste una etiqueta como "{nombre_prev}" pero el usuario dice que es "{correccion}".
-
-{info_str}
+        # Con el nombre corregido basta: una llamada de texto, sin volver a mandar la foto
+        prompt = f"""Leíste una etiqueta como "{nombre_prev or 'otro producto'}" pero el usuario dice que es "{correccion}".
+Estima con tu conocimiento del producto.
 
 Corrige con los valores de "{correccion}" por porción.
 Responde ÚNICAMENTE con JSON válido:
@@ -1358,15 +1330,18 @@ Responde ÚNICAMENTE con JSON válido:
 
 Usa confianza "baja" si la etiqueta está muy borrosa o incompleta. Nunca uses 0 en todos los campos si puedes leer aunque sea parcialmente."""
 
-    messages = [{'role': 'user', 'content': [
-        {'type': 'text', 'text': prompt},
-        {'type': 'image_url', 'image_url': {'url': _preparar_imagen(imagen_b64, lado_max=1280)}},
-    ]}]
+    if correccion:
+        modelo, messages = settings.GROQ_MODEL_TEXTO, [{'role': 'user', 'content': prompt}]
+    else:
+        modelo, messages = settings.GROQ_MODEL, [{'role': 'user', 'content': [
+            {'type': 'text', 'text': prompt},
+            {'type': 'image_url', 'image_url': {'url': _preparar_imagen(imagen_b64, lado_max=1280)}},
+        ]}]
 
     payload = {
-        'model':            settings.GROQ_MODEL,
+        'model':            modelo,
         'messages':         messages,
-        'max_tokens':       500,
+        'max_tokens':       700,
         'temperature':      0.1,
         'reasoning_effort': 'none',
     }
@@ -1376,9 +1351,10 @@ Usa confianza "baja" si la etiqueta está muy borrosa o incompleta. Nunca uses 0
         data = _extraer_json(contenido)
         return Response(data)
     except requests.RequestException as e:
-        return _respuesta_error_groq(e, 'Bruce está leyendo muchas etiquetas. Intenta de nuevo en un minuto.')
+        return _respuesta_error_groq(e, 'Bruce está leyendo muchas etiquetas.')
     except json.JSONDecodeError:
-        return Response({'error': 'Groq no devolvió JSON válido'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        logger.warning('etiqueta_json_invalido')
+        return Response({'error': 'Bruce no alcanzó a leer bien la etiqueta. Intenta de nuevo.'}, status=status.HTTP_502_BAD_GATEWAY)
 
 
 # ── Chat con Bruce ────────────────────────────────────────────────────────

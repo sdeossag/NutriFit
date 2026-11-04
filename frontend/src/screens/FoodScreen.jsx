@@ -103,10 +103,15 @@ function ResultadoIA({ resultado, onConfirmar, onDescartar, modo, guardando }) {
     setCargando(true)
     try {
       const fn = modo === 'etiqueta' ? analizarEtiqueta : analizarFoto
+      // Las porciones ya se estimaron de la foto: el servidor reanaliza solo con
+      // la corrección (una llamada de texto, sin volver a subir la imagen)
       const nuevo = await fn({
-        imagen:          b64Ref.current,
         correccion:      correccion.trim(),
         nombre_anterior: resultadoLocal.nombre,
+        ...(modo === 'etiqueta' ? {} : {
+          analisis_anterior: { descripcion: resultadoLocal.descripcion, alimentos: resultadoLocal.alimentos },
+          imagen: resultadoLocal.alimentos?.length ? undefined : b64Ref.current,
+        }),
       })
       setResultadoLocal({ ...nuevo, _b64: b64Ref.current, modo })
       setReanalizado(true)
@@ -360,8 +365,9 @@ export default function FoodScreen({ screen }) {
     setAnalizando(modo)
     setResultado(null)
     try {
-      // Las etiquetas necesitan más resolución para leer la tabla nutricional
-      const b64  = await fotoABase64(file, modo === 'etiqueta' ? 1600 : 1280)
+      // Al tamaño que usa el servidor (768 el plato, 1280 la etiqueta): subir más es
+      // esperar de más con datos móviles para nada
+      const b64  = await fotoABase64(file, modo === 'etiqueta' ? 1280 : 800)
       const fn   = modo === 'etiqueta' ? analizarEtiqueta : analizarFoto
       const data = await fn({ imagen: b64 })
       if (data.es_comida === false) {
