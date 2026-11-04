@@ -1266,6 +1266,39 @@ class HerramientasBruceTests(Base):
         self.assertEqual(len(res['dias']), 31)
 
 
+class RespaldoGroqTests(Base):
+    """Cuando el modelo grande llega a su límite, responde el pequeño."""
+
+    def resp(self, codigo, texto='hola', espera='60'):
+        r = mock.Mock(status_code=codigo, headers={'retry-after': espera})
+        r.json.return_value = {'choices': [{'message': {'content': texto}}]}
+        r.raise_for_status = mock.Mock(side_effect=None if codigo == 200 else Exception(f'HTTP {codigo}'))
+        return r
+
+    def test_429_largo_usa_el_modelo_pequeno(self):
+        from django.conf import settings
+        from .views import _groq_chat
+        with mock.patch('api.views.requests.post', side_effect=[self.resp(429), self.resp(200, 'desde el pequeño')]) as post:
+            texto = _groq_chat({'model': settings.GROQ_MODEL_TEXTO, 'messages': []})
+        self.assertEqual(texto, 'desde el pequeño')
+        self.assertEqual(post.call_args_list[1].kwargs['json']['model'], settings.GROQ_MODEL_RAPIDO)
+
+    def test_429_corto_espera_y_reintenta_el_mismo(self):
+        from django.conf import settings
+        from .views import _groq_chat
+        with mock.patch('api.views.time.sleep') as dormir,                 mock.patch('api.views.requests.post', side_effect=[self.resp(429, espera='2'), self.resp(200, 'ok')]) as post:
+            self.assertEqual(_groq_chat({'model': settings.GROQ_MODEL_TEXTO, 'messages': []}), 'ok')
+        dormir.assert_called_once_with(2.0)
+        self.assertEqual(post.call_args_list[1].kwargs['json']['model'], settings.GROQ_MODEL_TEXTO)
+
+    def test_si_el_pequeno_tambien_falla_se_avisa(self):
+        from django.conf import settings
+        from .views import _groq_chat
+        with mock.patch('api.views.requests.post', side_effect=[self.resp(429), self.resp(429)]):
+            with self.assertRaises(Exception):
+                _groq_chat({'model': settings.GROQ_MODEL_TEXTO, 'messages': []})
+
+
 class ContextoBruceTests(Base):
     """Lo que Bruce recibe para no inventar datos."""
 

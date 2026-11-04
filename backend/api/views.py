@@ -132,29 +132,15 @@ def _adaptar_payload(payload):
     return payload
 
 
-def _groq_chat(payload, timeout=30):
-    """POST genérico a Groq chat completions. Devuelve el texto crudo del mensaje."""
-    groq_url = 'https://api.groq.com/openai/v1/chat/completions'
-    payload = _adaptar_payload(payload)
-    headers = {
-        'Authorization': f'Bearer {settings.GROQ_API_KEY}',
-        'Content-Type': 'application/json',
-    }
-    resp = requests.post(groq_url, headers=headers, json=payload, timeout=timeout)
-    resp.raise_for_status()
-    return resp.json()['choices'][0]['message']['content'].strip()
+GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions'
 
 
-def _groq_mensaje(payload, timeout=25):
-    """Como _groq_chat pero devuelve el mensaje entero (con tool_calls si los hay)."""
-    payload = _adaptar_payload(payload)
-    headers = {
-        'Authorization': f'Bearer {settings.GROQ_API_KEY}',
-        'Content-Type': 'application/json',
-    }
-    url = 'https://api.groq.com/openai/v1/chat/completions'
-    resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
-    # Tras armar un plan (varias llamadas seguidas) Groq a veces pide esperar unos segundos
+def _groq_post(payload, timeout):
+    """POST a Groq con dos salidas ante el límite (429): si pide esperar poco,
+    espera y reintenta; si sigue lleno, prueba con el modelo pequeño, que tiene su
+    propia cuota. Así la persona recibe una respuesta en vez de "problema técnico"."""
+    headers = {'Authorization': f'Bearer {settings.GROQ_API_KEY}', 'Content-Type': 'application/json'}
+    resp = requests.post(GROQ_URL, headers=headers, json=_adaptar_payload(payload), timeout=timeout)
     if resp.status_code == 429:
         try:
             espera = float(resp.headers.get('retry-after', 3))
@@ -162,9 +148,23 @@ def _groq_mensaje(payload, timeout=25):
             espera = 3
         if espera <= 8:
             time.sleep(espera)
-            resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+            resp = requests.post(GROQ_URL, headers=headers, json=_adaptar_payload(payload), timeout=timeout)
+    respaldo = settings.GROQ_MODEL_RAPIDO
+    if resp.status_code == 429 and respaldo and payload.get('model') != respaldo:
+        logger.warning('groq_respaldo %s -> %s', payload.get('model'), respaldo)
+        resp = requests.post(GROQ_URL, headers=headers, json=_adaptar_payload({**payload, 'model': respaldo}), timeout=timeout)
     resp.raise_for_status()
     return resp.json()['choices'][0]['message']
+
+
+def _groq_chat(payload, timeout=30):
+    """POST genérico a Groq chat completions. Devuelve el texto crudo del mensaje."""
+    return (_groq_post(payload, timeout).get('content') or '').strip()
+
+
+def _groq_mensaje(payload, timeout=25):
+    """Como _groq_chat pero devuelve el mensaje entero (con tool_calls si los hay)."""
+    return _groq_post(payload, timeout)
 
 
 # ──────────────────────────────────────────────
@@ -1048,7 +1048,7 @@ FORMA:
 - Solo la frase, sin comillas."""
 
     payload = {
-        'model':            settings.GROQ_MODEL_TEXTO,
+        'model':            settings.GROQ_MODEL_RAPIDO,   # una frase: no gasta la cuota del chat
         'messages':         [{'role': 'user', 'content': prompt}],
         'max_tokens':       400,  # gpt-oss gasta parte en razonar
         'temperature':      0.6,
@@ -1600,8 +1600,9 @@ HOY ({_dia(hoy)}, son las {timezone.localtime():%H:%M}; el día va en curso):
 
 {_contexto_semana(user, hoy)}"""
 
-    # Historial de la sesión (últimos 20 mensajes)
-    historial = MensajeChat.objects.filter(sesion=sesion).order_by('-creado_en')[:20]
+    # Historial de la sesión: los últimos 10 mensajes bastan para seguir la charla
+    # (lo duradero va en la memoria) y cada llamada gasta bastante menos cuota
+    historial = MensajeChat.objects.filter(sesion=sesion).order_by('-creado_en')[:10]
     historial_groq = []
     for m in reversed(list(historial)):
         contenido = m.contenido

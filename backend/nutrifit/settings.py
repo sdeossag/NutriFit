@@ -98,6 +98,9 @@ GROQ_MODEL      = os.getenv('GROQ_MODEL', 'qwen/qwen3.8-27b')           # con vi
 # Solo texto (chat, plan, frases). qwen en el plan gratis permite apenas 1.000
 # tokens de salida por minuto: un plan de comidas o el plan inicial no caben.
 GROQ_MODEL_TEXTO = os.getenv('GROQ_MODEL_TEXTO', 'openai/gpt-oss-120b')
+# Modelo pequeño: frases cortas y respaldo cuando el grande llega a su límite.
+# En Groq cada modelo tiene su propia cuota diaria, así que repartir suma capacidad.
+GROQ_MODEL_RAPIDO = os.getenv('GROQ_MODEL_RAPIDO', 'openai/gpt-oss-20b')
 
 # VAPID keys para Web Push (genera con: python manage.py generate_vapid_keys)
 VAPID_PUBLIC_KEY   = os.getenv('VAPID_PUBLIC_KEY', '')
