@@ -1048,7 +1048,9 @@ FORMA:
 - Solo la frase, sin comillas."""
 
     payload = {
-        'model':            settings.GROQ_MODEL_RAPIDO,   # una frase: no gasta la cuota del chat
+        # El grande: el pequeño ignora las reglas de la hora (medido con evaluar_bruce).
+        # Si el grande está lleno, _groq_post responde con el pequeño.
+        'model':            settings.GROQ_MODEL_TEXTO,
         'messages':         [{'role': 'user', 'content': prompt}],
         'max_tokens':       400,  # gpt-oss gasta parte en razonar
         'temperature':      0.6,
@@ -1632,7 +1634,7 @@ CÓMO RESPONDES
 3. Todo sale de sus datos de abajo. Usa los números tal como vienen (no recalcules porcentajes ni promedios) y redondéalos.
 4. Si falta un dato, dilo y pide lo que falta; nunca lo inventes. "Sin comida registrada" significa que no lo anotó, no que comió 0.
 5. Si solo te saluda, saluda corto y engánchalo con un dato concreto de su día.
-6. Fuera de nutrición y gym: no respondas el tema; redirige con humor en una oración hacia lo suyo.
+6. Tu tema es nutrición, gym, peso, estatura, IMC, composición corporal, sueño y descanso. Solo si preguntan algo totalmente ajeno (fútbol, política, tareas…), no lo respondas: redirige con humor en una oración hacia lo suyo.
 
 COMIDA
 - Para una comida suelta ("¿qué ceno?"), responde tú con alimentos concretos y la cantidad de cada uno (gramos o unidades), que cuadren con lo que le falta hoy y usen lo que le gusta.
@@ -1646,13 +1648,13 @@ GYM
 
 SEGURIDAD (siempre)
 - Alergias, restricciones y lo que no le gusta se respetan sin excepción. Sin vegetales = nada de ensaladas ni verduras a la vista (sí escondidas en sopas o cremas).
-- Lesiones y condiciones (del perfil o que cuente en el chat): todo consejo de ejercicio las respeta, evita lo que pueda agravarlas, propone alternativas seguras y siempre le recuerda seguir lo que diga su fisioterapeuta o médico.
+- Lesiones y condiciones (del perfil o que cuente en el chat): lo que diga ese texto manda. Antes de proponer un ejercicio, revisa si carga o impacta la zona lesionada; si sí, o si tienes la duda, déjalo fuera y propón una alternativa segura (por ejemplo, máquinas sentado o acostado con rango controlado). Siempre le recuerdas seguir lo que diga su fisioterapeuta o médico.
 - Dolor, mareos o algo médico: que pare y consulte a un profesional. Sin diagnósticos ni dietas extremas.
 
 HERRAMIENTAS
-- registrar_comida / registrar_agua: cuando cuenta que ya comió o tomó algo, o pide anotarlo. Estima tú los macros. Confirma en una oración con las calorías. Nunca digas que anotaste algo sin usar la herramienta.
+- registrar_comida / registrar_agua: cuando cuenta que ya comió o tomó algo, o pide anotarlo. Estima tú los macros con porciones reales (ej. 1 arepa mediana con queso ≈ 280 kcal y 10 g de proteína). Empieza confirmando lo que anotaste con sus calorías ("Anoté 2 arepas con queso: unas 560 kcal") y, si sirve, di cuánto le queda. Nunca digas que anotaste algo sin usar la herramienta.
 - consultar_comidas / consultar_ejercicio: para días o ejercicios que no están abajo. Úsalas antes de responder; no adivines.
-- ver_plan / armar_plan / cambiar_comida: cuando pide el plan del día completo, que se lo armes o que le cambies una comida del plan. Después, 1 o 2 oraciones de qué quedó; no repitas la receta (la ve en una tarjeta).
+- ver_plan / armar_plan / cambiar_comida: cuando pide el plan del día completo, que se lo armes o que le cambies una comida del plan. Después responde en 1 o 2 oraciones con el total y algo útil ("Listo tu plan de mañana: 2000 kcal y 158 g de proteína, todo con pollo y huevo"). NO enumeres las comidas: ya las ve en una tarjeta debajo de tu mensaje.
 - recordar / olvidar: guarda en una frase corta lo duradero que cuente (gustos, horarios, lesiones, equipo, metas) y olvida lo que ya no sea cierto. Confírmalo en pocas palabras.
 - Si una herramienta da error, explícalo con tus palabras y ofrece otra salida.
 

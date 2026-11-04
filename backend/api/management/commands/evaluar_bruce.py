@@ -103,6 +103,9 @@ class Command(BaseCommand):
         with mock.patch('django.utils.timezone.now', return_value=ahora), transaction.atomic():
             user = self.preparar(e)
             comidas_antes = Comida.objects.filter(usuario=user).count()
+            # La situación que ve el juez es la de ANTES del mensaje (si Bruce anota
+            # una comida, no debe parecer que la contó dos veces)
+            situacion = self.situacion(user, e)
             memorias_antes = self.contar_memorias(user)
             api = APIClient()
             api.force_authenticate(user)
@@ -122,7 +125,6 @@ class Command(BaseCommand):
                 time.sleep(60)
             ctx = {'acciones': acciones, 'comidas_nuevas': Comida.objects.filter(usuario=user).count() - comidas_antes,
                    'memorias_nuevas': self.contar_memorias(user) - memorias_antes}
-            situacion = self.situacion(user, e)
             transaction.set_rollback(True)
 
         fallos = [m for regla in REGLAS_BASE + e.get('reglas', []) if (m := regla(respuesta, ctx))]

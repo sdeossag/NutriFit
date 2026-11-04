@@ -108,7 +108,7 @@ ESCENARIOS = [
         'reglas': [max_oraciones(2), sin_decimales_largos, no_menciona('baja', 'bajar', 'reduce', 'reducir', 'quema')],
         'rubrica': [
             'Es de noche y ya comió el 100 % de sus calorías: NO le pide comer menos ni quemar lo que ya comió.',
-            'Si sugiere algo para la proteína, es ligero y en cantidades que no lo pasen mucho de sus calorías, o habla de mañana.',
+            'No le sugiere comer más HOY (si habla de qué comer mañana, eso sí está bien).',
             'Es una frase coherente, sin mezclar ideas sin sentido (como "ajusta la racha").',
         ],
     },
@@ -318,7 +318,7 @@ ESCENARIOS = [
         'tipo': 'chat', 'hora': '09:00',
         'mensaje': 'hola',
         'reglas': [max_oraciones(3), no_menciona('claro', 'buena pregunta')],
-        'rubrica': ['Saluda corto y con personalidad, sin un discurso largo.'],
+        'rubrica': ['Responde corto (1 o 2 oraciones) y con personalidad; puede engancharlo con un dato real de su día, pero sin un discurso.'],
     },
     {
         'id': 'chat_registrar_comida',
