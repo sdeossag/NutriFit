@@ -369,6 +369,9 @@ class AlimentoAlacena(models.Model):
     carbos      = models.FloatField(default=0)
     grasas      = models.FloatField(default=0)
     veces_usado = models.IntegerField(default=0)
+    # Un plato junta alimentos de la alacena; sus macros son la suma de los
+    # ingredientes y se recalculan solos cuando uno cambia
+    es_plato    = models.BooleanField(default=False)
     creado_en   = models.DateTimeField(auto_now_add=True)
     actualizado = models.DateTimeField(auto_now=True)
 
@@ -377,6 +380,39 @@ class AlimentoAlacena(models.Model):
 
     def __str__(self):
         return f"{self.nombre} — {self.calorias} kcal/porción ({self.usuario})"
+
+    def recalcular(self):
+        """Suma los ingredientes de un plato y guarda los totales."""
+        partes = list(self.ingredientes.select_related('alimento'))
+        def suma(campo):
+            return sum(getattr(i.alimento, campo) * i.porciones for i in partes)
+        self.calorias = round(suma('calorias'))
+        self.proteina = round(suma('proteina'), 1)
+        self.carbos   = round(suma('carbos'), 1)
+        self.grasas   = round(suma('grasas'), 1)
+        self.descripcion = ' + '.join(
+            f"{i.porciones:g}× {i.alimento.nombre}" for i in partes
+        )[:300]
+        self.save(update_fields=['calorias', 'proteina', 'carbos', 'grasas', 'descripcion', 'actualizado'])
+
+    def recalcular_platos(self):
+        """Recalcula los platos que usan este alimento."""
+        for plato in AlimentoAlacena.objects.filter(ingredientes__alimento=self).distinct():
+            plato.recalcular()
+
+
+class IngredientePlato(models.Model):
+    plato     = models.ForeignKey(AlimentoAlacena, on_delete=models.CASCADE, related_name='ingredientes')
+    alimento  = models.ForeignKey(AlimentoAlacena, on_delete=models.CASCADE, related_name='en_platos')
+    porciones = models.FloatField(default=1)
+    orden     = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ['orden', 'id']
+        constraints = [models.UniqueConstraint(fields=['plato', 'alimento'], name='ingrediente_unico_por_plato')]
+
+    def __str__(self):
+        return f"{self.porciones:g}× {self.alimento.nombre} en {self.plato.nombre}"
     
 import uuid
 

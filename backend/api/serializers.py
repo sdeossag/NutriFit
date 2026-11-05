@@ -4,8 +4,9 @@ import io
 from PIL import Image, ImageOps
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.utils import timezone
-from .models import Comida, SesionGym, EjercicioLog, PesoCorporal, AlimentoAlacena, MensajeChat, SesionChat
+from .models import Comida, SesionGym, EjercicioLog, PesoCorporal, AlimentoAlacena, IngredientePlato, MensajeChat, SesionChat
 
 User = get_user_model()
 
@@ -259,11 +260,91 @@ class PesoCorporalSerializer(serializers.ModelSerializer):
 #  ALACENA
 # ──────────────────────────────────────────────
 
+class IngredienteEntradaSerializer(serializers.Serializer):
+    alimento  = serializers.IntegerField()
+    porciones = serializers.FloatField(min_value=0.1, max_value=20)
+
+
+MACROS_ALACENA = ('calorias', 'proteina', 'carbos', 'grasas')
+
+
 class AlimentoAlacenaSerializer(serializers.ModelSerializer):
+    # Solo para platos: [{alimento: id, porciones}]. Los macros del plato se
+    # calculan en el servidor con los de cada ingrediente.
+    ingredientes = IngredienteEntradaSerializer(many=True, required=False, write_only=True)
+
     class Meta:
         model  = AlimentoAlacena
         fields = '__all__'
-        read_only_fields = ['usuario', 'veces_usado', 'creado_en', 'actualizado']
+        read_only_fields = ['usuario', 'veces_usado', 'creado_en', 'actualizado', 'es_plato']
+
+    def to_representation(self, obj):
+        data = super().to_representation(obj)
+        data['ingredientes'] = [
+            {'alimento': i.alimento_id, 'nombre': i.alimento.nombre, 'porciones': i.porciones}
+            for i in obj.ingredientes.all()
+        ] if obj.es_plato else []
+        return data
+
+    def validate_ingredientes(self, value):
+        if not value:
+            raise serializers.ValidationError('Un plato necesita al menos un ingrediente.')
+        if len(value) > 20:
+            raise serializers.ValidationError('Máximo 20 ingredientes por plato.')
+        ids = [i['alimento'] for i in value]
+        if len(set(ids)) != len(ids):
+            raise serializers.ValidationError('Hay un ingrediente repetido.')
+        if self.instance is not None and self.instance.pk in ids:
+            raise serializers.ValidationError('Un plato no puede llevarse a sí mismo.')
+        validos = AlimentoAlacena.objects.filter(
+            usuario=self.context['request'].user, pk__in=ids, es_plato=False
+        ).count()
+        if validos != len(ids):
+            raise serializers.ValidationError('Algún ingrediente ya no está en tu alacena o es otro plato.')
+        return value
+
+    def validate(self, attrs):
+        if self.instance is not None and 'ingredientes' in attrs and not self.instance.es_plato:
+            raise serializers.ValidationError({'ingredientes': 'Este alimento no es un plato.'})
+        return attrs
+
+    @staticmethod
+    def _poner_ingredientes(plato, ingredientes):
+        plato.ingredientes.all().delete()
+        IngredientePlato.objects.bulk_create([
+            IngredientePlato(plato=plato, alimento_id=i['alimento'], porciones=round(i['porciones'], 2), orden=n)
+            for n, i in enumerate(ingredientes)
+        ])
+        plato.recalcular()
+
+    def create(self, validated_data):
+        ingredientes = validated_data.pop('ingredientes', None)
+        if ingredientes is None:
+            return super().create(validated_data)
+        for campo in MACROS_ALACENA:
+            validated_data.pop(campo, None)
+        with transaction.atomic():
+            plato = super().create({**validated_data, 'es_plato': True})
+            self._poner_ingredientes(plato, ingredientes)
+        return plato
+
+    def update(self, instance, validated_data):
+        ingredientes = validated_data.pop('ingredientes', None)
+        if instance.es_plato:
+            # Los números del plato salen de sus ingredientes, no se editan a mano
+            for campo in (*MACROS_ALACENA, 'descripcion'):
+                validated_data.pop(campo, None)
+        with transaction.atomic():
+            recalcular = not instance.es_plato and any(
+                campo in validated_data and validated_data[campo] != getattr(instance, campo)
+                for campo in (*MACROS_ALACENA, 'nombre')
+            )
+            instance = super().update(instance, validated_data)
+            if ingredientes is not None:
+                self._poner_ingredientes(instance, ingredientes)
+            if recalcular:
+                instance.recalcular_platos()
+        return instance
 
 
 class MensajeChatSerializer(serializers.ModelSerializer):

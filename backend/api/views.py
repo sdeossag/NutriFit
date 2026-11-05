@@ -865,10 +865,10 @@ def registrar_peso(request):
 @permission_classes([IsAuthenticated])
 def alacena(request):
     if request.method == 'GET':
-        qs = AlimentoAlacena.objects.filter(usuario=request.user)
+        qs = AlimentoAlacena.objects.filter(usuario=request.user).prefetch_related('ingredientes__alimento')
         return Response(AlimentoAlacenaSerializer(qs, many=True).data)
 
-    serializer = AlimentoAlacenaSerializer(data=request.data)
+    serializer = AlimentoAlacenaSerializer(data=request.data, context={'request': request})
     if serializer.is_valid():
         serializer.save(usuario=request.user)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -884,10 +884,15 @@ def alacena_detalle(request, pk):
         return Response(status=status.HTTP_404_NOT_FOUND)
 
     if request.method == 'DELETE':
-        alimento.delete()
+        # Si era ingrediente de algún plato, el plato se queda con el resto
+        platos = list(AlimentoAlacena.objects.filter(ingredientes__alimento=alimento).distinct())
+        with transaction.atomic():
+            alimento.delete()
+            for plato in platos:
+                plato.recalcular()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-    serializer = AlimentoAlacenaSerializer(alimento, data=request.data, partial=True)
+    serializer = AlimentoAlacenaSerializer(alimento, data=request.data, partial=True, context={'request': request})
     if serializer.is_valid():
         serializer.save()
         return Response(serializer.data)

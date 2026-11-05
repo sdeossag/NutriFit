@@ -1383,3 +1383,84 @@ class ContextoBruceTests(Base):
         with en(HOY):
             texto = _contexto_semana(self.user, HOY)
         self.assertIn('Curl series 8kg×12, 10kg×8', texto)
+
+
+class PlatosAlacenaTests(Base):
+    def alimento(self, nombre, kcal, p=0, c=0, g=0):
+        return self.api.post('/api/alacena/', {
+            'nombre': nombre, 'calorias': kcal, 'proteina': p, 'carbos': c, 'grasas': g,
+        }, format='json').data['id']
+
+    def setUp(self):
+        super().setUp()
+        self.pan = self.alimento('Pan tajado', 80, 3, 14, 1)
+        self.jamon = self.alimento('Lonchita', 40, 5, 1, 2)
+
+    def crear_plato(self, ingredientes, nombre='Sándwich'):
+        return self.api.post('/api/alacena/', {'nombre': nombre, 'ingredientes': ingredientes}, format='json')
+
+    def test_suma_los_ingredientes_con_sus_porciones(self):
+        r = self.crear_plato([{'alimento': self.pan, 'porciones': 2}, {'alimento': self.jamon, 'porciones': 1}])
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertTrue(r.data['es_plato'])
+        self.assertEqual((r.data['calorias'], r.data['proteina'], r.data['carbos'], r.data['grasas']), (200, 11, 29, 4))
+        self.assertEqual(r.data['descripcion'], '2× Pan tajado + 1× Lonchita')
+        self.assertEqual([i['nombre'] for i in r.data['ingredientes']], ['Pan tajado', 'Lonchita'])
+
+    def test_ignora_macros_que_mande_la_app(self):
+        r = self.api.post('/api/alacena/', {
+            'nombre': 'Trampa', 'calorias': 9999, 'ingredientes': [{'alimento': self.pan, 'porciones': 1}],
+        }, format='json')
+        self.assertEqual(r.data['calorias'], 80)
+
+    def test_se_recalcula_al_editar_un_ingrediente(self):
+        plato = self.crear_plato([{'alimento': self.pan, 'porciones': 2}]).data['id']
+        self.api.patch(f'/api/alacena/{self.pan}/', {'calorias': 100, 'nombre': 'Pan integral'}, format='json')
+        datos = next(a for a in self.api.get('/api/alacena/').data if a['id'] == plato)
+        self.assertEqual(datos['calorias'], 200)
+        self.assertEqual(datos['descripcion'], '2× Pan integral')
+
+    def test_borrar_un_ingrediente_deja_el_resto(self):
+        plato = self.crear_plato([{'alimento': self.pan, 'porciones': 1}, {'alimento': self.jamon, 'porciones': 1}]).data['id']
+        self.api.delete(f'/api/alacena/{self.jamon}/')
+        datos = next(a for a in self.api.get('/api/alacena/').data if a['id'] == plato)
+        self.assertEqual(datos['calorias'], 80)
+        self.assertEqual(len(datos['ingredientes']), 1)
+
+    def test_editar_el_plato_cambia_ingredientes_y_no_acepta_numeros(self):
+        plato = self.crear_plato([{'alimento': self.pan, 'porciones': 1}]).data['id']
+        r = self.api.patch(f'/api/alacena/{plato}/', {
+            'nombre': 'Sándwich doble', 'calorias': 5,
+            'ingredientes': [{'alimento': self.pan, 'porciones': 2}, {'alimento': self.jamon, 'porciones': 2}],
+        }, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual((r.data['nombre'], r.data['calorias']), ('Sándwich doble', 240))
+
+    def test_validaciones(self):
+        otro = User.objects.create_user('beto', 'b@test.com', 'x')
+        from .models import AlimentoAlacena
+        ajeno = AlimentoAlacena.objects.create(usuario=otro, nombre='Ajeno', calorias=10)
+        plato = self.crear_plato([{'alimento': self.pan, 'porciones': 1}]).data['id']
+        casos = [
+            [],
+            [{'alimento': ajeno.id, 'porciones': 1}],
+            [{'alimento': plato, 'porciones': 1}],
+            [{'alimento': self.pan, 'porciones': 1}, {'alimento': self.pan, 'porciones': 2}],
+            [{'alimento': self.pan, 'porciones': 0}],
+        ]
+        for ingredientes in casos:
+            self.assertEqual(self.crear_plato(ingredientes).status_code, 400, ingredientes)
+        r = self.api.patch(f'/api/alacena/{self.pan}/', {'ingredientes': [{'alimento': self.jamon, 'porciones': 1}]}, format='json')
+        self.assertEqual(r.status_code, 400)
+
+    def test_usar_un_plato_lo_agrega_al_dia(self):
+        plato = self.crear_plato([{'alimento': self.pan, 'porciones': 2}, {'alimento': self.jamon, 'porciones': 1}]).data['id']
+        r = self.api.post(f'/api/alacena/{plato}/usar/', {'porciones': 1.5}, format='json')
+        self.assertEqual((r.data['nombre'], r.data['calorias']), ('Sándwich', 300))
+
+    def test_listar_no_hace_una_consulta_por_plato(self):
+        for n in range(5):
+            self.crear_plato([{'alimento': self.pan, 'porciones': 1}, {'alimento': self.jamon, 'porciones': 1}], f'Plato {n}')
+        with CaptureQueriesContext(connection) as q:
+            self.api.get('/api/alacena/')
+        self.assertLessEqual(len(q), 4)
