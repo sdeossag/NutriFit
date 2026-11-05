@@ -1427,6 +1427,11 @@ class PlatosAlacenaTests(Base):
         self.assertEqual(datos['calorias'], 80)
         self.assertEqual(len(datos['ingredientes']), 1)
 
+    def test_plato_sin_ingredientes_se_borra(self):
+        plato = self.crear_plato([{'alimento': self.pan, 'porciones': 1}]).data['id']
+        self.api.delete(f'/api/alacena/{self.pan}/')
+        self.assertFalse(any(a['id'] == plato for a in self.api.get('/api/alacena/').data))
+
     def test_editar_el_plato_cambia_ingredientes_y_no_acepta_numeros(self):
         plato = self.crear_plato([{'alimento': self.pan, 'porciones': 1}]).data['id']
         r = self.api.patch(f'/api/alacena/{plato}/', {

@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react'
 import {
   IconCamera, IconTrash, IconX, IconCheck, IconChevronLeft,
   IconSearch, IconFlame, IconPencil, IconPackage, IconWorld, IconRefresh,
   IconDroplet, IconBottle, IconArrowBackUp, IconToolsKitchen2, IconChevronRight,
+  IconBowl, IconPlus, IconMinus,
 } from '@tabler/icons-react'
 import {
   getComidas, agregarComida, eliminarComida, analizarFoto,
@@ -37,6 +38,51 @@ const soloMacros = (x) => ({
   nombre: x.nombre, descripcion: x.descripcion || '',
   calorias: x.calorias, proteina: x.proteina, carbos: x.carbos, grasas: x.grasas,
 })
+
+// Números que escribe la persona: acepta coma decimal y nunca negativos
+const aNumero = (v, decimales = 1) => {
+  const n = parseFloat(String(v ?? '').replace(',', '.'))
+  const f = 10 ** decimales
+  return Number.isFinite(n) ? Math.max(0, Math.round(n * f) / f) : 0
+}
+// 0.5 → "½", 1.5 → "1½"
+const fmtPorcion = (n) => (n % 1 === 0 ? String(n) : n % 1 === 0.5 ? `${Math.floor(n) || ''}½` : String(+n.toFixed(2)))
+
+const CAMPOS_MACROS = [
+  { key: 'calorias', label: 'Calorías', unit: 'kcal', mode: 'numeric' },
+  { key: 'proteina', label: 'Proteína', unit: 'g',    mode: 'decimal' },
+  { key: 'carbos',   label: 'Carbos',   unit: 'g',    mode: 'decimal' },
+  { key: 'grasas',   label: 'Grasas',   unit: 'g',    mode: 'decimal' },
+]
+
+function CamposMacros({ valores, onCambio }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+      {CAMPOS_MACROS.map(f => (
+        <label key={f.key} style={{ position: 'relative', display: 'block' }}>
+          <span className='nf-caption' style={{ display: 'block', margin: '0 0 4px 4px', fontWeight: 600 }}>{f.label}</span>
+          <input
+            type='number' inputMode={f.mode}
+            className='nf-input nf-num'
+            value={valores[f.key]}
+            onChange={e => onCambio(f.key, e.target.value)}
+            onFocus={e => e.target.select()}
+            style={{ paddingRight: '44px' }}
+          />
+          <span className='nf-caption' style={{ position: 'absolute', right: '14px', bottom: '14px', pointerEvents: 'none' }}>{f.unit}</span>
+        </label>
+      ))}
+    </div>
+  )
+}
+
+// Las subpáginas de la hoja (plato, porciones, editar) abren desde arriba, no
+// en el scroll que traía la lista de la alacena
+function useDesdeArriba() {
+  const ref = useRef(null)
+  useLayoutEffect(() => { ref.current?.closest('.nf-sheet-body')?.scrollTo(0, 0) }, [])
+  return ref
+}
 
 // ── Piezas ────────────────────────────────────────────────────────────────
 function BruceAvatar({ size = 36, pulsing = false }) {
@@ -88,6 +134,8 @@ function ResultadoIA({ resultado, onConfirmar, onDescartar, modo, guardando }) {
   const [reanalizado,    setReanalizado]    = useState(false)
   const [cargando,       setCargando]       = useState(false)
   const [resultadoLocal, setResultadoLocal] = useState(resultado)
+  // Etiqueta: los números están impresos, así que se corrigen a mano (null = sin editar)
+  const [numeros,        setNumeros]        = useState(null)
   const b64Ref = useRef(resultado._b64)
 
   useEffect(() => {
@@ -95,23 +143,44 @@ function ResultadoIA({ resultado, onConfirmar, onDescartar, modo, guardando }) {
     setReanalizado(false)
     setCorrigiendo(false)
     setCorreccion('')
+    setNumeros(null)
     b64Ref.current = resultado._b64
   }, [resultado])
+
+  const abrirNumeros = () => setNumeros({
+    descripcion: resultadoLocal.descripcion ?? '',
+    calorias: String(resultadoLocal.calorias ?? 0), proteina: String(resultadoLocal.proteina ?? 0),
+    carbos:   String(resultadoLocal.carbos ?? 0),   grasas:   String(resultadoLocal.grasas ?? 0),
+  })
+
+  const aplicarNumeros = () => {
+    const nuevo = {
+      ...resultadoLocal,
+      descripcion: numeros.descripcion.trim(),
+      calorias: Math.round(aNumero(numeros.calorias, 0)),
+      proteina: aNumero(numeros.proteina), carbos: aNumero(numeros.carbos), grasas: aNumero(numeros.grasas),
+    }
+    const cambio = ['descripcion', 'calorias', 'proteina', 'carbos', 'grasas'].some(k => nuevo[k] !== (resultadoLocal[k] ?? (k === 'descripcion' ? '' : 0)))
+    setResultadoLocal(nuevo)
+    setNumeros(null)
+    if (cambio) setReanalizado(true)
+    return nuevo
+  }
+
+  // Si confirma con los campos abiertos, se guardan los números escritos
+  const confirmar = (accion) => onConfirmar(accion, numeros ? aplicarNumeros() : resultadoLocal)
 
   const handleReanalizar = async () => {
     if (!correccion.trim()) return
     setCargando(true)
     try {
-      const fn = modo === 'etiqueta' ? analizarEtiqueta : analizarFoto
       // Las porciones ya se estimaron de la foto: el servidor reanaliza solo con
       // la corrección (una llamada de texto, sin volver a subir la imagen)
-      const nuevo = await fn({
+      const nuevo = await analizarFoto({
         correccion:      correccion.trim(),
         nombre_anterior: resultadoLocal.nombre,
-        ...(modo === 'etiqueta' ? {} : {
-          analisis_anterior: { descripcion: resultadoLocal.descripcion, alimentos: resultadoLocal.alimentos },
-          imagen: resultadoLocal.alimentos?.length ? undefined : b64Ref.current,
-        }),
+        analisis_anterior: { descripcion: resultadoLocal.descripcion, alimentos: resultadoLocal.alimentos },
+        imagen: resultadoLocal.alimentos?.length ? undefined : b64Ref.current,
       })
       setResultadoLocal({ ...nuevo, _b64: b64Ref.current, modo })
       setReanalizado(true)
@@ -154,7 +223,7 @@ function ResultadoIA({ resultado, onConfirmar, onDescartar, modo, guardando }) {
               padding: '2px 0 8px', marginBottom: '8px', outline: 'none',
             }}
           />
-          {resultadoLocal.descripcion && (
+          {resultadoLocal.descripcion && !numeros && (
             <p className='nf-footnote' style={{ marginBottom: '10px' }}>{resultadoLocal.descripcion}</p>
           )}
 
@@ -166,11 +235,36 @@ function ResultadoIA({ resultado, onConfirmar, onDescartar, modo, guardando }) {
             {reanalizado && <span className='nf-badge' style={{ '--tint': 'var(--orange)' }}><IconCheck size={12} /> Corregido</span>}
           </div>
 
-          <div style={{ background: 'rgba(0,0,0,0.22)', borderRadius: '14px', padding: '12px 8px', marginBottom: '12px' }}>
-            <MacroResumen kcal={resultadoLocal.calorias} p={resultadoLocal.proteina} c={resultadoLocal.carbos} g={resultadoLocal.grasas} />
-          </div>
+          {numeros ? (
+            <div className='nf-fade' style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '4px' }}>
+              <input
+                className='nf-input'
+                placeholder='Porción (ej: 1 paquete 34 g)'
+                aria-label='Porción'
+                value={numeros.descripcion}
+                onChange={e => setNumeros(p => ({ ...p, descripcion: e.target.value }))}
+              />
+              <CamposMacros valores={numeros} onCambio={(k, v) => setNumeros(p => ({ ...p, [k]: v }))} />
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button onClick={() => setNumeros(null)} className='nf-btn nf-btn--gray' style={{ flex: 1 }}>Cancelar</button>
+                <button onClick={aplicarNumeros} className='nf-btn nf-btn--tinted' style={{ flex: 1 }}>
+                  <IconCheck size={17} /> Listo
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ background: 'rgba(0,0,0,0.22)', borderRadius: '14px', padding: '12px 8px', marginBottom: '12px' }}>
+              <MacroResumen kcal={resultadoLocal.calorias} p={resultadoLocal.proteina} c={resultadoLocal.carbos} g={resultadoLocal.grasas} />
+            </div>
+          )}
 
-          {!corrigiendo ? (
+          {modo === 'etiqueta' ? (
+            !numeros && (
+              <button onClick={abrirNumeros} className='nf-btn nf-btn--plain' style={{ '--tint': 'var(--label-2)', padding: 0, minHeight: '36px', fontSize: '14px', fontWeight: 500 }}>
+                <IconPencil size={16} /> ¿Algún número está mal? Corrígelo
+              </button>
+            )
+          ) : !corrigiendo ? (
             <button onClick={() => setCorrigiendo(true)} className='nf-btn nf-btn--plain' style={{ '--tint': 'var(--label-2)', padding: 0, minHeight: '36px', fontSize: '14px', fontWeight: 500 }}>
               <IconRefresh size={16} /> ¿Algo está mal? Corrígeme
             </button>
@@ -197,19 +291,19 @@ function ResultadoIA({ resultado, onConfirmar, onDescartar, modo, guardando }) {
           <div style={{ display: 'flex', gap: '8px', marginTop: '14px' }}>
             {modo === 'etiqueta' ? (
               <>
-                <button onClick={() => onConfirmar('alacena', resultadoLocal)} disabled={guardando} className='nf-btn nf-btn--tinted' style={{ flex: 1, '--tint': 'var(--blue)' }}>
+                <button onClick={() => confirmar('alacena')} disabled={guardando} className='nf-btn nf-btn--tinted' style={{ flex: 1, '--tint': 'var(--blue)' }}>
                   Solo alacena
                 </button>
-                <button onClick={() => onConfirmar('ambos', resultadoLocal)} disabled={guardando} className='nf-btn nf-btn--primary' style={{ flex: 1.4 }}>
+                <button onClick={() => confirmar('ambos')} disabled={guardando} className='nf-btn nf-btn--primary' style={{ flex: 1.4 }}>
                   <IconCheck size={18} /> Alacena + hoy
                 </button>
               </>
             ) : (
               <>
-                <button onClick={() => onConfirmar('dia', resultadoLocal)} disabled={guardando} className='nf-btn nf-btn--tinted' style={{ flex: 1 }}>
+                <button onClick={() => confirmar('dia')} disabled={guardando} className='nf-btn nf-btn--tinted' style={{ flex: 1 }}>
                   Solo hoy
                 </button>
-                <button onClick={() => onConfirmar('ambos', resultadoLocal)} disabled={guardando} className='nf-btn nf-btn--primary' style={{ flex: 1.4 }}>
+                <button onClick={() => confirmar('ambos')} disabled={guardando} className='nf-btn nf-btn--primary' style={{ flex: 1.4 }}>
                   <IconCheck size={18} /> Hoy + alacena
                 </button>
               </>
@@ -225,6 +319,7 @@ function ResultadoIA({ resultado, onConfirmar, onDescartar, modo, guardando }) {
 function SelectorPorciones({ alimento, onConfirmar, guardando }) {
   const [porciones, setPorciones] = useState(1)
   const opciones = [0.5, 1, 1.5, 2, 2.5, 3]
+  const arriba = useDesdeArriba()
 
   const cal = Math.round(alimento.calorias * porciones)
   const pro = +(alimento.proteina * porciones).toFixed(1)
@@ -232,7 +327,7 @@ function SelectorPorciones({ alimento, onConfirmar, guardando }) {
   const gra = +(alimento.grasas   * porciones).toFixed(1)
 
   return (
-    <div style={{ padding: '4px 16px 16px' }}>
+    <div ref={arriba} style={{ padding: '4px 16px 16px' }}>
       <p className='nf-title-2' style={{ marginBottom: '2px' }}>{alimento.nombre}</p>
       {alimento.descripcion && <p className='nf-subhead' style={{ marginBottom: '20px' }}>{alimento.descripcion}</p>}
 
@@ -265,35 +360,155 @@ function SelectorPorciones({ alimento, onConfirmar, guardando }) {
 
 // ── Editar alimento ───────────────────────────────────────────────────────
 function EditarAlimento({ form, setForm, onGuardar, guardando }) {
+  const arriba = useDesdeArriba()
   return (
-    <div style={{ padding: '4px 16px 16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+    <div ref={arriba} style={{ padding: '4px 16px 16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
       <input className='nf-input' placeholder='Nombre' aria-label='Nombre' value={form.nombre}
         onChange={e => setForm(p => ({ ...p, nombre: e.target.value }))} />
       <input className='nf-input' placeholder='Descripción (ej: 3 galletas 34g)' aria-label='Descripción' value={form.descripcion}
         onChange={e => setForm(p => ({ ...p, descripcion: e.target.value }))} />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-        {[
-          { key: 'calorias', label: 'Calorías', unit: 'kcal', mode: 'numeric' },
-          { key: 'proteina', label: 'Proteína', unit: 'g',    mode: 'decimal' },
-          { key: 'carbos',   label: 'Carbos',   unit: 'g',    mode: 'decimal' },
-          { key: 'grasas',   label: 'Grasas',   unit: 'g',    mode: 'decimal' },
-        ].map(f => (
-          <label key={f.key} style={{ position: 'relative', display: 'block' }}>
-            <span className='nf-caption' style={{ display: 'block', margin: '0 0 4px 4px', fontWeight: 600 }}>{f.label}</span>
-            <input
-              type='number' inputMode={f.mode}
-              className='nf-input nf-num'
-              value={form[f.key]}
-              onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
-              style={{ paddingRight: '44px' }}
-            />
-            <span className='nf-caption' style={{ position: 'absolute', right: '14px', bottom: '14px', pointerEvents: 'none' }}>{f.unit}</span>
-          </label>
-        ))}
-      </div>
+      <CamposMacros valores={form} onCambio={(k, v) => setForm(p => ({ ...p, [k]: v }))} />
       <button onClick={onGuardar} disabled={guardando || !form.nombre} className='nf-btn nf-btn--primary nf-btn--lg nf-btn--block' style={{ marginTop: '6px' }}>
         {guardando ? 'Guardando…' : 'Guardar cambios'}
       </button>
+    </div>
+  )
+}
+
+// ── Armar plato ───────────────────────────────────────────────────────────
+// Junta alimentos de la alacena con sus porciones. El total se ve al instante
+// (sin animar: cambia con cada toque); el servidor lo recalcula al guardar y
+// cada vez que cambia un ingrediente.
+function ArmarPlato({ inicial, alacena, onGuardar, guardando }) {
+  const [nombre,   setNombre]   = useState(inicial?.nombre ?? '')
+  const [items,    setItems]    = useState(() => (inicial?.ingredientes ?? []).map(({ alimento, porciones }) => ({ alimento, porciones })))
+  const [busqueda, setBusqueda] = useState('')
+  const arriba = useDesdeArriba()
+
+  const porId = useMemo(() => new Map(alacena.map(a => [a.id, a])), [alacena])
+  const elegidos = items.filter(i => porId.has(i.alimento))
+  const q = busqueda.trim().toLowerCase()
+  const disponibles = alacena.filter(a =>
+    !a.es_plato && !items.some(i => i.alimento === a.id) &&
+    (!q || a.nombre.toLowerCase().includes(q) || (a.descripcion ?? '').toLowerCase().includes(q))
+  )
+  const total = elegidos.reduce((t, i) => {
+    const a = porId.get(i.alimento)
+    return { kcal: t.kcal + a.calorias * i.porciones, p: t.p + a.proteina * i.porciones, c: t.c + a.carbos * i.porciones, g: t.g + a.grasas * i.porciones }
+  }, { kcal: 0, p: 0, c: 0, g: 0 })
+
+  const agregar = (a) => { haptic(6); setItems(prev => [...prev, { alimento: a.id, porciones: 1 }]) }
+  const quitar  = (id) => { haptic(6); setItems(prev => prev.filter(i => i.alimento !== id)) }
+  const cambiar = (id, delta) => setItems(prev => prev.map(i =>
+    i.alimento === id ? { ...i, porciones: Math.min(10, Math.max(0.5, i.porciones + delta)) } : i
+  ))
+
+  const listo = nombre.trim() && elegidos.length > 0
+
+  return (
+    <div ref={arriba} style={{ display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
+      <div style={{ padding: '4px 16px 16px', flex: 1 }}>
+        <input
+          autoFocus={!inicial}
+          value={nombre}
+          maxLength={200}
+          onChange={e => setNombre(e.target.value)}
+          placeholder='Nombre del plato'
+          aria-label='Nombre del plato'
+          enterKeyHint='done'
+          style={{
+            width: '100%', background: 'transparent', border: 'none',
+            borderBottom: '0.5px solid var(--separator)',
+            fontSize: '22px', fontWeight: 700, letterSpacing: '-0.02em',
+            padding: '2px 0 10px', marginBottom: '20px', outline: 'none',
+          }}
+        />
+
+        <h3 className='nf-section-label'>Ingredientes</h3>
+        {elegidos.length === 0 ? (
+          <p className='nf-footnote' style={{ margin: '0 4px 20px' }}>Toca alimentos de tu alacena para sumarlos al plato.</p>
+        ) : (
+          <ul className='nf-card' style={{ listStyle: 'none', overflow: 'hidden', background: 'var(--surface-3)', marginBottom: '20px' }}>
+            {elegidos.map(i => {
+              const a = porId.get(i.alimento)
+              return (
+                <li key={i.alimento} className='nf-row nf-reveal' style={{ '--row-inset': '16px', gap: '8px', minHeight: '56px' }}>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: 'block', fontSize: '15px', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.nombre}</span>
+                    <span className='nf-caption nf-num'>{Math.round(a.calorias * i.porciones)} kcal</span>
+                  </span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                    {i.porciones <= 0.5 ? (
+                      <button onClick={() => quitar(i.alimento)} className='nf-icon-btn nf-icon-btn--sm' aria-label={`Quitar ${a.nombre}`} style={{ color: 'var(--red)' }}>
+                        <IconTrash size={17} />
+                      </button>
+                    ) : (
+                      <button onClick={() => cambiar(i.alimento, -0.5)} className='nf-icon-btn nf-icon-btn--sm' aria-label={`Menos ${a.nombre}`}>
+                        <IconMinus size={17} />
+                      </button>
+                    )}
+                    <span className='nf-num' aria-live='polite' style={{ minWidth: '34px', textAlign: 'center', fontSize: '15px', fontWeight: 700 }}>
+                      {fmtPorcion(i.porciones)}×
+                    </span>
+                    <button onClick={() => cambiar(i.alimento, 0.5)} disabled={i.porciones >= 10} className='nf-icon-btn nf-icon-btn--sm' aria-label={`Más ${a.nombre}`}>
+                      <IconPlus size={17} />
+                    </button>
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+
+        <h3 className='nf-section-label'>Agregar de tu alacena</h3>
+        <label style={{ position: 'relative', display: 'block', marginBottom: '10px' }}>
+          <IconSearch size={18} color='var(--label-3)' style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+          <input
+            type='search' enterKeyHint='search'
+            className='nf-input'
+            placeholder='Buscar alimento'
+            aria-label='Buscar alimento para el plato'
+            value={busqueda}
+            onChange={e => setBusqueda(e.target.value)}
+            style={{ paddingLeft: '38px', background: 'rgba(118,118,128,0.24)', border: 'none' }}
+          />
+        </label>
+        {disponibles.length === 0 ? (
+          <p className='nf-footnote' style={{ textAlign: 'center', padding: '16px 0' }}>
+            {q ? `Nada coincide con "${busqueda}"` : 'Ya usaste todo lo de tu alacena'}
+          </p>
+        ) : (
+          <div className='nf-card' style={{ overflow: 'hidden', background: 'var(--surface-3)' }}>
+            {disponibles.map(a => (
+              <button key={a.id} onClick={() => agregar(a)} className='nf-row nf-press-soft' style={{ '--row-inset': '16px', width: '100%', textAlign: 'left', gap: '8px' }}>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: 'block', fontSize: '15px', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.nombre}</span>
+                  <span className='nf-caption nf-num'>{a.calorias} kcal · P {a.proteina}g</span>
+                </span>
+                <IconPlus size={20} color='var(--green)' aria-hidden='true' />
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Total fijo abajo: siempre a la vista mientras se arma */}
+      <div style={{
+        position: 'sticky', bottom: 0, zIndex: 1,
+        background: 'var(--surface-2)', borderTop: '0.5px solid var(--separator)',
+        padding: '12px 16px calc(var(--safe-bottom) + 12px)',
+      }}>
+        <div style={{ marginBottom: '12px' }}>
+          <MacroResumen kcal={Math.round(total.kcal)} p={+total.p.toFixed(1)} c={+total.c.toFixed(1)} g={+total.g.toFixed(1)} />
+        </div>
+        <button
+          onClick={() => onGuardar({ nombre: nombre.trim(), ingredientes: elegidos })}
+          disabled={guardando || !listo}
+          className='nf-btn nf-btn--primary nf-btn--lg nf-btn--block'
+        >
+          <IconCheck size={19} /> {guardando ? 'Guardando…' : inicial ? 'Guardar cambios' : 'Guardar plato'}
+        </button>
+      </div>
     </div>
   )
 }
@@ -307,9 +522,10 @@ export default function FoodScreen({ screen }) {
   const [analizando, setAnalizando] = useState(false)
   const [resultado,  setResultado]  = useState(null)
   const [guardando,  setGuardando]  = useState(false)
-  const [modal,      setModal]      = useState('closed')   // closed | alacena | porciones | editar
+  const [modal,      setModal]      = useState('closed')   // closed | alacena | porciones | editar | plato
   const [seleccionado, setSeleccionado] = useState(null)
   const [formEditar,   setFormEditar]   = useState(null)
+  const [platoEditando, setPlatoEditando] = useState(null)   // null = plato nuevo
 
   // Agua
   const [aguaMl,        setAguaMl]        = useState(0)
@@ -318,6 +534,14 @@ export default function FoodScreen({ screen }) {
   const [termoMl,       setTermoMl]       = useState(() => parseInt(localStorage.getItem('nutrifit_termo_ml') || '0'))
   const [editandoTermo, setEditandoTermo] = useState(false)
   const [termoInput,    setTermoInput]    = useState('')
+
+  // Solo la última recarga de la alacena se aplica: una respuesta vieja que
+  // llegue tarde no pisa la lista nueva
+  const pedidoAlacena = useRef(0)
+  const recargarAlacena = () => {
+    const n = ++pedidoAlacena.current
+    return getAlacena().then(data => { if (n === pedidoAlacena.current) setAlacena(data) })
+  }
 
   const fileInputPlato    = useRef(null)
   const fileInputEtiqueta = useRef(null)
@@ -428,27 +652,65 @@ export default function FoodScreen({ screen }) {
         grasas:      parseFloat(formEditar.grasas)   || 0,
       })
       setAlacena(prev => prev.map(a => a.id === actualizado.id ? actualizado : a))
+      if (alacena.some(a => a.es_plato && a.ingredientes?.some(i => i.alimento === actualizado.id))) {
+        recargarAlacena().catch(() => {})
+      }
       setModal('alacena')
       setFormEditar(null)
     } catch { toast.error('Error al editar.') }
     finally { setGuardando(false) }
   }
 
+  const guardarPlato = async (datos) => {
+    setGuardando(true)
+    try {
+      const plato = platoEditando
+        ? await editarAlacena(platoEditando.id, datos)
+        : await agregarAAlacena(datos)
+      setAlacena(prev => platoEditando ? prev.map(a => a.id === plato.id ? plato : a) : [plato, ...prev])
+      haptic()
+      toast.success(platoEditando ? 'Plato actualizado' : `${plato.nombre} quedó en tu alacena`)
+      setModal('alacena')
+      setPlatoEditando(null)
+    } catch (e) {
+      toast.error(e.mensaje || 'No se pudo guardar el plato. Intenta de nuevo.')
+    } finally { setGuardando(false) }
+  }
+
+  const ingredientesDe = (plato, cambiarId = {}) =>
+    plato.ingredientes.map(({ alimento, porciones }) => ({ alimento: cambiarId[alimento] ?? alimento, porciones }))
+
   // Borrar con "Deshacer": la fila desaparece y el aviso sale al instante; el
-  // borrado corre en segundo plano y deshacer vuelve a crear el registro.
+  // borrado corre en segundo plano y deshacer vuelve a crear el registro. Si era
+  // ingrediente de platos, deshacer también lo devuelve a esos platos (y vuelve
+  // a crear los que se borraron por quedarse sin ingredientes).
   const borrarDeAlacena = (item) => {
+    const platos = item.es_plato ? [] : alacena.filter(a => a.es_plato && a.ingredientes?.some(i => i.alimento === item.id))
     setAlacena(prev => prev.filter(a => a.id !== item.id))
     const borrado = eliminarAlacena(item.id)
-    borrado.catch(() => {
-      setAlacena(prev => [item, ...prev])
-      toast.error('Error al eliminar.')
-    })
-    toast(`"${item.nombre}" eliminado`, {
+    borrado
+      .then(() => { if (platos.length) recargarAlacena().catch(() => {}) })
+      .catch(() => {
+        setAlacena(prev => [item, ...prev])
+        toast.error('Error al eliminar.')
+      })
+    const enPlatos = platos.length === 1 ? ' y quitado de 1 plato' : platos.length > 1 ? ` y quitado de ${platos.length} platos` : ''
+    toast(`"${item.nombre}" eliminado${enPlatos}`, {
       action: {
         label: 'Deshacer',
         onClick: () => borrado
-          .then(() => agregarAAlacena(soloMacros(item)))
-          .then(nuevo => setAlacena(prev => [nuevo, ...prev]))
+          .then(() => agregarAAlacena(item.es_plato ? { nombre: item.nombre, ingredientes: ingredientesDe(item) } : soloMacros(item)))
+          .then(async nuevo => {
+            if (!platos.length) return setAlacena(prev => [nuevo, ...prev])
+            const resultados = await Promise.allSettled(platos.map(p => {
+              const ingredientes = ingredientesDe(p, { [item.id]: nuevo.id })
+              return p.ingredientes.length === 1
+                ? agregarAAlacena({ nombre: p.nombre, ingredientes })
+                : editarAlacena(p.id, { ingredientes })
+            }))
+            await recargarAlacena()
+            if (resultados.some(r => r.status === 'rejected')) toast.error('Volvió el alimento, pero no a todos sus platos')
+          })
           .catch(() => toast.error('No se pudo restaurar')),
       },
     })
@@ -508,13 +770,17 @@ export default function FoodScreen({ screen }) {
     (a.descripcion ?? '').toLowerCase().includes(busqueda.toLowerCase())
   )
 
-  const cerrarModal = () => { setModal('closed'); setSeleccionado(null); setFormEditar(null) }
-  const volverAAlacena = () => { setModal('alacena'); setSeleccionado(null); setFormEditar(null) }
+  const cerrarModal = () => { setModal('closed'); setSeleccionado(null); setFormEditar(null); setPlatoEditando(null) }
+  const volverAAlacena = () => { setModal('alacena'); setSeleccionado(null); setFormEditar(null); setPlatoEditando(null) }
+  const abrirPlato = (plato = null) => { setPlatoEditando(plato); setModal('plato') }
 
   const pctAgua = Math.min(aguaMl / metaAgua, 1)
   const aguaCompleta = pctAgua >= 1
 
-  const tituloModal = { alacena: 'Mi alacena', porciones: 'Agregar', editar: 'Editar alimento' }[modal] ?? ''
+  const tituloModal = {
+    alacena: 'Mi alacena', porciones: 'Agregar', editar: 'Editar alimento',
+    plato: platoEditando ? 'Editar plato' : 'Nuevo plato',
+  }[modal] ?? ''
 
   return (
     <div style={{ padding: 'calc(var(--safe-top) + 20px) 16px 0' }}>
@@ -756,6 +1022,17 @@ export default function FoodScreen({ screen }) {
               </label>
             </div>
 
+            {!busqueda && (
+              <button onClick={() => abrirPlato()} className='nf-card nf-row nf-press-soft' style={{ '--row-inset': '60px', width: '100%', textAlign: 'left', marginBottom: '12px', background: 'var(--surface-3)' }}>
+                <span className='nf-row-icon'><IconBowl size={18} /></span>
+                <span style={{ flex: 1 }}>
+                  <span style={{ display: 'block', fontSize: '16px', fontWeight: 600 }}>Crear plato</span>
+                  <span className='nf-caption'>Junta alimentos y se suman solos</span>
+                </span>
+                <IconChevronRight size={18} color='var(--label-4)' aria-hidden='true' />
+              </button>
+            )}
+
             {alacenaFiltrada.length === 0 ? (
               <p className='nf-subhead' style={{ textAlign: 'center', padding: '32px 0' }}>
                 {busqueda ? `Nada coincide con "${busqueda}"` : 'Tu alacena está vacía'}
@@ -769,7 +1046,10 @@ export default function FoodScreen({ screen }) {
                       className='nf-press-soft'
                       style={{ flex: 1, minWidth: 0, textAlign: 'left', padding: '12px 0 12px 16px' }}
                     >
-                      <span style={{ display: 'block', fontSize: '16px', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.nombre}</span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '16px', fontWeight: 500, minWidth: 0 }}>
+                        {a.es_plato && <IconBowl size={15} color='var(--green)' aria-label='Plato' style={{ flexShrink: 0 }} />}
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.nombre}</span>
+                      </span>
                       {a.descripcion && <span className='nf-caption' style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.descripcion}</span>}
                       <span style={{ display: 'flex', gap: '10px', alignItems: 'center', marginTop: '4px' }}>
                         <span className='nf-num' style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '13px', fontWeight: 700 }}>
@@ -780,6 +1060,7 @@ export default function FoodScreen({ screen }) {
                     </button>
                     <button
                       onClick={() => {
+                        if (a.es_plato) return abrirPlato(a)
                         setFormEditar({ ...a, calorias: String(a.calorias), proteina: String(a.proteina), carbos: String(a.carbos), grasas: String(a.grasas) })
                         setModal('editar')
                       }}
@@ -804,6 +1085,10 @@ export default function FoodScreen({ screen }) {
 
         {modal === 'editar' && formEditar && (
           <EditarAlimento form={formEditar} setForm={setFormEditar} onGuardar={guardarEdicion} guardando={guardando} />
+        )}
+
+        {modal === 'plato' && (
+          <ArmarPlato key={platoEditando?.id ?? 'nuevo'} inicial={platoEditando} alacena={alacena} onGuardar={guardarPlato} guardando={guardando} />
         )}
       </Sheet>
     </div>

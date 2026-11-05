@@ -884,12 +884,16 @@ def alacena_detalle(request, pk):
         return Response(status=status.HTTP_404_NOT_FOUND)
 
     if request.method == 'DELETE':
-        # Si era ingrediente de algún plato, el plato se queda con el resto
+        # Si era ingrediente de algún plato, el plato se queda con el resto; un
+        # plato que se queda sin ingredientes se borra (si no, sumaría 0 kcal)
         platos = list(AlimentoAlacena.objects.filter(ingredientes__alimento=alimento).distinct())
         with transaction.atomic():
             alimento.delete()
             for plato in platos:
-                plato.recalcular()
+                if plato.ingredientes.exists():
+                    plato.recalcular()
+                else:
+                    plato.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     serializer = AlimentoAlacenaSerializer(alimento, data=request.data, partial=True, context={'request': request})
